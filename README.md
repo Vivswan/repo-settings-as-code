@@ -51,6 +51,7 @@ Run `bun run check` for lint + typecheck + tests + bundle freshness.
 | `on-missing-permission` | `fail` | `warn` skips sections the token cannot access (partial success) |
 | `required-sections` | (empty) | Sections that must fully apply even under `warn` |
 | `sections` | (all declared) | Comma-separated allowlist of sections to process |
+| `api-version` | `2022-11-28` | `X-GitHub-Api-Version` header; override to opt into a newer REST API version |
 
 Outputs: `result` (`applied` / `partial` / `clean` / `drift` / `failed`) and
 `skipped-sections`.
@@ -74,6 +75,10 @@ Outputs: `result` (`applied` / `partial` / `clean` / `drift` / `failed`) and
   inaccessible, nothing is applied at all. (The API has no transactions;
   a read-but-not-write token can still fail mid-apply, and re-running
   after fixing it converges because applies are idempotent.)
+
+See [docs/COVERAGE.md](docs/COVERAGE.md) for the full inventory: everything
+supported, every repo-scoped gap, and the user-scoped surface that is out of
+scope by design.
 
 ## Sections
 

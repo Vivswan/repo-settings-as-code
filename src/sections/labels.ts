@@ -4,6 +4,7 @@
  * undeclared labels, loudly.
  */
 
+import { subsetDiff } from "../diff.js";
 import { nameKey, normalizeColor } from "../normalize.js";
 import type { LabelConfig } from "../schema.js";
 import { call, emptyResult, listAll, type Section, type SectionResult } from "./section.js";
@@ -41,6 +42,9 @@ export const labelsSection: Section = {
       const wantColor = label.color === undefined ? undefined : normalizeColor(label.color);
       const wantDescription = label.description ?? "";
 
+      const { new_name: _newName, name: _name, ...extraKeys } = label;
+      delete (extraKeys as Record<string, unknown>).color;
+      delete (extraKeys as Record<string, unknown>).description;
       if (!existing) {
         if (ctx.check) {
           result.drift.push(`labels[${finalName}]: missing`);
@@ -49,6 +53,7 @@ export const labelsSection: Section = {
             name: finalName,
             ...(wantColor === undefined ? {} : { color: wantColor }),
             description: wantDescription,
+            ...extraKeys, // future label fields pass through verbatim
           });
           result.changes.push(`created label "${finalName}"`);
         }
@@ -59,7 +64,8 @@ export const labelsSection: Section = {
       const descriptionDrift =
         label.description !== undefined && (existing.description ?? "") !== wantDescription;
       const renameDrift = existing.name !== finalName;
-      if (colorDrift || descriptionDrift || renameDrift) {
+      const extraDrift = subsetDiff(extraKeys, existing, `labels[${finalName}]`);
+      if (colorDrift || descriptionDrift || renameDrift || extraDrift.length > 0) {
         if (ctx.check) {
           if (renameDrift) {
             result.drift.push(`labels[${existing.name}]: should be named "${finalName}"`);
@@ -74,6 +80,7 @@ export const labelsSection: Section = {
               `labels[${finalName}].description: ${JSON.stringify(wantDescription)} != ${JSON.stringify(existing.description ?? "")}`,
             );
           }
+          result.drift.push(...extraDrift);
         } else {
           await call(
             ctx,
@@ -84,6 +91,7 @@ export const labelsSection: Section = {
               new_name: finalName,
               ...(wantColor === undefined ? {} : { color: wantColor }),
               ...(label.description === undefined ? {} : { description: wantDescription }),
+              ...extraKeys, // future label fields pass through verbatim
             },
           );
           result.changes.push(`updated label "${finalName}"`);

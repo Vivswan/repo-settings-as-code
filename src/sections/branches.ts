@@ -59,6 +59,15 @@ export const branchesSection: Section = {
           result.drift.push(
             ...subsetDiff(branch.protection, live, `branches[${branch.name}].protection`),
           );
+          // Apply null-fills the four required keys, REMOVING live settings
+          // the declaration omits - surface that as drift, not silence.
+          for (const key of REQUIRED_PROTECTION_KEYS) {
+            if (!(key in branch.protection) && live[key] != null && live[key] !== false) {
+              result.drift.push(
+                `branches[${branch.name}].protection.${key}: set live but omitted from the declaration - apply would REMOVE it`,
+              );
+            }
+          }
         }
       } else {
         await call(ctx, this.key, "PUT", path, payload);
@@ -95,7 +104,11 @@ function flattenValue(value: unknown): unknown {
   }
   const record = value as Record<string, unknown>;
   const keys = Object.keys(record);
-  if ("enabled" in record && keys.every((k) => k === "enabled" || k === "url")) {
+  if (
+    "enabled" in record &&
+    typeof record.enabled === "boolean" &&
+    keys.every((k) => k === "enabled" || k === "url" || k.endsWith("_url"))
+  ) {
     return record.enabled;
   }
   const out: Record<string, unknown> = {};

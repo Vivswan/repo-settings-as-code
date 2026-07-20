@@ -28,7 +28,14 @@ export function normalizeRefName(value: string, target: string): string {
   if (value.startsWith("~") || value.startsWith("refs/")) {
     return value;
   }
-  return target === "tag" ? `refs/tags/${value}` : `refs/heads/${value}`;
+  if (target === "tag") {
+    return `refs/tags/${value}`;
+  }
+  if (target === "branch") {
+    return `refs/heads/${value}`;
+  }
+  // Unknown (future) targets: never guess a prefix - pass through verbatim.
+  return value;
 }
 
 /** Deep-copy a ruleset with normalized ref conditions (never mutates input). */

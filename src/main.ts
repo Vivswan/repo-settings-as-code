@@ -161,9 +161,19 @@ export async function run(): Promise<number> {
     (key) => !knownSections.has(key) && !key.startsWith("_"),
   );
   if (unknownKeys.length > 0) {
-    return fail(
-      `unknown top-level section(s) in ${settingsFile}: ${unknownKeys.join(", ")} (known: ${SECTION_KEYS.join(", ")})`,
-    );
+    if (onlySections.size > 0 && unknownKeys.every((key) => !onlySections.has(key))) {
+      // A `sections` allowlist lets an older action version coexist with a
+      // config written for a newer one: unknown keys OUTSIDE the allowlist
+      // are warnings, not errors.
+      annotate(
+        "warning",
+        `ignoring unknown top-level section(s) outside the sections allowlist: ${unknownKeys.join(", ")}`,
+      );
+    } else {
+      return fail(
+        `unknown top-level section(s) in ${settingsFile}: ${unknownKeys.join(", ")} (known: ${SECTION_KEYS.join(", ")}). Fix the typo, or prefix private keys with "_", or set the sections input to limit processing`,
+      );
+    }
   }
 
   const apiVersion = input("api-version") || "2022-11-28";

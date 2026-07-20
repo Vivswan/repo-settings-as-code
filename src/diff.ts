@@ -30,6 +30,11 @@ export function subsetDiff(desired: unknown, live: unknown, path: string): strin
     return [];
   }
   if (desired !== live) {
+    if (live === undefined) {
+      return [
+        `${path}: declared ${JSON.stringify(desired)} but the API response has no such field (new or write-only field?)`,
+      ];
+    }
     return [`${path}: ${JSON.stringify(desired)} != ${JSON.stringify(live)}`];
   }
   return [];

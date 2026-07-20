@@ -74,6 +74,15 @@ function flattenEnvironment(live: unknown): Record<string, unknown> {
       }>;
       out.reviewers = reviewers.map((r) => ({ type: r.type, id: r.reviewer?.id }));
     }
+    if (rule.type !== "wait_timer" && rule.type !== "required_reviewers") {
+      // Future rule types: un-nest their payload keys generically so check
+      // mode can compare declared settings instead of reporting false drift.
+      for (const [key, value] of Object.entries(rule)) {
+        if (!["id", "node_id", "type", "url"].includes(key)) {
+          out[key] = value;
+        }
+      }
+    }
   }
   return out;
 }
@@ -97,10 +106,9 @@ export const autolinksSection: Section = {
     for (const autolink of desired) {
       declared.add(autolink.key_prefix);
       const existing = liveByPrefix.get(autolink.key_prefix);
+      const { key_prefix: _kp, ...declaredFields } = autolink;
       const matches =
-        existing !== undefined &&
-        existing.url_template === autolink.url_template &&
-        existing.is_alphanumeric === (autolink.is_alphanumeric ?? true);
+        existing !== undefined && subsetDiff(declaredFields, existing, "autolink").length === 0;
       if (matches) {
         continue;
       }
@@ -117,9 +125,8 @@ export const autolinksSection: Section = {
         await call(ctx, this.key, "DELETE", `/repos/${ctx.repo}/autolinks/${existing.id}`);
       }
       await call(ctx, this.key, "POST", `/repos/${ctx.repo}/autolinks`, {
-        key_prefix: autolink.key_prefix,
-        url_template: autolink.url_template,
-        is_alphanumeric: autolink.is_alphanumeric ?? true,
+        is_alphanumeric: true,
+        ...autolink, // declared keys (including future ones) pass through
       });
       result.changes.push(`${existing ? "replaced" : "created"} autolink ${autolink.key_prefix}`);
     }
@@ -167,6 +174,13 @@ export const actionsSection: Section = {
       // The PUT body requires `enabled`; declaring an allowed-actions policy
       // implies actions are on unless said otherwise.
       permissions.enabled = permissions.enabled ?? true;
+    }
+    const KNOWN_PERMISSION_KEYS = new Set(["enabled", "allowed_actions"]);
+    const routed = Object.keys(permissions).filter((k) => !KNOWN_PERMISSION_KEYS.has(k));
+    if (routed.length > 0) {
+      result.notes.push(
+        `unknown key(s) [${routed.join(", ")}] passed through to /actions/permissions - run check mode to confirm they took effect (a future /workflow-endpoint field would belong under the known workflow keys)`,
+      );
     }
 
     if (ctx.check) {
@@ -285,14 +299,10 @@ export const milestonesSection: Section = {
     for (const milestone of desired) {
       declared.add(milestone.title);
       const existing = liveByTitle.get(milestone.title);
-      // Declared-keys-only: never touch description/state unless declared.
-      const want: Record<string, unknown> = { title: milestone.title };
-      if (milestone.description !== undefined) {
-        want.description = milestone.description;
-      }
-      if (milestone.state !== undefined) {
-        want.state = milestone.state;
-      }
+      // Declared-keys-only AND passthrough: every declared key (including
+      // future ones like due_on) is sent verbatim; undeclared keys are
+      // never touched.
+      const want: Record<string, unknown> = { ...milestone };
       if (!existing) {
         if (ctx.check) {
           result.drift.push(`milestones[${milestone.title}]: missing`);
@@ -302,13 +312,11 @@ export const milestonesSection: Section = {
         }
         continue;
       }
-      const descriptionDrift =
-        milestone.description !== undefined &&
-        (existing.description ?? "") !== milestone.description;
-      const stateDrift = milestone.state !== undefined && existing.state !== milestone.state;
-      if (descriptionDrift || stateDrift) {
+      const { title: _t, ...declaredFields } = milestone;
+      const drift = subsetDiff(declaredFields, existing, `milestones[${milestone.title}]`);
+      if (drift.length > 0) {
         if (ctx.check) {
-          result.drift.push(`milestones[${milestone.title}]: description/state differ`);
+          result.drift.push(...drift);
         } else {
           await call(
             ctx,
@@ -370,12 +378,13 @@ export const collaboratorsSection: Section = {
             : `collaborators[${collaborator.username}]: missing (invitation would be sent)`,
         );
       } else {
+        const { username: _u, ...body } = collaborator;
         await call(
           ctx,
           this.key,
           "PUT",
           `/repos/${ctx.repo}/collaborators/${encodeURIComponent(collaborator.username)}`,
-          { permission },
+          { ...body, permission }, // future sibling keys pass through
         );
         result.changes.push(
           `${existing ? "updated" : "invited"} collaborator "${collaborator.username}" (${permission})`,
@@ -444,7 +453,11 @@ export const teamsSection: Section = {
           }
         }
       } else {
-        await call(ctx, this.key, "PUT", path, { permission: team.permission ?? "push" });
+        const { name: _n, ...body } = team;
+        await call(ctx, this.key, "PUT", path, {
+          ...body, // future sibling keys pass through
+          permission: team.permission ?? "push",
+        });
         result.changes.push(`granted team "${team.name}" ${team.permission ?? "push"}`);
       }
     }
