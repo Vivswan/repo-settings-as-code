@@ -1,0 +1,54 @@
+# The most direct consumer of this action is this repository itself: every
+# settings change is applied by the CURRENT code (uses: ./), so a regression
+# here bites us before it bites anyone else. Needs REPO_PLATFORM_TOKEN
+# (Administration + Issues write); skips with a notice until it exists.
+
+name: Apply Settings
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/settings.yml]
+  schedule:
+    - cron: "53 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      check_only:
+        description: Report drift without writing
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apply-settings
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve token
+        id: token
+        env:
+          PAT: ${{ secrets.REPO_PLATFORM_TOKEN }}
+        run: |
+          if [ -n "$PAT" ]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::REPO_PLATFORM_TOKEN is not set; self-apply skipped. Add the secret (fine-grained PAT with Administration and Issues read/write on this repo) to enable it."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.token.outputs.proceed == 'true'
+
+      - name: Apply own settings with the action at HEAD
+        if: steps.token.outputs.proceed == 'true'
+        uses: ./
+        with:
+          token: ${{ secrets.REPO_PLATFORM_TOKEN }}
+          mode: ${{ inputs.check_only && 'check' || 'apply' }}
+          on-missing-permission: fail
