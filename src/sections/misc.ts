@@ -143,22 +143,30 @@ export const actionsSection: Section = {
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
     const desired = desiredRaw as ActionsConfig;
+    // Forward-compatible key routing: known workflow-token keys go to the
+    // /workflow sub-endpoint, selected_actions to its own endpoint, and
+    // EVERYTHING else (including future fields GitHub adds) passes through
+    // to the base permissions PUT verbatim - never silently dropped.
+    const WORKFLOW_KEYS = new Set([
+      "default_workflow_permissions",
+      "can_approve_pull_request_reviews",
+    ]);
     const permissions: Record<string, unknown> = {};
-    if (desired.enabled !== undefined) {
-      permissions.enabled = desired.enabled;
+    const workflow: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(desired as Record<string, unknown>)) {
+      if (key === "selected_actions") {
+        continue;
+      }
+      if (WORKFLOW_KEYS.has(key)) {
+        workflow[key] = value;
+      } else {
+        permissions[key] = value;
+      }
     }
-    if (desired.allowed_actions !== undefined) {
-      permissions.allowed_actions = desired.allowed_actions;
+    if (permissions.allowed_actions !== undefined) {
       // The PUT body requires `enabled`; declaring an allowed-actions policy
       // implies actions are on unless said otherwise.
       permissions.enabled = permissions.enabled ?? true;
-    }
-    const workflow: Record<string, unknown> = {};
-    if (desired.default_workflow_permissions !== undefined) {
-      workflow.default_workflow_permissions = desired.default_workflow_permissions;
-    }
-    if (desired.can_approve_pull_request_reviews !== undefined) {
-      workflow.can_approve_pull_request_reviews = desired.can_approve_pull_request_reviews;
     }
 
     if (ctx.check) {

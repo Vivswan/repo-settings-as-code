@@ -123,6 +123,19 @@ rulesets:
             - context: all-green
 ```
 
+## Forward compatibility
+
+Passthrough-first by design: payloads are sent to the API **verbatim**
+except for documented normalizations (ref prefixes, topics splitting,
+vocabulary mapping), so new fields and rule types GitHub ships work the day
+they exist - declare them in `settings.yml`, no action update needed. This
+holds for `rulesets` (new rule types, bypass-actor fields, condition
+types), `repository`, `branches`, `environments`, `actions`, and `pages`.
+Two deliberate boundaries: a brand-new top-level settings *category* needs
+a handler (a new API endpoint cannot be guessed - unknown sections fail
+loudly rather than no-op), and the pinned `X-GitHub-Api-Version` only
+changes intentionally.
+
 ## Migrating from the Probot Settings app
 
 Your existing `settings.yml` works as-is for `repository`, `labels`,
