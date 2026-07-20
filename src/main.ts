@@ -175,6 +175,42 @@ export async function run(): Promise<number> {
     check: mode === "check",
   };
 
+  const active = SECTIONS.filter((section) => {
+    if (settings[section.key as keyof SettingsFile] === undefined) {
+      return false;
+    }
+    return onlySections.size === 0 || onlySections.has(section.key);
+  });
+
+  // Preflight barrier: the API has no transactions, so a mid-apply
+  // permission failure would leave settings half-applied. Under the strict
+  // policy, probe every declared section read-only FIRST and refuse to
+  // write anything when any of them is inaccessible. (A token with read
+  // but not write access can still fail mid-apply; the engine is
+  // idempotent, so re-running after fixing the token converges.)
+  if (!ctx.check && onMissingPermission === "fail") {
+    const denied: string[] = [];
+    for (const section of active) {
+      try {
+        await section.run({ ...ctx, check: true }, settings[section.key as keyof SettingsFile]);
+      } catch (error) {
+        if (error instanceof PermissionDenied) {
+          denied.push(`${section.key}: ${error.detail}`);
+        }
+        // Non-permission preflight errors are ignored here; the apply pass
+        // will surface them with full context.
+      }
+    }
+    if (denied.length > 0) {
+      for (const line of denied) {
+        annotate("error", `preflight: ${line}`);
+      }
+      return fail(
+        `preflight failed for ${denied.length} section(s); nothing was applied (fix the token or use on-missing-permission: warn)`,
+      );
+    }
+  }
+
   const outcomes: SectionOutcome[] = [];
   let failed = false;
   let partial = false;

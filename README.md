@@ -69,6 +69,11 @@ Outputs: `result` (`applied` / `partial` / `clean` / `drift` / `failed`) and
 - Permission failures (403, or 404 on admin endpoints with a fine-grained
   token) are the only softenable errors; everything else always fails with
   the API message verbatim.
+- **Preflight barrier**: under `on-missing-permission: fail`, every
+  declared section is probed read-only before ANY write - if a section is
+  inaccessible, nothing is applied at all. (The API has no transactions;
+  a read-but-not-write token can still fail mid-apply, and re-running
+  after fixing it converges because applies are idempotent.)
 
 ## Sections
 
