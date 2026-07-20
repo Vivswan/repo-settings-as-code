@@ -255,10 +255,14 @@ export async function run(): Promise<number> {
   }
   if (ctx.check) {
     // A check that could not see everything is never "clean".
-    setOutput("result", drifted ? "drift" : partial ? "partial" : "clean");
+    const result = drifted ? "drift" : partial ? "partial" : "clean";
+    setOutput("result", result);
+    console.log(`result: ${result}`);
     return drifted ? 1 : 0;
   }
-  setOutput("result", partial ? "partial" : "applied");
+  const result = partial ? "partial" : "applied";
+  setOutput("result", result);
+  console.log(`result: ${result}`);
   return 0;
 }
 
