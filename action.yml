@@ -49,5 +49,5 @@ outputs:
     description: Comma-separated sections skipped for missing permissions.
 
 runs:
-  using: node20
+  using: node24
   main: lib/index.js
