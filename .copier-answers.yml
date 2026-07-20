@@ -16,5 +16,5 @@ modules:
 - auto-assign
 private: false
 project_name: Settings as Code
-project_slug: settings-as-code
+project_slug: repo-settings-as-code
 topics: ''

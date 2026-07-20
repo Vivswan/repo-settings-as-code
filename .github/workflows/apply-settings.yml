@@ -1,6 +1,6 @@
 # The most direct consumer of this action is this repository itself: every
 # settings change is applied by the CURRENT code (uses: ./), so a regression
-# here bites us before it bites anyone else. Needs REPO_PLATFORM_TOKEN
+# here bites us before it bites anyone else. Needs APPLY_SETTING_TOKEN
 # (Administration + Issues write); skips with a notice until it exists.
 
 name: Apply Settings
@@ -33,12 +33,12 @@ jobs:
       - name: Resolve token
         id: token
         env:
-          PAT: ${{ secrets.REPO_PLATFORM_TOKEN }}
+          PAT: ${{ secrets.APPLY_SETTING_TOKEN }}
         run: |
           if [ -n "$PAT" ]; then
             echo "proceed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice::REPO_PLATFORM_TOKEN is not set; self-apply skipped. Add the secret (fine-grained PAT with Administration and Issues read/write on this repo) to enable it."
+            echo "::notice::APPLY_SETTING_TOKEN is not set; self-apply skipped. Add the secret (fine-grained PAT with Administration and Issues read/write on this repo) to enable it."
             echo "proceed=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -49,6 +49,6 @@ jobs:
         if: steps.token.outputs.proceed == 'true'
         uses: ./
         with:
-          token: ${{ secrets.REPO_PLATFORM_TOKEN }}
+          token: ${{ secrets.APPLY_SETTING_TOKEN }}
           mode: ${{ inputs.check_only && 'check' || 'apply' }}
           on-missing-permission: fail

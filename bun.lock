@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "settings-as-code",
+      "name": "repo-settings-as-code",
       "dependencies": {
         "yaml": "^2.8.2",
       },

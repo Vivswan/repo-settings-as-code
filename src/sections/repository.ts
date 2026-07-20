@@ -50,7 +50,7 @@ export const repositorySection: Section = {
         const enabled = !("error" in probe);
         if (enabled !== Boolean(desired.enable_vulnerability_alerts)) {
           result.drift.push(
-            `repository.enable_vulnerability_alerts: ${desired.enable_vulnerability_alerts} != ${enabled}`,
+            `repository.enable_vulnerability_alerts: declared ${desired.enable_vulnerability_alerts} != live ${enabled}; apply will set the declared value`,
           );
         }
       }
@@ -68,7 +68,7 @@ export const repositorySection: Section = {
           (probe.data === null || (probe.data as { enabled?: boolean })?.enabled !== false);
         if (enabled !== Boolean(desired.enable_automated_security_fixes)) {
           result.drift.push(
-            `repository.enable_automated_security_fixes: ${desired.enable_automated_security_fixes} != ${enabled}`,
+            `repository.enable_automated_security_fixes: declared ${desired.enable_automated_security_fixes} != live ${enabled}; apply will set the declared value`,
           );
         }
       }

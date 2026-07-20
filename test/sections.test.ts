@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ApiError, GithubApi } from "../src/api.js";
+import { branchesSection } from "../src/sections/branches.js";
 import { labelsSection } from "../src/sections/labels.js";
 import { repositorySection } from "../src/sections/repository.js";
 import { rulesetsSection } from "../src/sections/rulesets.js";
@@ -80,8 +81,8 @@ describe("labels", () => {
     });
     const result = await labelsSection.run(ctx(api, true), [{ name: "bug", color: "000000" }]);
     expect(result.drift).toEqual([
-      'labels[bug].color: "000000" != "d73a4a"',
-      "labels[stale]: undeclared, would be DELETED",
+      'labels[bug].color: declared "000000" != live "d73a4a"; apply will set the declared value',
+      "labels[stale]: undeclared - not in the settings file, so apply will DELETE it; add it to the settings file to keep it",
     ]);
     expect(api.mutations()).toEqual([]);
   });
@@ -116,7 +117,9 @@ describe("rulesets", () => {
       },
     ]);
     expect(result.changes).toEqual(['created ruleset "build-tags"']);
-    expect(result.notes).toEqual(['ruleset "legacy" is not declared; left untouched']);
+    expect(result.notes).toEqual([
+      'ruleset "legacy" exists on the repo but is not declared in the settings file; left untouched - add it to the settings file to manage it, or delete it in the repo\'s GitHub settings',
+    ]);
     const post = api.mutations()[0];
     expect(post?.method).toBe("POST");
     const payload = post?.payload as { conditions: { ref_name: { include: string[] } } };
@@ -189,5 +192,35 @@ describe("review fixes", () => {
       { username: "alice", permission: "push" },
     ]);
     expect(result.drift).toEqual([]);
+  });
+});
+
+describe("branches", () => {
+  const declared = [{ name: "main", protection: { enforce_admins: true } }];
+
+  test("check: existing unprotected branch reports protectable drift", async () => {
+    const api = new MockApi({
+      "GET /repos/o/r/branches/main": { data: { name: "main" } },
+    });
+    const result = await branchesSection.run(ctx(api, true), declared);
+    expect(result.drift).toEqual([
+      "branches[main]: unprotected live but the settings file declares protection; apply will protect it",
+    ]);
+  });
+
+  test("check: missing branch is reported as nonexistent, not unprotected", async () => {
+    const api = new MockApi({}); // every GET 404s, including the branch itself
+    const result = await branchesSection.run(ctx(api, true), declared);
+    expect(result.drift).toHaveLength(1);
+    expect(result.drift[0]).toContain("does not exist");
+  });
+
+  test("check: inconclusive branch probe falls back to unprotected drift", async () => {
+    const api = new MockApi({
+      "GET /repos/o/r/branches/main": { error: { status: 403, message: "Forbidden", body: "" } },
+    });
+    const result = await branchesSection.run(ctx(api, true), declared);
+    expect(result.drift).toHaveLength(1);
+    expect(result.drift[0]).toContain("apply will protect it");
   });
 });

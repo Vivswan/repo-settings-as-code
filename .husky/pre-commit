@@ -1,3 +1,4 @@
+set -e
 bun run build
 git add lib
 bun run check

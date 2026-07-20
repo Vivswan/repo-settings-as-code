@@ -71,7 +71,9 @@ export async function listAll(
     }
     const chunk = result.data as unknown[];
     if (!Array.isArray(chunk)) {
-      throw new Error(`${section}: GET ${path} did not return a list`);
+      throw new Error(
+        `${section}: GET ${path} returned a JSON value that is not a list, so the response cannot be paginated. Check the "api-version" input against the GitHub REST docs for this endpoint`,
+      );
     }
     items.push(...chunk);
     if (chunk.length < 100) {
@@ -80,10 +82,54 @@ export async function listAll(
   }
 }
 
+/**
+ * Fine-grained PAT permission each section most likely needs, mirrored from
+ * the README's "Token permissions by section" table. Used to make
+ * permission errors actionable.
+ */
+const SECTION_PERMISSION: Record<string, string> = {
+  repository: "Administration",
+  rulesets: "Administration",
+  branches: "Administration",
+  autolinks: "Administration",
+  actions: "Administration",
+  collaborators: "Administration",
+  labels: "Issues",
+  milestones: "Issues",
+  environments: "Environments",
+  pages: "Pages",
+};
+
 export function throwFor(section: string, method: string, path: string, error: ApiError): never {
-  const detail = `${method} ${path}: ${error.status} ${error.message}`;
+  const cause = `${method} ${path}: ${error.status} ${error.message}`;
   if (isPermissionError(error)) {
-    throw new PermissionDenied(section, detail);
+    const alsoMissing =
+      error.status === 404 ? " (a 404 here can also mean the resource does not exist)" : "";
+    const grant =
+      section === "teams"
+        ? `grant "Members" (read) under the PAT's Organization permissions and "Administration" (read and write) under its Repository permissions`
+        : `grant "${SECTION_PERMISSION[section] ?? "Administration"}" (read and write) under the PAT's Repository permissions`;
+    throw new PermissionDenied(
+      section,
+      `the token was denied ${cause}${alsoMissing}. To fix, ${grant}`,
+    );
   }
-  throw new Error(`${section}: ${detail}`);
+  if (error.status >= 500) {
+    throw new Error(
+      `${section}: ${cause}. GitHub returned a server error; re-run the workflow, and retry later if it persists`,
+    );
+  }
+  if (error.status === 401) {
+    throw new Error(
+      `${section}: ${cause}. The token was rejected as invalid or expired; update the token input (or the secret it reads) with a valid, unexpired PAT`,
+    );
+  }
+  if (error.status === 429) {
+    throw new Error(
+      `${section}: ${cause}. The API rate limit was hit; re-run the workflow after the limit resets, or use a token with a higher rate limit`,
+    );
+  }
+  throw new Error(
+    `${section}: ${cause}. The API rejected the request; fix the "${section}" values in the settings file to satisfy the message above`,
+  );
 }

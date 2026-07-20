@@ -30,7 +30,9 @@ export const branchesSection: Section = {
         const isProtected = !("error" in probe);
         if (ctx.check) {
           if (isProtected) {
-            result.drift.push(`branches[${branch.name}]: protected, should be unprotected`);
+            result.drift.push(
+              `branches[${branch.name}]: protected live but the settings file declares protection: null; apply will remove the protection`,
+            );
           }
         } else if (isProtected) {
           await call(ctx, this.key, "DELETE", path);
@@ -51,7 +53,20 @@ export const branchesSection: Section = {
           throwFor(this.key, "GET", path, probe.error);
         }
         if ("error" in probe) {
-          result.drift.push(`branches[${branch.name}]: unprotected, should be protected`);
+          // Protection 404s for a missing BRANCH too. The branch probe is
+          // advisory: only a definitive 404 flips the message (other errors,
+          // e.g. a token without Contents read, fall back to the plain
+          // unprotected reading rather than misreporting or failing).
+          const branchProbe = await ctx.api.tryRequest("GET", path.replace(/\/protection$/, ""));
+          if ("error" in branchProbe && branchProbe.error.status === 404) {
+            result.drift.push(
+              `branches[${branch.name}]: declared in the settings file but the branch does not exist on the repo, so apply cannot protect it; create the branch, or remove it from the settings file`,
+            );
+          } else {
+            result.drift.push(
+              `branches[${branch.name}]: unprotected live but the settings file declares protection; apply will protect it`,
+            );
+          }
         } else {
           // GET shapes booleans as {enabled: bool}; compare declared keys
           // against a flattened view.
@@ -64,7 +79,7 @@ export const branchesSection: Section = {
           for (const key of REQUIRED_PROTECTION_KEYS) {
             if (!(key in branch.protection) && live[key] != null && live[key] !== false) {
               result.drift.push(
-                `branches[${branch.name}].protection.${key}: set live but omitted from the declaration - apply would REMOVE it`,
+                `branches[${branch.name}].protection.${key}: set live but omitted from the settings file, so apply would REMOVE it; add ${key} to the branch's protection in the settings file to keep it`,
               );
             }
           }

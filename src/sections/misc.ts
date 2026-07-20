@@ -36,7 +36,9 @@ export const environmentsSection: Section = {
           throwFor(this.key, "GET", path, probe.error);
         }
         if ("error" in probe) {
-          result.drift.push(`environments[${name}]: missing`);
+          result.drift.push(
+            `environments[${name}]: missing - declared in the settings file but not on the repo; apply will create it`,
+          );
         } else {
           result.drift.push(
             ...subsetDiff(settings, flattenEnvironment(probe.data), `environments[${name}]`),
@@ -115,8 +117,8 @@ export const autolinksSection: Section = {
       if (ctx.check) {
         result.drift.push(
           existing
-            ? `autolinks[${autolink.key_prefix}]: differs (autolinks are immutable; recreate)`
-            : `autolinks[${autolink.key_prefix}]: missing`,
+            ? `autolinks[${autolink.key_prefix}]: live settings differ from the settings file, and autolinks cannot be edited; apply will delete and recreate it`
+            : `autolinks[${autolink.key_prefix}]: missing - declared in the settings file but not on the repo; apply will create it`,
         );
         continue;
       }
@@ -134,7 +136,9 @@ export const autolinksSection: Section = {
     for (const autolink of live) {
       if (!declared.has(autolink.key_prefix)) {
         if (ctx.check) {
-          result.drift.push(`autolinks[${autolink.key_prefix}]: undeclared, would be DELETED`);
+          result.drift.push(
+            `autolinks[${autolink.key_prefix}]: undeclared - not in the settings file, so apply will DELETE it; add it to the settings file to keep it`,
+          );
         } else {
           await call(ctx, this.key, "DELETE", `/repos/${ctx.repo}/autolinks/${autolink.id}`);
           result.changes.push(`DELETED undeclared autolink ${autolink.key_prefix}`);
@@ -179,7 +183,7 @@ export const actionsSection: Section = {
     const routed = Object.keys(permissions).filter((k) => !KNOWN_PERMISSION_KEYS.has(k));
     if (routed.length > 0) {
       result.notes.push(
-        `unknown key(s) [${routed.join(", ")}] passed through to /actions/permissions - run check mode to confirm they took effect (a future /workflow-endpoint field would belong under the known workflow keys)`,
+        `key(s) [${routed.join(", ")}] are not recognized by this action; they were sent verbatim to PUT /actions/permissions, where GitHub may ignore them - run mode: check to confirm they took effect, or remove them from the actions section of the settings file`,
       );
     }
 
@@ -244,7 +248,9 @@ export const pagesSection: Section = {
 
     if (ctx.check) {
       if (!exists) {
-        result.drift.push("pages: not enabled");
+        result.drift.push(
+          "pages: declared in the settings file but GitHub Pages is not enabled on the repo; apply will enable it",
+        );
       } else {
         result.drift.push(...subsetDiff(desired, probe.data, "pages"));
       }
@@ -305,7 +311,9 @@ export const milestonesSection: Section = {
       const want: Record<string, unknown> = { ...milestone };
       if (!existing) {
         if (ctx.check) {
-          result.drift.push(`milestones[${milestone.title}]: missing`);
+          result.drift.push(
+            `milestones[${milestone.title}]: missing - declared in the settings file but not on the repo; apply will create it`,
+          );
         } else {
           await call(ctx, this.key, "POST", `/repos/${ctx.repo}/milestones`, want);
           result.changes.push(`created milestone "${milestone.title}"`);
@@ -333,7 +341,9 @@ export const milestonesSection: Section = {
     // issues); surfaced as notes instead.
     for (const milestone of live) {
       if (!declared.has(milestone.title)) {
-        result.notes.push(`milestone "${milestone.title}" is not declared; left untouched`);
+        result.notes.push(
+          `milestone "${milestone.title}" exists on the repo but is not declared in the settings file; left untouched - add it to the settings file to manage it, or delete it on GitHub (closing is not enough; closed milestones are still listed)`,
+        );
       }
     }
     return result;
@@ -374,8 +384,8 @@ export const collaboratorsSection: Section = {
       if (ctx.check) {
         result.drift.push(
           existing
-            ? `collaborators[${collaborator.username}]: role "${existing.role_name}" != wanted "${wantRole}"`
-            : `collaborators[${collaborator.username}]: missing (invitation would be sent)`,
+            ? `collaborators[${collaborator.username}]: live role "${existing.role_name}" != declared "${wantRole}"; apply will set the declared permission`
+            : `collaborators[${collaborator.username}]: missing - not a collaborator on the repo; apply will send an invitation with "${permission}"`,
         );
       } else {
         const { username: _u, ...body } = collaborator;
@@ -398,7 +408,9 @@ export const collaboratorsSection: Section = {
         continue; // never remove the owner
       }
       if (ctx.check) {
-        result.drift.push(`collaborators[${collaborator.login}]: undeclared, would be REMOVED`);
+        result.drift.push(
+          `collaborators[${collaborator.login}]: undeclared - not in the settings file, so apply will REMOVE them; add them to the settings file to keep their access`,
+        );
       } else {
         await call(
           ctx,
@@ -427,7 +439,9 @@ export const teamsSection: Section = {
       if (orgProbe.error.status !== 404) {
         throwFor(this.key, "GET", `/orgs/${ctx.owner}`, orgProbe.error);
       }
-      result.notes.push("teams: repository owner is not an organization; section skipped");
+      result.notes.push(
+        `teams: owner "${ctx.owner}" is a personal account, not an organization, so team access does not apply; section skipped - remove the teams section from the settings file to silence this note`,
+      );
       return result;
     }
     const roleForPermission: Record<string, string> = { push: "write", pull: "read" };
@@ -443,13 +457,17 @@ export const teamsSection: Section = {
           throwFor(this.key, "GET", path, probe.error);
         }
         if ("error" in probe) {
-          result.drift.push(`teams[${team.name}]: no access to ${ctx.repo}`);
+          result.drift.push(
+            `teams[${team.name}]: no access to ${ctx.repo}; apply will grant "${team.permission ?? "push"}"`,
+          );
         } else {
           const permission = team.permission ?? "push";
           const wantRole = roleForPermission[permission] ?? permission;
           const liveRole = (probe.data as { role_name?: string } | null)?.role_name ?? "";
           if (liveRole !== wantRole) {
-            result.drift.push(`teams[${team.name}]: role "${liveRole}" != wanted "${wantRole}"`);
+            result.drift.push(
+              `teams[${team.name}]: live role "${liveRole}" != declared "${wantRole}"; apply will set the declared permission`,
+            );
           }
         }
       } else {

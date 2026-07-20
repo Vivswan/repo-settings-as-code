@@ -1,13 +1,14 @@
 ---
-# Repository settings managed by the Probot "Settings" GitHub App
-# (https://github.com/apps/settings). This file is inert unless that app is
-# installed on the repo. The `rulesets` block below is an experimental upstream
-# feature (repository-settings/app) -- its schema may still change.
+# Repository settings applied by this repo's own Apply Settings workflow
+# (.github/workflows/apply-settings.yml) using the action at HEAD; needs the
+# APPLY_SETTING_TOKEN secret. Undeclared labels are deleted; undeclared
+# rulesets are left alone. Schema: Probot settings.yml superset (see README).
 # Baseline managed by Vivswan/repo-platform; repo-specific
 # additions survive template updates via three-way merge.
 
 repository:
-  description: "GitHub Action applying declarative repository settings: rulesets, labels, branch protection, and more - a loud, stateless Probot Settings replacement"
+  description: "GitHub Action applying declarative repository settings: rulesets, labels, branch protection, and more. A loud, stateless Probot Settings replacement."
+  topics: github-action, repository-settings, settings-as-code, configuration-as-code, probot-settings, rulesets, branch-protection, labels
   has_issues: true
   has_wiki: false
   has_projects: false

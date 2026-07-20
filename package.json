@@ -1,5 +1,5 @@
 {
-  "name": "settings-as-code",
+  "name": "repo-settings-as-code",
   "private": true,
   "description": "GitHub Action applying declarative repository settings: rulesets, labels, branch protection, and more.",
   "type": "module",

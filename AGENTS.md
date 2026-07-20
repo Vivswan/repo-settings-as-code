@@ -37,7 +37,7 @@ Settings as Code: GitHub Action applying declarative repository settings: rulese
 - `lib/index.js` is the COMMITTED bundled entrypoint the action runs
   (node24); regenerate with `bun run build` after any `src/` change. CI's
   bundle-check job fails when it drifts. It is exempt from the typography
-  check (third-party unicode) and excluded from biome.
+  check (third-party unicode) and excluded from [biome](https://biomejs.dev).
 - The apply/check engine lives in `src/`; one handler per settings section
   in `src/sections/`. All GitHub API list calls must go through
   `listAll()` (pagination); errors through `call()`/`throwFor()` so the

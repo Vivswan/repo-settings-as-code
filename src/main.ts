@@ -1,5 +1,5 @@
 /**
- * settings-as-code: apply a declarative .github/settings.yml to the repo.
+ * repo-settings-as-code: apply a declarative .github/settings.yml to the repo.
  *
  * Policy model:
  * - mode: apply (default) mutates; check reports drift and exits 1 on any.
@@ -86,7 +86,7 @@ function writeSummary(outcomes: SectionOutcome[], mode: string): void {
     failed: "x",
   };
   const lines = [
-    `## settings-as-code (${mode})`,
+    `## repo-settings-as-code (${mode})`,
     "",
     "| Section | Status | Detail |",
     "|---|---|---|",
@@ -110,20 +110,28 @@ export async function run(): Promise<number> {
   };
   const token = input("token") || process.env.GITHUB_TOKEN || "";
   if (!token) {
-    return fail("no token: set the `token` input");
+    return fail(
+      'cannot call the GitHub API: no token was provided. Set the "token" input on the action step (or export GITHUB_TOKEN)',
+    );
   }
   const repo = input("repository") || process.env.GITHUB_REPOSITORY || "";
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) {
-    return fail(`invalid repository "${repo}"`);
+    return fail(
+      `cannot target a repository: "${repo}" is not an owner/name slug. Set the "repository" input (or GITHUB_REPOSITORY) to a value like "octocat/hello-world"`,
+    );
   }
   const settingsFile = input("settings-file") || ".github/settings.yml";
   const mode = input("mode") || "apply";
   if (mode !== "apply" && mode !== "check") {
-    return fail(`mode must be "apply" or "check", got "${mode}"`);
+    return fail(
+      `the "mode" input is "${mode}", which is not a supported mode. Set it to "apply" (mutate settings) or "check" (report drift only)`,
+    );
   }
   const onMissingPermission = input("on-missing-permission") || "fail";
   if (onMissingPermission !== "fail" && onMissingPermission !== "warn") {
-    return fail(`on-missing-permission must be "fail" or "warn"`);
+    return fail(
+      `the "on-missing-permission" input is "${onMissingPermission}", which is not a supported policy. Set it to "fail" (default) or "warn" (skip sections the token cannot touch)`,
+    );
   }
   const requiredSections = new Set(
     input("required-sections")
@@ -141,7 +149,9 @@ export async function run(): Promise<number> {
   const knownSections = new Set<string>(SECTION_KEYS);
   for (const name of [...requiredSections, ...onlySections]) {
     if (!knownSections.has(name)) {
-      return fail(`unknown section "${name}" in inputs (known: ${SECTION_KEYS.join(", ")})`);
+      return fail(
+        `unknown section "${name}" in the "sections" or "required-sections" input; it matches none of: ${SECTION_KEYS.join(", ")}. Fix the name in the workflow's input list`,
+      );
     }
   }
 
@@ -149,10 +159,14 @@ export async function run(): Promise<number> {
   try {
     settings = (parseYaml(readFileSync(settingsFile, "utf8")) ?? {}) as SettingsFile;
   } catch (error) {
-    return fail(`cannot read ${settingsFile}: ${String(error)}`);
+    return fail(
+      `cannot read settings from ${settingsFile}: ${String(error)}. Check that the file exists at that path (set the "settings-file" input if it lives elsewhere) and is valid YAML`,
+    );
   }
   if (typeof settings !== "object" || Array.isArray(settings)) {
-    return fail(`${settingsFile} must be a YAML mapping`);
+    return fail(
+      `${settingsFile} must be a YAML mapping of section names to settings, but its top level parsed as ${Array.isArray(settings) ? "a list" : `a ${typeof settings}`}. Rewrite the top level as "section: ..." keys`,
+    );
   }
   // A misspelled section silently doing nothing would violate the loud-
   // failure promise; unknown top-level keys are hard errors (prefix custom
@@ -167,11 +181,11 @@ export async function run(): Promise<number> {
       // are warnings, not errors.
       annotate(
         "warning",
-        `ignoring unknown top-level section(s) outside the sections allowlist: ${unknownKeys.join(", ")}`,
+        `ignoring unknown top-level section(s) outside the "sections" allowlist: ${unknownKeys.join(", ")}. Upgrade the action to a version that knows them, or remove them from ${settingsFile}`,
       );
     } else {
       return fail(
-        `unknown top-level section(s) in ${settingsFile}: ${unknownKeys.join(", ")} (known: ${SECTION_KEYS.join(", ")}). Fix the typo, or prefix private keys with "_", or set the sections input to limit processing`,
+        `unknown top-level section(s) in ${settingsFile}: ${unknownKeys.join(", ")} (known: ${SECTION_KEYS.join(", ")}). Fix the typo, or prefix private keys with "_", or set the "sections" input to limit processing`,
       );
     }
   }
@@ -216,7 +230,7 @@ export async function run(): Promise<number> {
         annotate("error", `preflight: ${line}`);
       }
       return fail(
-        `preflight failed for ${denied.length} section(s); nothing was applied (fix the token or use on-missing-permission: warn)`,
+        `preflight failed: the token cannot access ${denied.length} section(s), so nothing was applied. Grant the permissions named above, or set on-missing-permission: warn to skip those sections`,
       );
     }
   }
@@ -247,19 +261,22 @@ export async function run(): Promise<number> {
           partial = true;
           continue;
         }
-        const hint = error.detail.includes(" 404 ")
-          ? "token lacks permission or the resource does not exist"
-          : "token lacks permission";
         annotate(
           "error",
-          `${section.key}: ${hint}${required ? " (required section)" : ""} - ${error.detail}`,
+          `${section.key}: not applied${required ? " (listed in required-sections, so this fails the run)" : ""} - ${error.detail}`,
         );
         outcomes.push({ key: section.key, status: "failed", detail: [error.detail] });
         failed = true;
         continue;
       }
-      annotate("error", String(error));
-      outcomes.push({ key: section.key, status: "failed", detail: [String(error)] });
+      // throwFor()-raised errors already carry section, cause, and fix;
+      // prefix anything else so the failing section is still named.
+      const message = error instanceof Error ? error.message : String(error);
+      const annotated = message.startsWith(`${section.key}:`)
+        ? message
+        : `${section.key}: ${message}`;
+      annotate("error", annotated);
+      outcomes.push({ key: section.key, status: "failed", detail: [annotated] });
       failed = true;
       continue;
     }
@@ -320,7 +337,10 @@ if (invokedDirectly) {
   run().then(
     (code) => process.exit(code),
     (error) => {
-      annotate("error", String(error));
+      annotate(
+        "error",
+        `repo-settings-as-code stopped unexpectedly: ${String(error)}. Re-run the workflow; if it recurs, report a bug with this log attached`,
+      );
       process.exit(1);
     },
   );

@@ -1,4 +1,4 @@
-# Consumers pin `uses: Vivswan/settings-as-code@v1`; move the major tag to
+# Consumers pin `uses: Vivswan/repo-settings-as-code@v1`; move the major tag to
 # each release so they get fixes without changing their pin.
 name: Retag Major
 

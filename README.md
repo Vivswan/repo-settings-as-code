@@ -1,8 +1,8 @@
-# settings-as-code
+# repo-settings-as-code
 
-Apply declarative repository settings from `.github/settings.yml` - a loud,
+Apply declarative repository settings from `.github/settings.yml`: a loud,
 stateless replacement for the [Probot Settings app](https://github.com/repository-settings/app)
-that also manages **rulesets** (branch and tag). Every apply is a visible
+that also manages [rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets) (branch and tag). Every apply is a visible
 workflow run that fails with the API's error message; nothing happens
 silently.
 
@@ -25,20 +25,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: Vivswan/settings-as-code@v1
+      - uses: Vivswan/repo-settings-as-code@v1
         with:
           token: ${{ secrets.ADMIN_TOKEN }}
 ```
 
-Most sections need a fine-grained PAT with **Administration: read & write**
-on the repository - the default `GITHUB_TOKEN` can never hold that
+Most sections need a [fine-grained PAT](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token) with **Administration: read & write**
+on the repository; the default `GITHUB_TOKEN` can never hold that
 permission.
 
 ## Development
 
-`src/` is TypeScript built with bun; `lib/index.js` is the committed bundle
+`src/` is TypeScript built with [bun](https://bun.com); `lib/index.js` is the committed bundle
 the action executes (`bun run build` regenerates it; CI fails on drift).
 Run `bun run check` for lint + typecheck + tests + bundle freshness.
+
+## Debugging
+
+Every API call the action makes is traced as a debug line: method, path,
+request payload, response status, and timing. Debug lines are hidden in
+normal runs; to see them, re-run the workflow with "[Enable debug logging](https://docs.github.com/en/actions/monitoring-and-troubleshooting-workflows/troubleshooting-workflows/enabling-debug-logging)"
+checked (or set the `ACTIONS_STEP_DEBUG` secret to `true`). Failures do not
+need debug mode: every error already carries the API's error message
+verbatim plus the fix, and the step summary table shows the outcome per
+section.
 
 ## Inputs
 
@@ -58,20 +68,20 @@ Outputs: `result` (`applied` / `partial` / `clean` / `drift` / `failed`) and
 
 ## Semantics
 
-- **Stateless, declared-keys-only**: a key you do not declare is never
+- Stateless, declared-keys-only: a key you do not declare is never
   touched or compared. There is no state file; resources are matched by
   their natural names.
-- **Labels**: declared labels are upserted (rename via `new_name`);
-  **undeclared labels are DELETED** (Probot parity), loudly.
-- **Rulesets**: upserted by name with the full payload; **undeclared
-  rulesets are never deleted** - removing protection stays a human action.
-- **Milestones**: upserted by title; undeclared ones are kept (they may hold
+- Labels: declared labels are upserted (rename via `new_name`);
+  undeclared labels are DELETED (Probot parity), loudly.
+- Rulesets: upserted by name with the full payload; undeclared
+  rulesets are never deleted, since removing protection stays a human action.
+- Milestones: upserted by title; undeclared ones are kept (they may hold
   issues) and listed as notices.
 - Permission failures (403, or 404 on admin endpoints with a fine-grained
   token) are the only softenable errors; everything else always fails with
   the API message verbatim.
-- **Preflight barrier**: under `on-missing-permission: fail`, every
-  declared section is probed read-only before ANY write - if a section is
+- Preflight barrier: under `on-missing-permission: fail`, every
+  declared section is probed read-only before ANY write; if a section is
   inaccessible, nothing is applied at all. (The API has no transactions;
   a read-but-not-write token can still fail mid-apply, and re-running
   after fixing it converges because applies are idempotent.)
@@ -135,14 +145,14 @@ rulesets:
 
 ## Forward compatibility
 
-Passthrough-first by design: payloads are sent to the API **verbatim**
+Passthrough-first by design: payloads are sent to the API verbatim
 except for documented normalizations (ref prefixes, topics splitting,
 vocabulary mapping), so new fields and rule types GitHub ships work the day
-they exist - declare them in `settings.yml`, no action update needed. This
+they exist: declare them in `settings.yml`, no action update needed. This
 holds for `rulesets` (new rule types, bypass-actor fields, condition
 types), `repository`, `branches`, `environments`, `actions`, and `pages`.
 Two deliberate boundaries: a brand-new top-level settings *category* needs
-a handler (a new API endpoint cannot be guessed - unknown sections fail
+a handler (a new API endpoint cannot be guessed, so unknown sections fail
 loudly rather than no-op), and the pinned `X-GitHub-Api-Version` only
 changes intentionally.
 
@@ -155,13 +165,21 @@ protection to `rulesets`. Differences: applies run visibly in Actions
 (loud failures instead of silent skips), rulesets are supported, and
 nothing except labels/autolinks/collaborators is ever deleted implicitly.
 
+In short, what you gain over the app: visible runs instead of silent
+no-ops, a drift-report check mode, first-class rulesets, a partial-success
+policy (`on-missing-permission` + `required-sections`), a token you scope
+yourself, and per-call debug tracing. What you lose: org-wide config
+inheritance (`extends`), which this action does not do. The full
+side-by-side table is in
+[docs/COVERAGE.md](docs/COVERAGE.md#compared-to-the-probot-settings-app).
+
 ## Token permissions by section
 
 | Section | Fine-grained PAT permission |
 |---|---|
 | repository, rulesets, autolinks | Administration: write |
 | labels, milestones | Issues: write |
-| branches | Administration: write |
+| branches | Administration: write (optionally Contents: read, so check mode can tell a missing branch from an unprotected one) |
 | environments | Environments: write |
 | pages | Pages: write |
 | actions | Administration: write |

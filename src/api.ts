@@ -9,6 +9,17 @@ export interface ApiError {
   body: string;
 }
 
+/**
+ * Trace line for every API call. ::debug:: output appears only when the run
+ * has step debug logging enabled (re-run with debug logging, or set the
+ * ACTIONS_STEP_DEBUG secret to true), so normal runs stay quiet while a
+ * debugging user sees every request, its payload, status, and timing.
+ */
+function debugLog(message: string): void {
+  const escaped = message.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+  console.log(`::debug::${escaped}`);
+}
+
 export class GithubApi {
   constructor(
     private readonly token: string,
@@ -21,7 +32,9 @@ export class GithubApi {
     const result = await this.tryRequest(method, path, payload);
     if ("error" in result) {
       const { status, message } = result.error;
-      throw new Error(`${method} ${path} failed: ${status} ${message}`);
+      throw new Error(
+        `${method} ${path} failed: ${status} ${message}. Check the token's permissions and the request payload against the GitHub REST docs for this endpoint`,
+      );
     }
     return result.data;
   }
@@ -33,6 +46,7 @@ export class GithubApi {
     payload?: unknown,
     options?: { accept?: string },
   ): Promise<{ data: unknown } | { error: ApiError }> {
+    const started = Date.now();
     const response = await fetch(`${this.baseUrl}${path}`, {
       method,
       headers: {
@@ -44,6 +58,10 @@ export class GithubApi {
       body: payload === undefined ? undefined : JSON.stringify(payload),
     });
     const text = await response.text();
+    debugLog(
+      `${method} ${path} -> ${response.status} (${Date.now() - started}ms)` +
+        (payload === undefined ? "" : ` payload: ${JSON.stringify(payload)}`),
+    );
     if (!response.ok) {
       let message = text;
       try {
@@ -71,7 +89,9 @@ export class GithubApi {
       const data = await this.request("GET", `${path}${separator}per_page=100&page=${page}`);
       const chunk = data as unknown[];
       if (!Array.isArray(chunk)) {
-        throw new Error(`GET ${path} did not return a list`);
+        throw new Error(
+          `GET ${path} returned a JSON value that is not a list, so the response cannot be paginated. Check that the path is a list endpoint and the API version header matches the GitHub REST docs`,
+        );
       }
       items.push(...chunk);
       if (chunk.length < 100) {

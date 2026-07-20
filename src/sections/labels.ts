@@ -35,7 +35,7 @@ export const labelsSection: Section = {
       const byTarget = liveByKey.get(nameKey(finalName));
       if (label.new_name && bySource && byTarget && bySource !== byTarget) {
         throw new Error(
-          `labels: cannot rename "${label.name}" to "${finalName}" - both exist as separate labels; delete one first`,
+          `labels: cannot rename "${label.name}" to "${finalName}" - both already exist as separate labels on the repo; delete one of them on GitHub, or remove new_name from "${label.name}" in the settings file`,
         );
       }
       const existing = bySource ?? byTarget;
@@ -47,7 +47,9 @@ export const labelsSection: Section = {
       delete (extraKeys as Record<string, unknown>).description;
       if (!existing) {
         if (ctx.check) {
-          result.drift.push(`labels[${finalName}]: missing`);
+          result.drift.push(
+            `labels[${finalName}]: missing - declared in the settings file but not on the repo; apply will create it`,
+          );
         } else {
           await call(ctx, this.key, "POST", `/repos/${ctx.repo}/labels`, {
             name: finalName,
@@ -68,16 +70,18 @@ export const labelsSection: Section = {
       if (colorDrift || descriptionDrift || renameDrift || extraDrift.length > 0) {
         if (ctx.check) {
           if (renameDrift) {
-            result.drift.push(`labels[${existing.name}]: should be named "${finalName}"`);
+            result.drift.push(
+              `labels[${existing.name}]: should be named "${finalName}" per the settings file; apply will rename it`,
+            );
           }
           if (colorDrift) {
             result.drift.push(
-              `labels[${finalName}].color: "${wantColor}" != "${normalizeColor(existing.color)}"`,
+              `labels[${finalName}].color: declared "${wantColor}" != live "${normalizeColor(existing.color)}"; apply will set the declared value`,
             );
           }
           if (descriptionDrift) {
             result.drift.push(
-              `labels[${finalName}].description: ${JSON.stringify(wantDescription)} != ${JSON.stringify(existing.description ?? "")}`,
+              `labels[${finalName}].description: declared ${JSON.stringify(wantDescription)} != live ${JSON.stringify(existing.description ?? "")}; apply will set the declared value`,
             );
           }
           result.drift.push(...extraDrift);
@@ -103,7 +107,9 @@ export const labelsSection: Section = {
     for (const label of liveByKey.values()) {
       if (!declaredKeys.has(nameKey(label.name))) {
         if (ctx.check) {
-          result.drift.push(`labels[${label.name}]: undeclared, would be DELETED`);
+          result.drift.push(
+            `labels[${label.name}]: undeclared - not in the settings file, so apply will DELETE it; add it to the settings file to keep it`,
+          );
         } else {
           await call(
             ctx,

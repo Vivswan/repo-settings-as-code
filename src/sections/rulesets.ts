@@ -32,7 +32,9 @@ export const rulesetsSection: Section = {
       const id = idByName.get(ruleset.name);
       if (id === undefined) {
         if (ctx.check) {
-          result.drift.push(`rulesets[${ruleset.name}]: missing`);
+          result.drift.push(
+            `rulesets[${ruleset.name}]: missing - declared in the settings file but not on the repo; apply will create it`,
+          );
         } else {
           await call(ctx, this.key, "POST", `/repos/${ctx.repo}/rulesets`, ruleset);
           result.changes.push(`created ruleset "${ruleset.name}"`);
@@ -51,7 +53,9 @@ export const rulesetsSection: Section = {
     const declaredNames = new Set(desired.map((r) => r.name));
     for (const live of repoRulesets) {
       if (!declaredNames.has(live.name)) {
-        result.notes.push(`ruleset "${live.name}" is not declared; left untouched`);
+        result.notes.push(
+          `ruleset "${live.name}" exists on the repo but is not declared in the settings file; left untouched - add it to the settings file to manage it, or delete it in the repo's GitHub settings`,
+        );
       }
     }
     return result;

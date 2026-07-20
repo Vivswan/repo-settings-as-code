@@ -28,7 +28,7 @@ jobs:
       - name: Test
         run: bun run test
 
-  # The bundled entrypoint is committed (node20 actions run lib/index.js);
+  # The bundled entrypoint is committed (the node24 runtime executes lib/index.js);
   # fail if it drifts from src/.
   bundle-check:
     runs-on: ubuntu-latest
