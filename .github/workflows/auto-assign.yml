@@ -1,0 +1,33 @@
+# This file is managed by Vivswan/repo-platform.
+# Local edits may be replaced during template updates.
+name: Auto Assign
+
+on:
+  workflow_dispatch:
+  issues:
+    types: [opened]
+  pull_request:
+    types: [opened, synchronize]
+  # Code scanning alerts have no creation trigger for Actions, so assign them
+  # after each CodeQL run completes, with a weekly cron as a catch-up.
+  workflow_run:
+    workflows: ["CodeQL"]
+    types: [completed]
+  schedule:
+    - cron: "23 6 * * 1"
+
+# security-events is granted unconditionally: a reusable-workflow call is
+# statically validated against the permissions of EVERY job in the called
+# file regardless of each job's `if:`, so the alert-assignment job's
+# permissions must be grantable even where code scanning is disabled. The
+# code_scanning input below keeps that job from actually running there.
+permissions:
+  issues: write
+  pull-requests: write
+  security-events: write
+
+jobs:
+  auto-assign:
+    uses: Vivswan/repo-platform/.github/workflows/reusable-auto-assign.yml@main
+    with:
+      code_scanning: true

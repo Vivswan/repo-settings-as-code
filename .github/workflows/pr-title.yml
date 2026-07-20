@@ -1,0 +1,19 @@
+# This file is managed by Vivswan/repo-platform.
+# Local edits may be replaced during template updates.
+#
+# PRs are squash-merged, so the squash commit subject defaults to the PR
+# title; enforcing a Conventional Commit PR title keeps versioning tooling
+# (release-please) working. Examples: `feat: ...` (minor), `fix: ...`
+# (patch), `feat!: ...` (major), `chore:`/`docs:` (no release).
+name: PR Title
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  conventional-title:
+    uses: Vivswan/repo-platform/.github/workflows/reusable-pr-title.yml@main

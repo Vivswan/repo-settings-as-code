@@ -1,0 +1,24 @@
+# This file is managed by Vivswan/repo-platform.
+# Local edits may be replaced during template updates.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "23 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  codeql-javascript:
+    uses: Vivswan/repo-platform/.github/workflows/reusable-codeql.yml@main
+    with:
+      language: javascript-typescript
+    permissions:
+      contents: read
+      security-events: write
+      actions: read

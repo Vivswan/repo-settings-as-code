@@ -1,0 +1,12 @@
+# This file is managed by Vivswan/repo-platform.
+# Its presence marks this repository as intentionally participating in
+# template updates; the sync workflow refuses to run without it.
+
+template:
+  repository: Vivswan/repo-platform
+  channel: staging
+  modules: ["agents", "bun", "release-please", "issue-templates", "pr-title", "auto-assign"]
+
+update:
+  enabled: true
+  auto_merge: false

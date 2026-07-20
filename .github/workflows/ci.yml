@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Lint (biome)
+        run: bun run lint
+      - name: Typecheck
+        run: bun run typecheck
+      - name: Test
+        run: bun run test
+
+  # The bundled entrypoint is committed (node20 actions run lib/index.js);
+  # fail if it drifts from src/.
+  bundle-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Rebuild and compare
+        run: bun run build:check
+
+  # Self-test: run the action from this checkout in check mode against this
+  # repository. Drift or permission skips are fine (the default token cannot
+  # read admin surfaces); a CRASH is not - assert the action produced a
+  # result output, which an exception never does.
+  self-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run settings-as-code (check mode)
+        id: selfcheck
+        uses: ./
+        continue-on-error: true
+        with:
+          mode: check
+          on-missing-permission: warn
+      - name: Assert the action ran to completion
+        env:
+          RESULT: ${{ steps.selfcheck.outputs.result }}
+        run: |
+          case "$RESULT" in
+            clean|drift|partial|failed) echo "action completed with result=$RESULT" ;;
+            *) echo "::error::action crashed (no result output)"; exit 1 ;;
+          esac
+
+  typography:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Vivswan/repo-platform/actions/check-typography@main
+
+  validate-template:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Vivswan/repo-platform/actions/validate-template@main
+
+  commit-names:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: Vivswan/repo-platform/actions/validate-commit-names@main
+
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: raven-actions/actionlint@v2
+
+  all-green:
+    name: all-green
+    if: always()
+    needs:
+      - check
+      - bundle-check
+      - self-check
+      - typography
+      - validate-template
+      - commit-names
+      - actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - name: All jobs green
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for result in $RESULTS; do
+            if [ "$result" != "success" ]; then
+              echo "::error::a required job did not succeed"
+              exit 1
+            fi
+          done

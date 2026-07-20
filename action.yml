@@ -1,0 +1,57 @@
+name: Settings as Code
+description: >-
+  Apply declarative repository settings from .github/settings.yml - repo
+  fields, topics, labels, RULESETS (branch and tag), branch protection,
+  environments, autolinks, actions permissions, pages, collaborators, teams,
+  and milestones. A loud, stateless replacement for the Probot Settings app.
+author: Vivswan
+branding:
+  icon: settings
+  color: blue
+
+inputs:
+  token:
+    description: >-
+      Token used for the API calls. Most sections need a fine-grained PAT
+      with Administration read/write on the repository - the default
+      GITHUB_TOKEN can never hold that permission.
+    required: false
+    default: ${{ github.token }}
+  repository:
+    description: Target repository (owner/name). Defaults to the current repository.
+    required: false
+    default: ""
+  settings-file:
+    description: Path to the settings YAML file.
+    required: false
+    default: .github/settings.yml
+  mode:
+    description: apply (mutate) or check (report drift, exit 1 on any, no writes).
+    required: false
+    default: apply
+  on-missing-permission:
+    description: >-
+      fail (default) or warn. Under warn, sections the token cannot access
+      are skipped with a warning and the run stays green (partial success).
+    required: false
+    default: fail
+  required-sections:
+    description: >-
+      Comma-separated section names that must fully apply even under
+      on-missing-permission: warn (minimum requirements).
+    required: false
+    default: ""
+  sections:
+    description: Optional comma-separated allowlist of sections to process.
+    required: false
+    default: ""
+
+outputs:
+  result:
+    description: applied | partial | clean | drift | failed
+  skipped-sections:
+    description: Comma-separated sections skipped for missing permissions.
+
+runs:
+  using: node20
+  main: lib/index.js
