@@ -1,8 +1,7 @@
 ---
-# Repository settings managed by the Probot "Settings" GitHub App
-# (https://github.com/apps/settings). This file is inert unless that app is
-# installed on the repo. The `rulesets` block below is an experimental upstream
-# feature (repository-settings/app) -- its schema may still change.
+# Declarative repository settings. INERT until the settings-sync module is
+# enabled (copier update -d 'modules=[..., settings-sync]') or the file is
+# applied manually via Vivswan/settings-as-code.
 # Baseline managed by Vivswan/repo-platform; repo-specific
 # additions survive template updates via three-way merge.
 
