@@ -41,6 +41,12 @@ inputs:
     description: Optional comma-separated allowlist of sections to process.
     required: false
     default: ""
+  api-version:
+    description: >-
+      X-GitHub-Api-Version header value. Override to opt into a newer REST
+      API version before this action defaults to it.
+    required: false
+    default: "2022-11-28"
 
 outputs:
   result:

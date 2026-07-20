@@ -13,6 +13,7 @@ export class GithubApi {
   constructor(
     private readonly token: string,
     private readonly baseUrl = process.env.GITHUB_API_URL ?? "https://api.github.com",
+    private readonly apiVersion = "2022-11-28",
   ) {}
 
   /** Raw request. Returns parsed JSON (or null for 204/empty bodies). */
@@ -37,7 +38,7 @@ export class GithubApi {
       headers: {
         Accept: options?.accept ?? "application/vnd.github+json",
         Authorization: `Bearer ${this.token}`,
-        "X-GitHub-Api-Version": "2022-11-28",
+        "X-GitHub-Api-Version": this.apiVersion,
         ...(payload === undefined ? {} : { "Content-Type": "application/json" }),
       },
       body: payload === undefined ? undefined : JSON.stringify(payload),

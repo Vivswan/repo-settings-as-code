@@ -166,9 +166,10 @@ export async function run(): Promise<number> {
     );
   }
 
+  const apiVersion = input("api-version") || "2022-11-28";
   const [owner] = repo.split("/");
   const ctx: SectionContext = {
-    api: new GithubApi(token),
+    api: new GithubApi(token, undefined, apiVersion),
     repo,
     owner: owner ?? "",
     check: mode === "check",
