@@ -95,12 +95,7 @@ function writeSummary(outcomes: SectionOutcome[], mode: string): void {
     const detail =
       outcome.detail
         // Escape the escape character first, then the table delimiter.
-        .map((line) =>
-          line
-            .replace(/\\/g, "\\\\")
-            .replace(/\|/g, "\\|")
-            .replace(/\r?\n/g, " "),
-        )
+        .map((line) => line.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " "))
         .join("<br>") || "-";
     lines.push(`| ${outcome.key} | :${icon[outcome.status]}: ${outcome.status} | ${detail} |`);
   }
