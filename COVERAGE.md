@@ -20,11 +20,12 @@ app installation for a workflow. What changes:
 | Rulesets | Experimental upstream feature; schema may change | First class: branch, tag, and push targets, upsert by name, never deletes undeclared rulesets |
 | Partial success policy | None | on-missing-permission: fail or warn, plus required-sections as a minimum-requirements floor |
 | Token | App installation token; its scope is invisible in the repo | A PAT you mint and scope yourself; permission errors name the exact missing permission |
-| Org-level shared config | Yes (org _settings repo with extends) | No; this action is per-repo by design (org inheritance can be built with a checkout of a shared file) |
+| Org-level shared config | Yes (org _settings repo with extends) | Yes, as multi-repo mode: an admin repo with a defaults-file plus per-repo files (repos-dir) or each repo's own settings.yml (repos input); no hosted app needed |
 | Call transparency | None | Every API call is traced as a debug line (method, path, payload, status, timing) when debug logging is on |
 
-The one Probot feature this action deliberately lacks is org-wide
-config inheritance (extends). Everything else in Probot's schema is
+The one Probot-family feature without a direct equivalent is suborg-level
+grouping (safe-settings' .github/suborgs layer); here the layers are the
+defaults-file and per-repo files. Everything else in Probot's schema is
 supported, plus the rows above.
 
 ## Supported

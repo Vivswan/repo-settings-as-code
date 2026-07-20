@@ -62,9 +62,14 @@ section.
 | `required-sections` | (empty) | Sections that must fully apply even under `warn` |
 | `sections` | (all declared) | Comma-separated allowlist of sections to process |
 | `api-version` | `2022-11-28` | `X-GitHub-Api-Version` header; override to opt into a newer REST API version |
+| `repos` | (empty) | Multi-repo remote mode: `owner/name` list (comma/newline), or `*` to discover owned repos |
+| `repos-dir` | (empty) | Multi-repo central mode: directory of per-repo settings files in this repo |
+| `defaults-file` | (empty) | YAML merged under every multi-repo target's settings |
 
-Outputs: `result` (`applied` / `partial` / `clean` / `drift` / `failed`) and
-`skipped-sections`.
+Outputs: `result` (`applied` / `partial` / `clean` / `drift` / `failed`;
+worst-of across targets in multi-repo mode, where `skipped` can also
+appear), `skipped-sections`, and `repos-result` (multi-repo mode: a JSON
+map of `owner/name` to `{result, source, skippedSections}`).
 
 ## Semantics
 
@@ -82,13 +87,58 @@ Outputs: `result` (`applied` / `partial` / `clean` / `drift` / `failed`) and
   the API message verbatim.
 - Preflight barrier: under `on-missing-permission: fail`, every
   declared section is probed read-only before ANY write; if a section is
-  inaccessible, nothing is applied at all. (The API has no transactions;
-  a read-but-not-write token can still fail mid-apply, and re-running
-  after fixing it converges because applies are idempotent.)
+  inaccessible, nothing is applied at all (per repository in multi-repo
+  mode; earlier targets in the same run are already done). The API has no
+  transactions; a read-but-not-write token can still fail mid-apply, and
+  re-running after fixing it converges because applies are idempotent.
 
-See [docs/COVERAGE.md](docs/COVERAGE.md) for the full inventory: everything
+See [COVERAGE.md](COVERAGE.md) for the full inventory: everything
 supported, every repo-scoped gap, and the user-scoped surface that is out of
 scope by design.
+
+## Multi-repo mode
+
+One run in an admin repository can manage a whole fleet, in the spirit of
+[safe-settings](https://github.com/github-community-projects/safe-settings)
+but without a hosted app. Two sourcing modes, usable together:
+
+- Central (`repos-dir`): a directory in the admin repo holds one settings
+  file per target: `<name>.yml` (same owner as the admin repo) or
+  `<owner>/<name>.yml`. Needs `actions/checkout`. These files are the
+  curated, code-reviewed source of truth.
+- Remote (`repos`): a comma- or newline-separated list of `owner/name`
+  targets, each applied from its own `.github/settings.yml` (default
+  branch). `repos: "*"` alone discovers every non-archived repository the
+  token's user owns (needs a user PAT; the workflow `GITHUB_TOKEN` cannot
+  enumerate). A target without a settings file is skipped with a notice.
+
+When the same repository appears in both, the central file wins (with a
+notice). `defaults-file` names a YAML document deep-merged UNDER every
+target's settings: target keys win, objects merge, arrays and scalars
+replace (an array is always a full payload, matching check-mode semantics),
+and a target section set to `null` opts that repository out of the
+defaults section.
+
+Targets run independently and sequentially: one repository's failure never
+stops the others; the run exits 1 at the end if any target failed (or, in
+check mode, drifted). The step summary shows a fleet rollup table plus a
+per-repository section table, and the `repos-result` output carries the
+per-repo results as JSON. `sections` and `required-sections` apply to all
+targets alike, and the token needs the same per-section permissions (see
+the table below) on every target.
+
+```yaml
+# One admin repo managing the fleet
+- uses: actions/checkout@v7
+- uses: Vivswan/repo-settings-as-code@v1
+  with:
+    token: ${{ secrets.FLEET_TOKEN }}
+    repos-dir: .github/repos
+    defaults-file: .github/settings-defaults.yml
+    repos: |
+      other-org/service-a
+      other-org/service-b
+```
 
 ## Sections
 
@@ -168,10 +218,10 @@ nothing except labels/autolinks/collaborators is ever deleted implicitly.
 In short, what you gain over the app: visible runs instead of silent
 no-ops, a drift-report check mode, first-class rulesets, a partial-success
 policy (`on-missing-permission` + `required-sections`), a token you scope
-yourself, and per-call debug tracing. What you lose: org-wide config
-inheritance (`extends`), which this action does not do. The full
+yourself, per-call debug tracing, and multi-repo fleet management with a
+defaults layer (the `extends` role, minus the hosted app). The full
 side-by-side table is in
-[docs/COVERAGE.md](docs/COVERAGE.md#compared-to-the-probot-settings-app).
+[COVERAGE.md](COVERAGE.md#compared-to-the-probot-settings-app).
 
 ## Token permissions by section
 

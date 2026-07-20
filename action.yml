@@ -47,12 +47,43 @@ inputs:
       API version before this action defaults to it.
     required: false
     default: "2022-11-28"
+  repos:
+    description: >-
+      Multi-repo remote mode: comma- or newline-separated owner/name
+      targets, each applied from its own .github/settings.yml (default
+      branch), or "*" alone to discover every non-archived repository the
+      token's user owns. Combinable with repos-dir; a repos-dir file for
+      the same repository wins.
+    required: false
+    default: ""
+  repos-dir:
+    description: >-
+      Multi-repo central mode: a directory in the checked-out admin
+      repository holding per-repo settings files - <name>.yml (same owner
+      as this repository) or <owner>/<name>.yml. Requires actions/checkout.
+    required: false
+    default: ""
+  defaults-file:
+    description: >-
+      YAML file deep-merged UNDER every multi-repo target's settings.
+      Target keys win; objects merge, arrays and scalars replace; a target
+      section set to null opts that repository out of the defaults section.
+    required: false
+    default: ""
 
 outputs:
   result:
-    description: applied | partial | clean | drift | failed
+    description: >-
+      applied | partial | clean | drift | failed (worst-of across all
+      targets in multi-repo mode, where skipped can also appear).
   skipped-sections:
-    description: Comma-separated sections skipped for missing permissions.
+    description: >-
+      Comma-separated sections skipped for missing permissions (deduped
+      union across targets in multi-repo mode).
+  repos-result:
+    description: >-
+      Multi-repo mode only: JSON map of owner/name to {result, source,
+      skippedSections}. Empty in single-repo mode.
 
 runs:
   using: node24

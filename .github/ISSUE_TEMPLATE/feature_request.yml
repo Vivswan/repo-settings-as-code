@@ -1,14 +1,34 @@
 name: Feature request
-description: Suggest a new feature or improvement
+description: Support a new GitHub setting, or improve how an existing one is handled
 labels: [enhancement]
 body:
   - type: textarea
     id: description
     attributes:
       label: What would you like?
-      description: What problem does it solve for you?
+      description: What problem does it solve for you? Concrete settings.yml sketches help.
     validations:
       required: true
+  - type: input
+    id: setting
+    attributes:
+      label: Which GitHub setting or REST endpoint is involved?
+      description: Name the endpoint if you know it, or the settings-page item if not.
+      placeholder: e.g. repository webhooks, POST /repos/{owner}/{repo}/hooks
+    validations:
+      required: false
+  - type: dropdown
+    id: coverage
+    attributes:
+      label: Is it already listed in COVERAGE.md?
+      description: COVERAGE.md tracks everything supported, every known repo-scoped gap, and what has no public API. If it is a listed gap, this request helps prioritize it.
+      options:
+        - Yes, under "Repo-scoped gaps"
+        - Yes, under "No public API" or "Out of scope"
+        - No, it is not mentioned
+        - I did not check
+    validations:
+      required: false
   - type: textarea
     id: alternatives
     attributes:

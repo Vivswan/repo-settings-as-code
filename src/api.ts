@@ -44,7 +44,7 @@ export class GithubApi {
     method: string,
     path: string,
     payload?: unknown,
-    options?: { accept?: string },
+    options?: { accept?: string; raw?: boolean },
   ): Promise<{ data: unknown } | { error: ApiError }> {
     const started = Date.now();
     const response = await fetch(`${this.baseUrl}${path}`, {
@@ -78,7 +78,35 @@ export class GithubApi {
     if (!text) {
       return { data: null };
     }
+    // raw: the caller asked for a non-JSON media type (e.g. raw file
+    // contents); hand the body back as text.
+    if (options?.raw) {
+      return { data: text };
+    }
     return { data: JSON.parse(text) };
+  }
+
+  /**
+   * Fetch one file's raw content from a repository's default branch.
+   * `missing` is a FILE-level 404, distinct from a repo-level permission
+   * 404 - callers must gate repo visibility first (GET /repos/{slug}) so
+   * the two cannot be confused.
+   */
+  async getRepoFile(
+    slug: string,
+    filePath: string,
+  ): Promise<{ content: string } | { missing: true } | { error: ApiError }> {
+    const result = await this.tryRequest("GET", `/repos/${slug}/contents/${filePath}`, undefined, {
+      accept: "application/vnd.github.raw+json",
+      raw: true,
+    });
+    if ("error" in result) {
+      if (result.error.status === 404) {
+        return { missing: true };
+      }
+      return { error: result.error };
+    }
+    return { content: String(result.data ?? "") };
   }
 
   /** GET every page of a list endpoint. */

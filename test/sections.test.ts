@@ -1,50 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import type { ApiError, GithubApi } from "../src/api.js";
+import type { GithubApi } from "../src/api.js";
 import { branchesSection } from "../src/sections/branches.js";
 import { labelsSection } from "../src/sections/labels.js";
 import { repositorySection } from "../src/sections/repository.js";
 import { rulesetsSection } from "../src/sections/rulesets.js";
 import type { SectionContext } from "../src/sections/section.js";
 import { PermissionDenied } from "../src/sections/section.js";
-
-type Route = { data?: unknown; error?: ApiError };
-
-/** Duck-typed GithubApi over a route table; records every mutation. */
-class MockApi {
-  calls: Array<{ method: string; path: string; payload?: unknown }> = [];
-  constructor(private routes: Record<string, Route>) {}
-
-  async tryRequest(method: string, path: string, payload?: unknown) {
-    this.calls.push({ method, path, payload });
-    const route = this.routes[`${method} ${path}`];
-    if (!route) {
-      if (method === "GET") {
-        return { error: { status: 404, message: "Not Found", body: "" } };
-      }
-      return { data: null }; // unrouted mutations succeed silently
-    }
-    if (route.error) {
-      return { error: route.error };
-    }
-    return { data: route.data ?? null };
-  }
-
-  async request(method: string, path: string, payload?: unknown) {
-    const result = await this.tryRequest(method, path, payload);
-    if ("error" in result && result.error) {
-      throw new Error(`${method} ${path}: ${result.error.status}`);
-    }
-    return "data" in result ? result.data : null;
-  }
-
-  async list(path: string) {
-    return (await this.request("GET", path)) as unknown[];
-  }
-
-  mutations() {
-    return this.calls.filter((c) => c.method !== "GET");
-  }
-}
+import { MockApi } from "./mock-api.js";
 
 function ctx(api: MockApi, check = false): SectionContext {
   return { api: api as unknown as GithubApi, repo: "o/r", owner: "o", check };

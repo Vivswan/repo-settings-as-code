@@ -7,51 +7,37 @@
  *   token cannot touch is skipped with a warning and the run stays green
  *   (partial success) - unless the section is listed in required-sections.
  * - Non-permission errors always fail, loudly, with the API message.
+ *
+ * Multi-repo mode (repos / repos-dir / defaults-file inputs): one run in an
+ * admin repo applies settings to many repositories - from per-repo files
+ * checked into the admin repo (central), or from each target's own
+ * .github/settings.yml (remote), with an optional defaults layer merged
+ * under every target. Targets run independently; the run fails at the end
+ * if any target failed.
  */
 
 import { appendFileSync, readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
-import { GithubApi } from "./api.js";
-import { SECTION_KEYS, type SettingsFile } from "./schema.js";
-import { branchesSection } from "./sections/branches.js";
-import { labelsSection } from "./sections/labels.js";
+import { GithubApi, isPermissionError } from "./api.js";
+import { applyDefaults } from "./merge.js";
 import {
-  actionsSection,
-  autolinksSection,
-  collaboratorsSection,
-  environmentsSection,
-  milestonesSection,
-  pagesSection,
-  teamsSection,
-} from "./sections/misc.js";
-import { repositorySection } from "./sections/repository.js";
-import { rulesetsSection } from "./sections/rulesets.js";
+  type Io,
+  type RepoResult,
+  runForRepo,
+  type SectionOutcome,
+  validateSettingsDoc,
+  worstOf,
+} from "./orchestrate.js";
+import type { SettingsFile } from "./schema.js";
+import { SECTION_KEYS } from "./schema.js";
 import {
-  PermissionDenied,
-  type Section,
-  type SectionContext,
-  type SectionResult,
-} from "./sections/section.js";
-
-const SECTIONS: Section[] = [
-  repositorySection,
-  labelsSection,
-  rulesetsSection,
-  branchesSection,
-  environmentsSection,
-  autolinksSection,
-  actionsSection,
-  pagesSection,
-  collaboratorsSection,
-  teamsSection,
-  milestonesSection,
-];
-
-interface SectionOutcome {
-  key: string;
-  status: "applied" | "clean" | "drift" | "skipped" | "excluded" | "failed";
-  detail: string[];
-}
+  dedupeTargets,
+  discoverRepos,
+  parseReposInput,
+  resolveCentralTargets,
+  SLUG_RE,
+  type Target,
+} from "./targets.js";
 
 function input(name: string): string {
   // The runner exposes inputs as INPUT_<NAME> uppercased with SPACES (not
@@ -72,55 +58,308 @@ function setOutput(name: string, value: string): void {
   }
 }
 
+const STATUS_ICON: Record<string, string> = {
+  applied: "white_check_mark",
+  clean: "white_check_mark",
+  drift: "warning",
+  partial: "warning",
+  skipped: "fast_forward",
+  excluded: "fast_forward",
+  failed: "x",
+};
+
+function summaryCell(text: string): string {
+  // Escape the escape character first, then the table delimiter.
+  return text.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+}
+
+function outcomeRows(outcomes: SectionOutcome[]): string[] {
+  const rows = ["| Section | Status | Detail |", "|---|---|---|"];
+  for (const outcome of outcomes) {
+    const detail = outcome.detail.map(summaryCell).join("<br>") || "-";
+    rows.push(
+      `| ${outcome.key} | :${STATUS_ICON[outcome.status]}: ${outcome.status} | ${detail} |`,
+    );
+  }
+  return rows;
+}
+
 function writeSummary(outcomes: SectionOutcome[], mode: string): void {
   const file = process.env.GITHUB_STEP_SUMMARY;
   if (!file) {
     return;
   }
-  const icon: Record<SectionOutcome["status"], string> = {
-    applied: "white_check_mark",
-    clean: "white_check_mark",
-    drift: "warning",
-    skipped: "fast_forward",
-    excluded: "fast_forward",
-    failed: "x",
-  };
+  const lines = [`## repo-settings-as-code (${mode})`, "", ...outcomeRows(outcomes)];
+  appendFileSync(file, `${lines.join("\n")}\n`);
+}
+
+/** One multi-repo target's end state, for the summary and outputs. */
+interface TargetOutcome {
+  slug: string;
+  source: "central" | "remote";
+  origin: string;
+  result: RepoResult;
+  outcomes: SectionOutcome[];
+  skippedSections: string[];
+  /** Human line for skips/failures that produced no section outcomes. */
+  note?: string;
+}
+
+function writeMultiSummary(targets: TargetOutcome[], mode: string): void {
+  const file = process.env.GITHUB_STEP_SUMMARY;
+  if (!file) {
+    return;
+  }
   const lines = [
-    `## repo-settings-as-code (${mode})`,
+    `## repo-settings-as-code (${mode}, ${targets.length} repositories)`,
     "",
-    "| Section | Status | Detail |",
+    "| Repository | Source | Result |",
     "|---|---|---|",
   ];
-  for (const outcome of outcomes) {
-    const detail =
-      outcome.detail
-        // Escape the escape character first, then the table delimiter.
-        .map((line) => line.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " "))
-        .join("<br>") || "-";
-    lines.push(`| ${outcome.key} | :${icon[outcome.status]}: ${outcome.status} | ${detail} |`);
+  for (const target of targets) {
+    lines.push(
+      `| ${target.slug} | ${target.source} | :${STATUS_ICON[target.result]}: ${target.result} |`,
+    );
+  }
+  for (const target of targets) {
+    lines.push("", `### ${target.slug} (${target.result})`, "");
+    if (target.note) {
+      lines.push(summaryCell(target.note), "");
+    }
+    if (target.outcomes.length > 0) {
+      lines.push(...outcomeRows(target.outcomes));
+    }
   }
   appendFileSync(file, `${lines.join("\n")}\n`);
 }
 
-export async function run(): Promise<number> {
+export interface MultiConfig {
+  reposDir: string;
+  reposInput: string;
+  defaultsFile: string;
+  adminOwner: string;
+  mode: "apply" | "check";
+  onMissingPermission: "fail" | "warn";
+  requiredSections: Set<string>;
+  onlySections: Set<string>;
+}
+
+/**
+ * Multi-repo orchestration. Config-level problems (bad defaults file, no
+ * targets, duplicate definitions, discovery failure) return `fatal` before
+ * any target executes; per-target problems mark that target failed or
+ * skipped and never stop the others.
+ */
+export async function runMulti(
+  api: GithubApi,
+  cfg: MultiConfig,
+  io: Io,
+): Promise<{ fatal: string | null; targets: TargetOutcome[] }> {
+  const none: TargetOutcome[] = [];
+
+  let defaults: SettingsFile = {};
+  if (cfg.defaultsFile) {
+    try {
+      defaults = (parseYaml(readFileSync(cfg.defaultsFile, "utf8")) ?? {}) as SettingsFile;
+    } catch (error) {
+      return {
+        fatal: `cannot read the defaults file ${cfg.defaultsFile}: ${String(error)}. Check the "defaults-file" path and that the file is valid YAML`,
+        targets: none,
+      };
+    }
+    const err = validateSettingsDoc(defaults, cfg.defaultsFile, cfg.onlySections, io);
+    if (err) {
+      return { fatal: err, targets: none };
+    }
+  }
+
+  let central: Target[] = [];
+  if (cfg.reposDir) {
+    const resolved = resolveCentralTargets(cfg.reposDir, cfg.adminOwner);
+    if ("error" in resolved) {
+      return { fatal: resolved.error, targets: none };
+    }
+    for (const warning of resolved.warnings) {
+      io.annotate("warning", warning);
+    }
+    central = resolved.targets;
+  }
+
+  let remote: Target[] = [];
+  if (cfg.reposInput) {
+    const parsed = parseReposInput(cfg.reposInput);
+    if ("error" in parsed) {
+      return { fatal: parsed.error, targets: none };
+    }
+    let slugs = parsed.slugs;
+    let origin = 'the "repos" input';
+    if (parsed.discover) {
+      const discovered = await discoverRepos(api);
+      if ("error" in discovered) {
+        return { fatal: discovered.error, targets: none };
+      }
+      for (const archived of discovered.archivedSkipped) {
+        io.annotate(
+          "notice",
+          `${archived}: skipped - the repository is archived, and settings writes fail on archived repositories. Unarchive it to manage it`,
+        );
+      }
+      slugs = discovered.slugs;
+      origin = 'repos: "*" discovery';
+    }
+    remote = slugs.map((slug) => ({ slug, source: "remote" as const, origin }));
+  }
+
+  const targets = dedupeTargets(central, remote, (message) => io.annotate("notice", message));
+  if (targets.length === 0) {
+    return {
+      fatal: `multi-repo mode found no targets: repos-dir yielded no settings files and the "repos" input resolved to no repositories. Add per-repo files to the repos-dir, or list repositories in the "repos" input`,
+      targets: none,
+    };
+  }
+
+  const results: TargetOutcome[] = [];
+  for (const target of targets) {
+    const failTarget = (message: string, note?: string): void => {
+      io.annotate("error", `${target.slug}: ${message}`);
+      results.push({
+        slug: target.slug,
+        source: target.source,
+        origin: target.origin,
+        result: "failed",
+        outcomes: [],
+        skippedSections: [],
+        note: note ?? message,
+      });
+    };
+    try {
+      let raw: string;
+      let sourceLabel: string;
+      if (target.source === "central") {
+        sourceLabel = target.filePath ?? target.origin;
+        try {
+          raw = readFileSync(target.filePath ?? "", "utf8");
+        } catch (error) {
+          failTarget(
+            `cannot read settings from ${sourceLabel}: ${String(error)}. Fix the file, or delete it to stop managing this repository`,
+          );
+          continue;
+        }
+      } else {
+        sourceLabel = `${target.slug}:.github/settings.yml`;
+        // Visibility gate: a repo-level 404 here is a token problem, so a
+        // later missing-FILE 404 from the contents API is unambiguous.
+        const gate = await api.tryRequest("GET", `/repos/${target.slug}`);
+        if ("error" in gate) {
+          failTarget(
+            isPermissionError(gate.error)
+              ? `the token was denied GET /repos/${target.slug}: ${gate.error.status} ${gate.error.message}. Grant the PAT access to this repository, or remove it from the "repos" input`
+              : `GET /repos/${target.slug} failed: ${gate.error.status} ${gate.error.message}. This is not a permission problem; re-run the workflow, and retry later if it persists`,
+          );
+          continue;
+        }
+        const file = await api.getRepoFile(target.slug, ".github/settings.yml");
+        if ("missing" in file) {
+          io.annotate(
+            "notice",
+            `${target.slug}: skipped - the repository has no .github/settings.yml on its default branch. Add the file to manage it, or remove ${target.slug} from the "repos" input`,
+          );
+          results.push({
+            slug: target.slug,
+            source: target.source,
+            origin: target.origin,
+            result: "skipped",
+            outcomes: [],
+            skippedSections: [],
+            note: "no .github/settings.yml on the default branch",
+          });
+          continue;
+        }
+        if ("error" in file) {
+          failTarget(
+            isPermissionError(file.error)
+              ? `the token was denied reading ${sourceLabel}: ${file.error.status} ${file.error.message}. Grant the PAT Contents (read) on this repository, or remove it from the "repos" input`
+              : `reading ${sourceLabel} failed: ${file.error.status} ${file.error.message}. This is not a permission problem; re-run the workflow, and retry later if it persists`,
+          );
+          continue;
+        }
+        raw = file.content;
+      }
+
+      let parsed: SettingsFile;
+      try {
+        parsed = (parseYaml(raw) ?? {}) as SettingsFile;
+      } catch (error) {
+        failTarget(`cannot parse ${sourceLabel}: ${String(error)}. Fix the YAML in that file`);
+        continue;
+      }
+
+      const { settings, disabled } = applyDefaults(defaults, parsed);
+      for (const key of disabled) {
+        io.annotate(
+          "notice",
+          `${target.slug}: section "${key}" is set to null in ${sourceLabel}, which opts this repository out of that defaults-file section`,
+        );
+      }
+      const invalid = validateSettingsDoc(settings, sourceLabel, cfg.onlySections, io);
+      if (invalid) {
+        failTarget(invalid);
+        continue;
+      }
+
+      const run = await runForRepo(
+        api,
+        {
+          repo: target.slug,
+          settings,
+          mode: cfg.mode,
+          onMissingPermission: cfg.onMissingPermission,
+          requiredSections: cfg.requiredSections,
+          onlySections: cfg.onlySections,
+          label: `${target.slug}: `,
+        },
+        io,
+      );
+      let note: string | undefined;
+      if (run.preflightDenied.length > 0) {
+        note = `preflight denied ${run.preflightDenied.length} section(s); nothing was applied to this repository`;
+        io.annotate(
+          "error",
+          `${target.slug}: preflight failed: the token cannot access ${run.preflightDenied.length} section(s), so nothing was applied to this repository. Grant the permissions named above, or set on-missing-permission: warn`,
+        );
+      }
+      results.push({
+        slug: target.slug,
+        source: target.source,
+        origin: target.origin,
+        result: run.result,
+        outcomes: run.outcomes,
+        skippedSections: run.skippedSections,
+        note,
+      });
+    } catch (error) {
+      // One repo's unexpected crash never stops the rest of the fleet.
+      const message = error instanceof Error ? error.message : String(error);
+      failTarget(message);
+    }
+  }
+  return { fatal: null, targets: results };
+}
+
+export async function run(overrides?: { api?: GithubApi }): Promise<number> {
   const fail = (message: string): number => {
     annotate("error", message);
     setOutput("result", "failed");
     return 1;
   };
+  const io: Io = { annotate, log: (line) => console.log(line) };
+
   const token = input("token") || process.env.GITHUB_TOKEN || "";
   if (!token) {
     return fail(
       'cannot call the GitHub API: no token was provided. Set the "token" input on the action step (or export GITHUB_TOKEN)',
     );
   }
-  const repo = input("repository") || process.env.GITHUB_REPOSITORY || "";
-  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) {
-    return fail(
-      `cannot target a repository: "${repo}" is not an owner/name slug. Set the "repository" input (or GITHUB_REPOSITORY) to a value like "octocat/hello-world"`,
-    );
-  }
-  const settingsFile = input("settings-file") || ".github/settings.yml";
   const mode = input("mode") || "apply";
   if (mode !== "apply" && mode !== "check") {
     return fail(
@@ -145,7 +384,6 @@ export async function run(): Promise<number> {
       .map((s) => s.trim())
       .filter(Boolean),
   );
-
   const knownSections = new Set<string>(SECTION_KEYS);
   for (const name of [...requiredSections, ...onlySections]) {
     if (!knownSections.has(name)) {
@@ -154,7 +392,75 @@ export async function run(): Promise<number> {
       );
     }
   }
+  const apiVersion = input("api-version") || "2022-11-28";
+  const api = overrides?.api ?? new GithubApi(token, undefined, apiVersion);
 
+  const reposInput = input("repos");
+  const reposDir = input("repos-dir");
+  const defaultsFile = input("defaults-file");
+  const settingsFile = input("settings-file") || ".github/settings.yml";
+
+  if (reposInput || reposDir) {
+    // Multi-repo mode: the single-repo inputs make no sense here.
+    if (input("repository")) {
+      return fail(
+        'the "repository" input cannot be combined with "repos" or "repos-dir"; multi-repo targets come from those inputs. Remove "repository", or remove the multi-repo inputs to stay in single-repo mode',
+      );
+    }
+    if (settingsFile !== ".github/settings.yml") {
+      return fail(
+        'the "settings-file" input cannot be combined with "repos" or "repos-dir": central targets are read from repos-dir files and remote targets from each repository\'s own .github/settings.yml. Remove the settings-file override',
+      );
+    }
+    const adminOwner = (process.env.GITHUB_REPOSITORY ?? "").split("/")[0] ?? "";
+    const { fatal, targets } = await runMulti(
+      api,
+      {
+        reposDir,
+        reposInput,
+        defaultsFile,
+        adminOwner,
+        mode,
+        onMissingPermission,
+        requiredSections,
+        onlySections,
+      },
+      io,
+    );
+    if (fatal) {
+      return fail(fatal);
+    }
+    writeMultiSummary(targets, mode);
+    setOutput(
+      "repos-result",
+      JSON.stringify(
+        Object.fromEntries(
+          targets.map((t) => [
+            t.slug,
+            { result: t.result, source: t.source, skippedSections: t.skippedSections },
+          ]),
+        ),
+      ),
+    );
+    setOutput(
+      "skipped-sections",
+      [...new Set(targets.flatMap((t) => t.skippedSections))].join(","),
+    );
+    const overall = worstOf(targets, mode === "check");
+    setOutput("result", overall);
+    console.log(`result: ${overall}`);
+    const anyFailed = targets.some((t) => t.result === "failed");
+    const anyDrift = targets.some((t) => t.result === "drift");
+    return anyFailed || (mode === "check" && anyDrift) ? 1 : 0;
+  }
+
+  // Single-repo mode (unchanged legacy behavior).
+  const repo = input("repository") || process.env.GITHUB_REPOSITORY || "";
+  if (!SLUG_RE.test(repo)) {
+    return fail(
+      `cannot target a repository: "${repo}" is not an owner/name slug. Set the "repository" input (or GITHUB_REPOSITORY) to a value like "octocat/hello-world"`,
+    );
+  }
   let settings: SettingsFile;
   try {
     settings = (parseYaml(readFileSync(settingsFile, "utf8")) ?? {}) as SettingsFile;
@@ -163,172 +469,32 @@ export async function run(): Promise<number> {
       `cannot read settings from ${settingsFile}: ${String(error)}. Check that the file exists at that path (set the "settings-file" input if it lives elsewhere) and is valid YAML`,
     );
   }
-  if (typeof settings !== "object" || Array.isArray(settings)) {
+  const invalid = validateSettingsDoc(settings, settingsFile, onlySections, io);
+  if (invalid) {
+    return fail(invalid);
+  }
+
+  const result = await runForRepo(
+    api,
+    { repo, settings, mode, onMissingPermission, requiredSections, onlySections, label: "" },
+    io,
+  );
+  if (result.preflightDenied.length > 0) {
     return fail(
-      `${settingsFile} must be a YAML mapping of section names to settings, but its top level parsed as ${Array.isArray(settings) ? "a list" : `a ${typeof settings}`}. Rewrite the top level as "section: ..." keys`,
+      `preflight failed: the token cannot access ${result.preflightDenied.length} section(s), so nothing was applied. Grant the permissions named above, or set on-missing-permission: warn to skip those sections`,
     );
   }
-  // A misspelled section silently doing nothing would violate the loud-
-  // failure promise; unknown top-level keys are hard errors (prefix custom
-  // keys with underscore to keep private notes in the file).
-  const unknownKeys = Object.keys(settings).filter(
-    (key) => !knownSections.has(key) && !key.startsWith("_"),
-  );
-  if (unknownKeys.length > 0) {
-    if (onlySections.size > 0 && unknownKeys.every((key) => !onlySections.has(key))) {
-      // A `sections` allowlist lets an older action version coexist with a
-      // config written for a newer one: unknown keys OUTSIDE the allowlist
-      // are warnings, not errors.
-      annotate(
-        "warning",
-        `ignoring unknown top-level section(s) outside the "sections" allowlist: ${unknownKeys.join(", ")}. Upgrade the action to a version that knows them, or remove them from ${settingsFile}`,
-      );
-    } else {
-      return fail(
-        `unknown top-level section(s) in ${settingsFile}: ${unknownKeys.join(", ")} (known: ${SECTION_KEYS.join(", ")}). Fix the typo, or prefix private keys with "_", or set the "sections" input to limit processing`,
-      );
-    }
-  }
 
-  const apiVersion = input("api-version") || "2022-11-28";
-  const [owner] = repo.split("/");
-  const ctx: SectionContext = {
-    api: new GithubApi(token, undefined, apiVersion),
-    repo,
-    owner: owner ?? "",
-    check: mode === "check",
-  };
+  writeSummary(result.outcomes, mode);
+  setOutput("skipped-sections", result.skippedSections.join(","));
 
-  const active = SECTIONS.filter((section) => {
-    if (settings[section.key as keyof SettingsFile] === undefined) {
-      return false;
-    }
-    return onlySections.size === 0 || onlySections.has(section.key);
-  });
-
-  // Preflight barrier: the API has no transactions, so a mid-apply
-  // permission failure would leave settings half-applied. Under the strict
-  // policy, probe every declared section read-only FIRST and refuse to
-  // write anything when any of them is inaccessible. (A token with read
-  // but not write access can still fail mid-apply; the engine is
-  // idempotent, so re-running after fixing the token converges.)
-  if (!ctx.check && onMissingPermission === "fail") {
-    const denied: string[] = [];
-    for (const section of active) {
-      try {
-        await section.run({ ...ctx, check: true }, settings[section.key as keyof SettingsFile]);
-      } catch (error) {
-        if (error instanceof PermissionDenied) {
-          denied.push(`${section.key}: ${error.detail}`);
-        }
-        // Non-permission preflight errors are ignored here; the apply pass
-        // will surface them with full context.
-      }
-    }
-    if (denied.length > 0) {
-      for (const line of denied) {
-        annotate("error", `preflight: ${line}`);
-      }
-      return fail(
-        `preflight failed: the token cannot access ${denied.length} section(s), so nothing was applied. Grant the permissions named above, or set on-missing-permission: warn to skip those sections`,
-      );
-    }
-  }
-
-  const outcomes: SectionOutcome[] = [];
-  let failed = false;
-  let partial = false;
-  let drifted = false;
-
-  for (const section of SECTIONS) {
-    const desired = settings[section.key as keyof SettingsFile];
-    if (desired === undefined) {
-      continue; // declared-keys-only: absent section = untouched
-    }
-    if (onlySections.size > 0 && !onlySections.has(section.key)) {
-      outcomes.push({ key: section.key, status: "excluded", detail: ["excluded by `sections`"] });
-      continue;
-    }
-    let result: SectionResult;
-    try {
-      result = await section.run(ctx, desired);
-    } catch (error) {
-      if (error instanceof PermissionDenied) {
-        const required = requiredSections.has(section.key);
-        if (onMissingPermission === "warn" && !required) {
-          annotate("warning", `${section.key}: skipped - ${error.detail}`);
-          outcomes.push({ key: section.key, status: "skipped", detail: [error.detail] });
-          partial = true;
-          continue;
-        }
-        annotate(
-          "error",
-          `${section.key}: not applied${required ? " (listed in required-sections, so this fails the run)" : ""} - ${error.detail}`,
-        );
-        outcomes.push({ key: section.key, status: "failed", detail: [error.detail] });
-        failed = true;
-        continue;
-      }
-      // throwFor()-raised errors already carry section, cause, and fix;
-      // prefix anything else so the failing section is still named.
-      const message = error instanceof Error ? error.message : String(error);
-      const annotated = message.startsWith(`${section.key}:`)
-        ? message
-        : `${section.key}: ${message}`;
-      annotate("error", annotated);
-      outcomes.push({ key: section.key, status: "failed", detail: [annotated] });
-      failed = true;
-      continue;
-    }
-    for (const note of result.notes) {
-      annotate("notice", `${section.key}: ${note}`);
-    }
-    if (ctx.check) {
-      if (result.drift.length > 0) {
-        drifted = true;
-        for (const line of result.drift) {
-          console.log(`drift: ${line}`);
-        }
-        outcomes.push({ key: section.key, status: "drift", detail: result.drift });
-      } else {
-        outcomes.push({ key: section.key, status: "clean", detail: result.notes });
-      }
-    } else {
-      for (const line of result.changes) {
-        console.log(`${section.key}: ${line}`);
-      }
-      outcomes.push({
-        key: section.key,
-        status: "applied",
-        detail: result.changes.length > 0 ? result.changes : ["no changes needed"],
-      });
-    }
-  }
-
-  writeSummary(outcomes, mode);
-  setOutput(
-    "skipped-sections",
-    outcomes
-      .filter((o) => o.status === "skipped")
-      .map((o) => o.key)
-      .join(","),
-  );
-
-  if (failed) {
+  if (result.result === "failed") {
     setOutput("result", "failed");
     return 1;
   }
-  if (ctx.check) {
-    // A check that could not see everything is never "clean".
-    const result = drifted ? "drift" : partial ? "partial" : "clean";
-    setOutput("result", result);
-    console.log(`result: ${result}`);
-    return drifted ? 1 : 0;
-  }
-  const result = partial ? "partial" : "applied";
-  setOutput("result", result);
-  console.log(`result: ${result}`);
-  return 0;
+  setOutput("result", result.result);
+  console.log(`result: ${result.result}`);
+  return result.result === "drift" ? 1 : 0;
 }
 
 const invokedDirectly =

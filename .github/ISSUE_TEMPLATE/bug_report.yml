@@ -1,5 +1,5 @@
 name: Bug report
-description: Something isn't working
+description: The action failed, misreported drift, or changed something it should not have
 labels: [bug]
 body:
   - type: textarea
@@ -8,21 +8,59 @@ body:
       label: What happened?
       description: What did you do, what did you expect, and what happened instead?
       placeholder: |
-        1. ...
-        2. Expected ..., got ...
+        1. Declared ... in settings.yml
+        2. Ran the action in mode ...
+        3. Expected ..., got ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Action version
+      description: The ref you pin in `uses:` (a tag like v1, or a commit sha).
+      placeholder: Vivswan/repo-settings-as-code@v1
+    validations:
+      required: true
+  - type: input
+    id: inputs
+    attributes:
+      label: Mode and policy inputs
+      description: The values of `mode`, `on-missing-permission`, `required-sections`, and `sections` ("defaults" is a fine answer).
+      placeholder: "mode: apply, on-missing-permission: fail, rest defaults"
     validations:
       required: true
   - type: textarea
-    id: environment
+    id: settings
     attributes:
-      label: Environment
-      description: Version, OS, and anything else relevant.
+      label: The settings.yml section involved
+      description: The smallest snippet of your settings file that reproduces the problem. Redact anything private.
+      render: yaml
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: Error message or wrong output
+      description: The exact error annotation, drift line, or step-summary row, pasted verbatim.
+    validations:
+      required: true
+  - type: input
+    id: run-url
+    attributes:
+      label: Workflow run URL (if public)
+      placeholder: https://github.com/owner/repo/actions/runs/...
     validations:
       required: false
   - type: textarea
-    id: logs
+    id: debug
     attributes:
-      label: Logs or screenshots (optional)
-      description: Redact anything that looks like a credential or key.
+      label: Debug trace (optional, but fastest to diagnose)
+      description: >-
+        Re-run the job with debug logging enabled
+        (https://docs.github.com/en/actions/monitoring-and-troubleshooting-workflows/troubleshooting-workflows/enabling-debug-logging)
+        and paste the ::debug:: lines around the failure. They show every API
+        call with method, path, payload, status, and timing. Redact anything
+        that looks like a credential; the token itself is never logged.
+      render: text
     validations:
       required: false
