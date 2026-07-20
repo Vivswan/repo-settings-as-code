@@ -1,9 +1,5 @@
-name: Settings as Code
-description: >-
-  Apply declarative repository settings from .github/settings.yml - repo
-  fields, topics, labels, RULESETS (branch and tag), branch protection,
-  environments, autolinks, actions permissions, pages, collaborators, teams,
-  and milestones. A loud, stateless replacement for the Probot Settings app.
+name: Repo Settings as Code
+description: "Apply declarative repository settings from settings.yml: repo fields, topics, labels, rulesets, branch protection, and more."
 author: Vivswan
 branding:
   icon: settings
