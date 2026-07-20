@@ -5,10 +5,16 @@
     "": {
       "name": "repo-settings-as-code",
       "dependencies": {
+        "@actions/core": "^3.0.1",
+        "@octokit/plugin-retry": "^8.1.0",
+        "@octokit/plugin-throttling": "^11.0.3",
+        "@octokit/rest": "^22.0.1",
         "yaml": "^2.8.2",
+        "zod": "^4.4.3",
       },
       "devDependencies": {
         "@biomejs/biome": "^2.5.3",
+        "@octokit/openapi-types": "^27.0.0",
         "@types/bun": "^1.3.14",
         "@types/node": "^26.1.1",
         "husky": "^9.1.7",
@@ -17,6 +23,14 @@
     },
   },
   "packages": {
+    "@actions/core": ["@actions/core@3.0.1", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@actions/core/-/core-3.0.1.tgz", { "dependencies": { "@actions/exec": "^3.0.0", "@actions/http-client": "^4.0.0" } }, "sha1-D02LFFJ+5R4NsGHu3CSiBsn5jCM="],
+
+    "@actions/exec": ["@actions/exec@3.0.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@actions/exec/-/exec-3.0.0.tgz", { "dependencies": { "@actions/io": "^3.0.2" } }, "sha1-jDRk0g8KpAaHB3VwIdfjwBp+4gM="],
+
+    "@actions/http-client": ["@actions/http-client@4.0.1", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@actions/http-client/-/http-client-4.0.1.tgz", { "dependencies": { "tunnel": "^0.0.6", "undici": "^6.23.0" } }, "sha1-IqI6diW6EybZuhVAEsqDAaJ/iKM="],
+
+    "@actions/io": ["@actions/io@3.0.2", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@actions/io/-/io-3.0.2.tgz", {}, "sha1-b4myehWdEJg22YPvooOZfCO5IoQ="],
+
     "@biomejs/biome": ["@biomejs/biome@2.5.3", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@biomejs/biome/-/biome-2.5.3.tgz", { "optionalDependencies": { "@biomejs/cli-darwin-arm64": "2.5.3", "@biomejs/cli-darwin-x64": "2.5.3", "@biomejs/cli-linux-arm64": "2.5.3", "@biomejs/cli-linux-arm64-musl": "2.5.3", "@biomejs/cli-linux-x64": "2.5.3", "@biomejs/cli-linux-x64-musl": "2.5.3", "@biomejs/cli-win32-arm64": "2.5.3", "@biomejs/cli-win32-x64": "2.5.3" }, "bin": { "biome": "bin/biome" } }, "sha1-SSprP3uJnMBgrx+4IQzwy/U2340="],
 
     "@biomejs/cli-darwin-arm64": ["@biomejs/cli-darwin-arm64@2.5.3", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@biomejs/cli-darwin-arm64/-/cli-darwin-arm64-2.5.3.tgz", { "os": "darwin", "cpu": "arm64" }, "sha1-oKIfAM3ujMjfxOUnkCrpYxVbJFg="],
@@ -34,6 +48,34 @@
     "@biomejs/cli-win32-arm64": ["@biomejs/cli-win32-arm64@2.5.3", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@biomejs/cli-win32-arm64/-/cli-win32-arm64-2.5.3.tgz", { "os": "win32", "cpu": "arm64" }, "sha1-ioVJ9hwCKBWjzrmLIZZoEkw60fE="],
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.5.3", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@biomejs/cli-win32-x64/-/cli-win32-x64-2.5.3.tgz", { "os": "win32", "cpu": "x64" }, "sha1-/crvCQmxZvMtKMClL0+E5OTatj8="],
+
+    "@octokit/auth-token": ["@octokit/auth-token@6.0.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@octokit/auth-token/-/auth-token-6.0.0.tgz", {}, "sha1-sC6cCKLYk33wmiqYHyJq0hkXTFM="],
+
+    "@octokit/core": ["@octokit/core@7.0.6", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@octokit/core/-/core-7.0.6.tgz", { "dependencies": { "@octokit/auth-token": "^6.0.0", "@octokit/graphql": "^9.0.3", "@octokit/request": "^10.0.6", "@octokit/request-error": "^7.0.2", "@octokit/types": "^16.0.0", "before-after-hook": "^4.0.0", "universal-user-agent": "^7.0.0" } }, "sha1-DVhwQ5HGtoHewRFyQOpNKpisORY="],
+
+    "@octokit/endpoint": ["@octokit/endpoint@11.0.3", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@octokit/endpoint/-/endpoint-11.0.3.tgz", { "dependencies": { "@octokit/types": "^16.0.0", "universal-user-agent": "^7.0.2" } }, "sha1-rPX3/t3eThIYXVMS7jj/dyNdggU="],
+
+    "@octokit/graphql": ["@octokit/graphql@9.0.3", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@octokit/graphql/-/graphql-9.0.3.tgz", { "dependencies": { "@octokit/request": "^10.0.6", "@octokit/types": "^16.0.0", "universal-user-agent": "^7.0.0" } }, "sha1-W4NBwiWQnpJLRmcFwTR3+s6GlFY="],
+
+    "@octokit/openapi-types": ["@octokit/openapi-types@27.0.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@octokit/openapi-types/-/openapi-types-27.0.0.tgz", {}, "sha1-N06lN4GWX9AqnTbKy5fhUs7/8S0="],
+
+    "@octokit/plugin-paginate-rest": ["@octokit/plugin-paginate-rest@14.0.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@octokit/plugin-paginate-rest/-/plugin-paginate-rest-14.0.0.tgz", { "dependencies": { "@octokit/types": "^16.0.0" }, "peerDependencies": { "@octokit/core": ">=6" } }, "sha1-RNyf/y2ssUjUxceItXPdwERQMCY="],
+
+    "@octokit/plugin-request-log": ["@octokit/plugin-request-log@6.0.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@octokit/plugin-request-log/-/plugin-request-log-6.0.0.tgz", { "peerDependencies": { "@octokit/core": ">=6" } }, "sha1-3hweVX32wIrbYxv3gmT6dB4Bsxc="],
+
+    "@octokit/plugin-rest-endpoint-methods": ["@octokit/plugin-rest-endpoint-methods@17.0.0", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@octokit/plugin-rest-endpoint-methods/-/plugin-rest-endpoint-methods-17.0.0.tgz", { "dependencies": { "@octokit/types": "^16.0.0" }, "peerDependencies": { "@octokit/core": ">=6" } }, "sha1-jFQ5fTpAYDVqHIqXQZHr+UWSQQU="],
+
+    "@octokit/plugin-retry": ["@octokit/plugin-retry@8.1.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@octokit/plugin-retry/-/plugin-retry-8.1.0.tgz", { "dependencies": { "@octokit/request-error": "^7.0.2", "@octokit/types": "^16.0.0", "bottleneck": "^2.15.3" }, "peerDependencies": { "@octokit/core": ">=7" } }, "sha1-4lwvteCgnP5nTvnfddfKT6+hbBE="],
+
+    "@octokit/plugin-throttling": ["@octokit/plugin-throttling@11.0.3", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@octokit/plugin-throttling/-/plugin-throttling-11.0.3.tgz", { "dependencies": { "@octokit/types": "^16.0.0", "bottleneck": "^2.15.3" }, "peerDependencies": { "@octokit/core": "^7.0.0" } }, "sha1-WEsanKc6Xar+633VzBOhvSmmpg0="],
+
+    "@octokit/request": ["@octokit/request@10.0.11", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@octokit/request/-/request-10.0.11.tgz", { "dependencies": { "@octokit/endpoint": "^11.0.3", "@octokit/request-error": "^7.0.2", "@octokit/types": "^16.0.0", "content-type": "^2.0.0", "json-with-bigint": "^3.5.3", "universal-user-agent": "^7.0.2" } }, "sha1-oR2Lm65fboaO+33qlG7dhV67JUk="],
+
+    "@octokit/request-error": ["@octokit/request-error@7.1.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@octokit/request-error/-/request-error-7.1.0.tgz", { "dependencies": { "@octokit/types": "^16.0.0" } }, "sha1-RA+jyuMQRmiJd49aIitHpYB0Njg="],
+
+    "@octokit/rest": ["@octokit/rest@22.0.1", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@octokit/rest/-/rest-22.0.1.tgz", { "dependencies": { "@octokit/core": "^7.0.6", "@octokit/plugin-paginate-rest": "^14.0.0", "@octokit/plugin-request-log": "^6.0.0", "@octokit/plugin-rest-endpoint-methods": "^17.0.0" } }, "sha1-TYZsMrdrcR0/c2+RmS4rU0FjtBY="],
+
+    "@octokit/types": ["@octokit/types@16.0.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@octokit/types/-/types-16.0.0.tgz", { "dependencies": { "@octokit/openapi-types": "^27.0.0" } }, "sha1-+9f6WQwu8ir4gbHXl1i/qiNNu3w="],
 
     "@types/bun": ["@types/bun@1.3.14", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@types/bun/-/bun-1.3.14.tgz", { "dependencies": { "bun-types": "1.3.14" } }, "sha1-vYtECRmiWHrd4xGmF6kgTzS4qMI="],
 
@@ -79,14 +121,30 @@
 
     "@typescript/typescript-win32-x64": ["@typescript/typescript-win32-x64@7.0.2", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@typescript/typescript-win32-x64/-/typescript-win32-x64-7.0.2.tgz", { "os": "win32", "cpu": "x64" }, "sha1-zzt7DWzlY12spMjgHBic3N5H7Dw="],
 
+    "before-after-hook": ["before-after-hook@4.0.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/before-after-hook/-/before-after-hook-4.0.0.tgz", {}, "sha1-zxRHq5Fg32pA82Idpk1v/DYFDLk="],
+
+    "bottleneck": ["bottleneck@2.19.5", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/bottleneck/-/bottleneck-2.19.5.tgz", {}, "sha1-XfC5D1n9R2VuvmPHiphBkgXK3ZE="],
+
     "bun-types": ["bun-types@1.3.14", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/bun-types/-/bun-types-1.3.14.tgz", { "dependencies": { "@types/node": "*" } }, "sha1-qP4lOfxcWa5F8f3BjfyfjV6ruvQ="],
+
+    "content-type": ["content-type@2.0.0", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/content-type/-/content-type-2.0.0.tgz", {}, "sha1-L7Pt5p3/oK94ynxM51iWgGOLVt8="],
 
     "husky": ["husky@9.1.7", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/husky/-/husky-9.1.7.tgz", { "bin": { "husky": "bin.js" } }, "sha1-1Go4A10QG0anBFaoUP9CATRMCy0="],
 
+    "json-with-bigint": ["json-with-bigint@3.5.10", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/json-with-bigint/-/json-with-bigint-3.5.10.tgz", {}, "sha1-HeYIpVIOxHdJ5RR7CzpobJebHHw="],
+
+    "tunnel": ["tunnel@0.0.6", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/tunnel/-/tunnel-0.0.6.tgz", {}, "sha1-cvExSzSlsZLbASMk3yzFh8pH+Sw="],
+
     "typescript": ["typescript@7.0.2", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/typescript/-/typescript-7.0.2.tgz", { "optionalDependencies": { "@typescript/typescript-aix-ppc64": "7.0.2", "@typescript/typescript-darwin-arm64": "7.0.2", "@typescript/typescript-darwin-x64": "7.0.2", "@typescript/typescript-freebsd-arm64": "7.0.2", "@typescript/typescript-freebsd-x64": "7.0.2", "@typescript/typescript-linux-arm": "7.0.2", "@typescript/typescript-linux-arm64": "7.0.2", "@typescript/typescript-linux-loong64": "7.0.2", "@typescript/typescript-linux-mips64el": "7.0.2", "@typescript/typescript-linux-ppc64": "7.0.2", "@typescript/typescript-linux-riscv64": "7.0.2", "@typescript/typescript-linux-s390x": "7.0.2", "@typescript/typescript-linux-x64": "7.0.2", "@typescript/typescript-netbsd-arm64": "7.0.2", "@typescript/typescript-netbsd-x64": "7.0.2", "@typescript/typescript-openbsd-arm64": "7.0.2", "@typescript/typescript-openbsd-x64": "7.0.2", "@typescript/typescript-sunos-x64": "7.0.2", "@typescript/typescript-win32-arm64": "7.0.2", "@typescript/typescript-win32-x64": "7.0.2" }, "bin": { "tsc": "./bin/tsc" } }, "sha1-nsdz15VKjBgsF8xbvVdaoovFFYI="],
+
+    "undici": ["undici@6.27.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/undici/-/undici-6.27.0.tgz", {}, "sha1-Qfnkj3xaQNJzdsqurYyan8e8qcQ="],
 
     "undici-types": ["undici-types@8.3.0", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/undici-types/-/undici-types-8.3.0.tgz", {}, "sha1-ROn8nzJEZIzeo15Pm7LWgelBCAk="],
 
+    "universal-user-agent": ["universal-user-agent@7.0.3", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/universal-user-agent/-/universal-user-agent-7.0.3.tgz", {}, "sha1-wFhwpYElotwAQx8t+BWnf+aXNr4="],
+
     "yaml": ["yaml@2.9.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/yaml/-/yaml-2.9.0.tgz", { "bin": { "yaml": "./bin.mjs" } }, "sha1-eCdK/ZNZih391hMN9qVm3vy/mqQ="],
+
+    "zod": ["zod@4.4.3", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/zod/-/zod-4.4.3.tgz", {}, "sha1-toDxcohdGLvr8hqDTqJeVaG781Y="],
   }
 }

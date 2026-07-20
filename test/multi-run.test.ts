@@ -207,8 +207,10 @@ describe("run in multi-repo mode (env glue)", () => {
     });
     expect(await run({ api: api as unknown as GithubApi })).toBe(0);
     const output = await Bun.file(outputFile).text();
-    expect(output).toContain('repos-result={"o/a":{"result":"clean","source":"remote"');
-    expect(output).toContain("result=clean");
+    // @actions/core writes outputs in heredoc form: name<<DELIM / value / DELIM
+    expect(output).toContain("repos-result<<");
+    expect(output).toContain('"o/a":{"result":"clean","source":"remote"');
+    expect(output).toContain("result<<");
   });
 
   test("repository input combined with repos is a hard error", async () => {

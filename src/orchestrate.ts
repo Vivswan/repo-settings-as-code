@@ -27,6 +27,7 @@ import {
   type SectionContext,
   type SectionResult,
 } from "./sections/section.js";
+import { validateSectionShapes } from "./validate.js";
 
 export const SECTIONS: Section[] = [
   repositorySection,
@@ -98,7 +99,7 @@ export function validateSettingsDoc(
     (key) => !knownSections.has(key) && !key.startsWith("_"),
   );
   if (unknownKeys.length === 0) {
-    return null;
+    return validateSectionShapes(settings as Record<string, unknown>, sourceLabel);
   }
   if (onlySections.size > 0 && unknownKeys.every((key) => !onlySections.has(key))) {
     // A `sections` allowlist lets an older action version coexist with a
@@ -108,7 +109,7 @@ export function validateSettingsDoc(
       "warning",
       `ignoring unknown top-level section(s) outside the "sections" allowlist: ${unknownKeys.join(", ")}. Upgrade the action to a version that knows them, or remove them from ${sourceLabel}`,
     );
-    return null;
+    return validateSectionShapes(settings as Record<string, unknown>, sourceLabel);
   }
   return `unknown top-level section(s) in ${sourceLabel}: ${unknownKeys.join(", ")} (known: ${SECTION_KEYS.join(", ")}). Fix the typo, or prefix private keys with "_", or set the "sections" input to limit processing`;
 }

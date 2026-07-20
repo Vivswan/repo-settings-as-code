@@ -17,6 +17,7 @@
  */
 
 import { appendFileSync, readFileSync } from "node:fs";
+import * as core from "@actions/core";
 import { parse as parseYaml } from "yaml";
 import { GithubApi, isPermissionError } from "./api.js";
 import { applyDefaults } from "./merge.js";
@@ -40,21 +41,20 @@ import {
 } from "./targets.js";
 
 function input(name: string): string {
-  // The runner exposes inputs as INPUT_<NAME> uppercased with SPACES (not
-  // dashes) replaced by underscores: `settings-file` -> INPUT_SETTINGS-FILE.
-  return (process.env[`INPUT_${name.toUpperCase().replace(/ /g, "_")}`] ?? "").trim();
+  // @actions/core reads INPUT_<NAME> (uppercased, spaces to underscores -
+  // dashes survive, e.g. `settings-file` -> INPUT_SETTINGS-FILE) and trims.
+  return core.getInput(name);
 }
 
 function annotate(level: "notice" | "warning" | "error", message: string): void {
-  // Workflow-command escaping: % first, then CR/LF.
-  const escaped = message.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
-  console.log(`::${level}::${escaped}`);
+  // @actions/core owns workflow-command escaping (%, CR, LF).
+  core[level](message);
 }
 
 function setOutput(name: string, value: string): void {
-  const file = process.env.GITHUB_OUTPUT;
-  if (file) {
-    appendFileSync(file, `${name}=${value}\n`);
+  // Guarded: the runner always sets GITHUB_OUTPUT; local/test runs may not.
+  if (process.env.GITHUB_OUTPUT) {
+    core.setOutput(name, value);
   }
 }
 

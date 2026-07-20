@@ -8,6 +8,7 @@
 
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import type { components } from "@octokit/openapi-types";
 import type { GithubApi } from "./api.js";
 
 export interface Target {
@@ -137,10 +138,7 @@ export function parseReposInput(
   return { slugs: items, discover: false };
 }
 
-interface DiscoveredRepo {
-  full_name: string;
-  archived?: boolean;
-}
+type DiscoveredRepo = Pick<components["schemas"]["repository"], "full_name" | "archived">;
 
 /** Discover every non-archived repository the token's user owns. */
 export async function discoverRepos(

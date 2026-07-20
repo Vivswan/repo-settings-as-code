@@ -38,7 +38,9 @@ permission.
 
 `src/` is TypeScript built with [bun](https://bun.com); `lib/index.js` is the committed bundle
 the action executes (`bun run build` regenerates it; CI fails on drift).
-Run `bun run check` for lint + typecheck + tests + bundle freshness.
+Runtime dependencies (@octokit/rest with the retry and throttling plugins,
+@actions/core, zod, yaml) are compiled into that single bundle. Run
+`bun run check` for lint + typecheck + tests + bundle freshness.
 
 ## Debugging
 
@@ -85,6 +87,11 @@ map of `owner/name` to `{result, source, skippedSections}`).
 - Permission failures (403, or 404 on admin endpoints with a fine-grained
   token) are the only softenable errors; everything else always fails with
   the API message verbatim.
+- Rate limits (429 and secondary limits) and transient 5xx or network
+  failures are retried automatically with backoff, honoring Retry-After
+  and the rate-limit reset, up to two retries; a reset more than 60
+  seconds away fails loudly instead of stalling the workflow. Permission
+  errors are never retried.
 - Preflight barrier: under `on-missing-permission: fail`, every
   declared section is probed read-only before ANY write; if a section is
   inaccessible, nothing is applied at all (per repository in multi-repo
