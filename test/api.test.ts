@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { GithubApi, isPermissionError, isRateLimitError } from "../src/api.js";
+import { GithubApi, isPermissionError, isRateLimitError } from "../src/github/api.js";
+import { getRepoFile } from "../src/github/repo-file.js";
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -131,26 +132,26 @@ describe("getRepoFile 404 disambiguation", () => {
 
   test("contents 404 with readable contents means the file is missing", async () => {
     const state = stubFetch([notFound, repoWithPull]);
-    const result = await api().getRepoFile("o/r", ".github/settings.yml");
+    const result = await getRepoFile(api(), "o/r", ".github/settings.yml");
     expect(state.calls).toBe(2);
     expect("missing" in result).toBe(true);
   });
 
   test("contents 404 without Contents access is an error, not a missing file", async () => {
     stubFetch([notFound, repoWithoutPull]);
-    const result = await api().getRepoFile("o/r", ".github/settings.yml");
+    const result = await getRepoFile(api(), "o/r", ".github/settings.yml");
     expect("error" in result && result.error.message).toContain("Contents");
   });
 
   test("contents 404 with an invisible repo surfaces the repo-level error", async () => {
     stubFetch([notFound, notFound]);
-    const result = await api().getRepoFile("o/r", ".github/settings.yml");
+    const result = await getRepoFile(api(), "o/r", ".github/settings.yml");
     expect("error" in result && result.error.status).toBe(404);
   });
 
   test("a found file never triggers the repo probe", async () => {
     const state = stubFetch([() => new Response("labels: []\n")]);
-    const result = await api().getRepoFile("o/r", ".github/settings.yml");
+    const result = await getRepoFile(api(), "o/r", ".github/settings.yml");
     expect(state.calls).toBe(1);
     expect("content" in result && result.content).toBe("labels: []\n");
   });

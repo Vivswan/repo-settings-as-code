@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { GithubApi } from "../src/api.js";
+
 import { run, runMulti } from "../src/main.js";
 import type { Io } from "../src/orchestrate.js";
 import { DEFAULT_DISCOVERY_FILTERS } from "../src/targets.js";
@@ -54,7 +54,7 @@ describe("runMulti", () => {
     });
     const { io, annotations } = captureIo();
     const { fatal, targets } = await runMulti(
-      api as unknown as GithubApi,
+      api,
       cfg({ reposInput: "o/a, o/b, o/c", onMissingPermission: "warn" }),
       io,
     );
@@ -68,7 +68,7 @@ describe("runMulti", () => {
     const api = new MockApi({});
     const { io } = captureIo();
     const { fatal, targets } = await runMulti(
-      api as unknown as GithubApi,
+      api,
       cfg({
         reposDir: "test/fixtures/repos",
         defaultsFile: "test/fixtures/defaults.yml",
@@ -87,7 +87,7 @@ describe("runMulti", () => {
   test("no targets at all is a fatal config error", async () => {
     const api = new MockApi({});
     const { io } = captureIo();
-    const { fatal } = await runMulti(api as unknown as GithubApi, cfg({ reposInput: " ,  " }), io);
+    const { fatal } = await runMulti(api, cfg({ reposInput: " ,  " }), io);
     expect(fatal).toContain("no targets");
   });
 
@@ -96,11 +96,7 @@ describe("runMulti", () => {
     // which is how a fine-grained token reports lost access.
     const api = new MockApi({});
     const { io, annotations } = captureIo();
-    const { fatal, targets } = await runMulti(
-      api as unknown as GithubApi,
-      cfg({ reposInput: "o/x" }),
-      io,
-    );
+    const { fatal, targets } = await runMulti(api, cfg({ reposInput: "o/x" }), io);
     expect(fatal).toBeNull();
     expect(targets[0]?.result).toBe("failed");
     expect(annotations.some((a) => a.includes("the token was denied"))).toBe(true);
@@ -111,7 +107,7 @@ describe("runMulti", () => {
       "GET /repos/o/x": { data: { permissions: { pull: false } } },
     });
     const { io, annotations } = captureIo();
-    const { targets } = await runMulti(api as unknown as GithubApi, cfg({ reposInput: "o/x" }), io);
+    const { targets } = await runMulti(api, cfg({ reposInput: "o/x" }), io);
     expect(targets[0]?.result).toBe("failed");
     expect(annotations.some((a) => a.includes("Contents"))).toBe(true);
   });
@@ -120,7 +116,7 @@ describe("runMulti", () => {
     const api = new MockApi({});
     const { io } = captureIo();
     const { fatal } = await runMulti(
-      api as unknown as GithubApi,
+      api,
       cfg({ reposDir: "test/fixtures/repos", adminOwner: "viv", discoveryFiltersSet: ["forks"] }),
       io,
     );
@@ -139,7 +135,7 @@ describe("runMulti", () => {
     });
     const { io } = captureIo();
     const { fatal } = await runMulti(
-      api as unknown as GithubApi,
+      api,
       cfg({
         reposInput: "*",
         discoveryFilters: { ...DEFAULT_DISCOVERY_FILTERS, forks: "exclude" },
@@ -167,7 +163,7 @@ describe("runMulti", () => {
     });
     const { io, annotations } = captureIo();
     const { fatal } = await runMulti(
-      api as unknown as GithubApi,
+      api,
       cfg({
         reposInput: "*",
         discoveryFilters: { ...DEFAULT_DISCOVERY_FILTERS, forks: "exclude" },
@@ -217,16 +213,16 @@ describe("run (legacy single-repo regression)", () => {
     setEnv();
     process.env.INPUT_MODE = "check";
     const clean = new MockApi({ "GET /repos/o/r": { data: { has_wiki: false } } });
-    expect(await run({ api: clean as unknown as GithubApi })).toBe(0);
+    expect(await run({ api: clean })).toBe(0);
     const drifted = new MockApi({ "GET /repos/o/r": { data: { has_wiki: true } } });
-    expect(await run({ api: drifted as unknown as GithubApi })).toBe(1);
+    expect(await run({ api: drifted })).toBe(1);
   });
 
   test("apply mode patches the declared keys and exits 0", async () => {
     setEnv();
     process.env.INPUT_MODE = "apply";
     const api = new MockApi({ "GET /repos/o/r": { data: { has_wiki: true } } });
-    expect(await run({ api: api as unknown as GithubApi })).toBe(0);
+    expect(await run({ api: api })).toBe(0);
     expect(api.mutations()).toEqual([
       { method: "PATCH", path: "/repos/o/r", payload: { has_wiki: false } },
     ]);
@@ -251,11 +247,7 @@ describe("runMulti under on-missing-permission: fail", () => {
       },
     });
     const { io, annotations } = captureIo();
-    const { fatal, targets } = await runMulti(
-      api as unknown as GithubApi,
-      cfg({ reposInput: "o/a, o/d" }),
-      io,
-    );
+    const { fatal, targets } = await runMulti(api, cfg({ reposInput: "o/a, o/d" }), io);
     expect(fatal).toBeNull();
     const bySlug = Object.fromEntries(targets.map((t) => [t.slug, t.result]));
     expect(bySlug).toEqual({ "o/a": "applied", "o/d": "failed" });
@@ -307,7 +299,7 @@ describe("run in multi-repo mode (env glue)", () => {
         data: "repository:\n  has_wiki: false\n",
       },
     });
-    expect(await run({ api: api as unknown as GithubApi })).toBe(0);
+    expect(await run({ api: api })).toBe(0);
     const output = await Bun.file(outputFile).text();
     // @actions/core writes outputs in heredoc form: name<<DELIM / value / DELIM
     expect(output).toContain("repos-result<<");
@@ -323,7 +315,7 @@ describe("run in multi-repo mode (env glue)", () => {
     delete process.env.GITHUB_OUTPUT;
     delete process.env.GITHUB_STEP_SUMMARY;
     const api = new MockApi({});
-    expect(await run({ api: api as unknown as GithubApi })).toBe(1);
+    expect(await run({ api: api })).toBe(1);
     expect(api.calls).toHaveLength(0);
   });
 
@@ -352,7 +344,7 @@ describe("run in multi-repo mode (env glue)", () => {
       process.env.INPUT_REPOS = "*";
       process.env[key] = value;
       const api = new MockApi({});
-      expect(await run({ api: api as unknown as GithubApi })).toBe(1);
+      expect(await run({ api: api })).toBe(1);
       expect(api.calls).toHaveLength(0);
       delete process.env[key];
     }
@@ -363,7 +355,7 @@ describe("run in multi-repo mode (env glue)", () => {
     process.env.INPUT_REPOS = "o/a";
     process.env.INPUT_FORKS = "exclude";
     const api = new MockApi({});
-    expect(await run({ api: api as unknown as GithubApi })).toBe(1);
+    expect(await run({ api: api })).toBe(1);
     expect(api.calls).toHaveLength(0);
   });
 
@@ -372,7 +364,7 @@ describe("run in multi-repo mode (env glue)", () => {
     process.env.INPUT_REPOSITORY = "o/r";
     process.env.INPUT_TOPICS = "team-a";
     const api = new MockApi({});
-    expect(await run({ api: api as unknown as GithubApi })).toBe(1);
+    expect(await run({ api: api })).toBe(1);
     expect(api.calls).toHaveLength(0);
   });
 
@@ -389,7 +381,7 @@ describe("run in multi-repo mode (env glue)", () => {
         data: "repository:\n  has_wiki: false\n",
       },
     });
-    expect(await run({ api: api as unknown as GithubApi })).toBe(0);
+    expect(await run({ api: api })).toBe(0);
     expect(api.calls.some((c) => c.path.startsWith("/repos/o/y"))).toBe(false);
   });
 
@@ -402,14 +394,14 @@ describe("run in multi-repo mode (env glue)", () => {
         data: "repository:\n  has_wiki: false\n",
       },
     });
-    expect(await run({ api: drifted as unknown as GithubApi })).toBe(1);
+    expect(await run({ api: drifted })).toBe(1);
     const failing = new MockApi({
       "GET /repos/o/a": { error: { status: 500, message: "boom", body: "" } },
       "GET /repos/o/a/contents/.github/settings.yml": {
         data: "repository:\n  has_wiki: false\n",
       },
     });
-    expect(await run({ api: failing as unknown as GithubApi })).toBe(1);
+    expect(await run({ api: failing })).toBe(1);
   });
 
   test("defaults-file in single-repo mode is a hard error", async () => {
@@ -417,7 +409,7 @@ describe("run in multi-repo mode (env glue)", () => {
     process.env.INPUT_REPOSITORY = "o/r";
     process.env["INPUT_DEFAULTS-FILE"] = "test/fixtures/defaults.yml";
     const api = new MockApi({});
-    expect(await run({ api: api as unknown as GithubApi })).toBe(1);
+    expect(await run({ api: api })).toBe(1);
     expect(api.calls).toHaveLength(0);
     delete process.env["INPUT_DEFAULTS-FILE"];
   });
@@ -434,7 +426,7 @@ describe("run in multi-repo mode (env glue)", () => {
         data: 'repository:\n  description: "want | desc"\n',
       },
     });
-    expect(await run({ api: api as unknown as GithubApi })).toBe(1);
+    expect(await run({ api: api })).toBe(1);
     const summary = await Bun.file(summaryFile).text();
     expect(summary).toContain(":warning: drift");
     expect(summary).toContain("want \\| desc");

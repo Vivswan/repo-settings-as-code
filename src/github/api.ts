@@ -19,6 +19,21 @@ export interface ApiError {
 }
 
 /**
+ * The one capability everything downstream depends on: a verbatim request
+ * that surfaces errors as values. The engine, the sections, discovery,
+ * pagination, and the test mock all program against this interface, not
+ * the concrete client.
+ */
+export interface GithubClient {
+  tryRequest(
+    method: string,
+    path: string,
+    payload?: unknown,
+    options?: { accept?: string; raw?: boolean },
+  ): Promise<{ data: unknown } | { error: ApiError }>;
+}
+
+/**
  * Trace line for every API call. Debug output appears only when the run
  * has step debug logging enabled (re-run with debug logging, or set the
  * ACTIONS_STEP_DEBUG secret to true), so normal runs stay quiet while a
@@ -50,7 +65,7 @@ function isHttpError(error: unknown): error is OctokitHttpError {
   );
 }
 
-export class GithubApi {
+export class GithubApi implements GithubClient {
   private readonly octokit: InstanceType<typeof ActionOctokit>;
 
   constructor(
@@ -92,19 +107,7 @@ export class GithubApi {
     });
   }
 
-  /** Raw request. Returns parsed JSON (or null for 204/empty bodies). */
-  async request(method: string, path: string, payload?: unknown): Promise<unknown> {
-    const result = await this.tryRequest(method, path, payload);
-    if ("error" in result) {
-      const { status, message } = result.error;
-      throw new Error(
-        `${method} ${path} failed: ${status} ${message}. Check the token's permissions and the request payload against the GitHub REST docs for this endpoint`,
-      );
-    }
-    return result.data;
-  }
-
-  /** Like request(), but surfaces the error for callers that classify it. */
+  /** Verbatim request; surfaces errors as values for callers to classify. */
   async tryRequest(
     method: string,
     path: string,
@@ -167,66 +170,6 @@ export class GithubApi {
       throw new Error(
         `${method} ${path} failed: ${error instanceof Error ? error.message : String(error)}. Check network connectivity from the runner to ${this.baseUrl}, then re-run the workflow`,
       );
-    }
-  }
-
-  /**
-   * Fetch one file's raw content from a repository's default branch.
-   * A contents 404 is ambiguous (missing file, missing Contents
-   * permission, or a token that cannot see the repo at all), so it is
-   * disambiguated here: the repo probe runs only on that rare path, and
-   * `missing` always means the FILE. Every fine-grained PAT can read the
-   * repo object (Metadata), so the probe's permissions block settles
-   * whether the token could have read the contents.
-   */
-  async getRepoFile(
-    slug: string,
-    filePath: string,
-  ): Promise<{ content: string } | { missing: true } | { error: ApiError }> {
-    const result = await this.tryRequest("GET", `/repos/${slug}/contents/${filePath}`, undefined, {
-      accept: "application/vnd.github.raw+json",
-      raw: true,
-    });
-    if ("error" in result) {
-      if (result.error.status === 404) {
-        const repoProbe = await this.tryRequest("GET", `/repos/${slug}`);
-        if ("error" in repoProbe) {
-          return { error: repoProbe.error };
-        }
-        const pull = (repoProbe.data as { permissions?: { pull?: boolean } } | null)?.permissions
-          ?.pull;
-        if (pull === true) {
-          return { missing: true };
-        }
-        return {
-          error: {
-            status: 404,
-            message: `the repository is visible but the token cannot read its contents, so ${filePath} cannot be fetched (grant Contents: read)`,
-            body: "",
-          },
-        };
-      }
-      return { error: result.error };
-    }
-    return { content: String(result.data ?? "") };
-  }
-
-  /** GET every page of a list endpoint. */
-  async list(path: string): Promise<unknown[]> {
-    const items: unknown[] = [];
-    const separator = path.includes("?") ? "&" : "?";
-    for (let page = 1; ; page++) {
-      const data = await this.request("GET", `${path}${separator}per_page=100&page=${page}`);
-      const chunk = data as unknown[];
-      if (!Array.isArray(chunk)) {
-        throw new Error(
-          `GET ${path} returned a JSON value that is not a list, so the response cannot be paginated. Check that the path is a list endpoint and the API version header matches the GitHub REST docs`,
-        );
-      }
-      items.push(...chunk);
-      if (chunk.length < 100) {
-        return items;
-      }
     }
   }
 }

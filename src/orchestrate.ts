@@ -6,7 +6,7 @@
  * multi-repo mode ("" in single-repo mode keeps output byte-identical).
  */
 
-import type { GithubApi } from "./api.js";
+import type { GithubClient } from "./github/api.js";
 import { SECTION_KEYS, type SettingsFile } from "./schema.js";
 import { PermissionDenied, type SectionContext, type SectionResult } from "./sections/contract.js";
 import { SECTIONS } from "./sections/registry.js";
@@ -85,7 +85,7 @@ export function validateSettingsDoc(
 
 /** Run the full section pipeline against one repository. */
 export async function runForRepo(
-  api: GithubApi,
+  api: GithubClient,
   opts: RepoRunOptions,
   io: Io,
 ): Promise<RepoRunResult> {

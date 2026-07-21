@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { GithubApi } from "../src/api.js";
+
 import {
   DEFAULT_DISCOVERY_FILTERS,
   type DiscoveryFilters,
@@ -95,10 +95,7 @@ describe("discoverRepos", () => {
     routes: ConstructorParameters<typeof MockApi>[0],
     overrides: Partial<DiscoveryFilters> = {},
   ) => {
-    const discovered = await discoverRepos(
-      new MockApi(routes) as unknown as GithubApi,
-      filters(overrides),
-    );
+    const discovered = await discoverRepos(new MockApi(routes), filters(overrides));
     if ("error" in discovered) {
       throw new Error(discovered.error);
     }
@@ -235,7 +232,7 @@ describe("discoverRepos", () => {
         error: { status: 403, message: "Resource not accessible", body: "" },
       },
     });
-    const discovered = await discoverRepos(api as unknown as GithubApi, DEFAULT_DISCOVERY_FILTERS);
+    const discovered = await discoverRepos(api, DEFAULT_DISCOVERY_FILTERS);
     expect("error" in discovered && discovered.error).toContain("Discovery needs a user PAT");
   });
 });

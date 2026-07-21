@@ -19,7 +19,8 @@
 import { appendFileSync, readFileSync } from "node:fs";
 import * as core from "@actions/core";
 import { parse as parseYaml } from "yaml";
-import { GithubApi, isPermissionError } from "./api.js";
+import { GithubApi, type GithubClient, isPermissionError } from "./github/api.js";
+import { getRepoFile } from "./github/repo-file.js";
 import { applyDefaults } from "./merge.js";
 import {
   type Io,
@@ -199,7 +200,7 @@ export interface MultiConfig {
  * skipped and never stop the others.
  */
 export async function runMulti(
-  api: GithubApi,
+  api: GithubClient,
   cfg: MultiConfig,
   io: Io,
 ): Promise<{ fatal: string | null; targets: TargetOutcome[] }> {
@@ -310,7 +311,7 @@ export async function runMulti(
         }
       } else {
         sourceLabel = `${target.slug}:.github/settings.yml`;
-        const file = await api.getRepoFile(target.slug, ".github/settings.yml");
+        const file = await getRepoFile(api, target.slug, ".github/settings.yml");
         if ("missing" in file) {
           io.annotate(
             "notice",
@@ -398,7 +399,7 @@ export async function runMulti(
   return { fatal: null, targets: results };
 }
 
-export async function run(overrides?: { api?: GithubApi }): Promise<number> {
+export async function run(overrides?: { api?: GithubClient }): Promise<number> {
   const fail = (message: string): number => {
     annotate("error", message);
     setOutput("result", "failed");

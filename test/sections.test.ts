@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { GithubApi } from "../src/api.js";
+
 import { actionsSection } from "../src/sections/actions.js";
 import { branchesSection } from "../src/sections/branches.js";
 import { codeScanningDefaultSetupSection } from "../src/sections/code-scanning.js";
@@ -14,7 +14,7 @@ import { validateSectionShapes } from "../src/validate.js";
 import { MockApi } from "./mock-api.js";
 
 function ctx(api: MockApi, check = false): SectionContext {
-  return { api: api as unknown as GithubApi, repo: "o/r", owner: "o", check };
+  return { api, repo: "o/r", owner: "o", check };
 }
 
 describe("labels", () => {

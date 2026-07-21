@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { GithubApi } from "../src/api.js";
+
 import { type Io, runForRepo, validateSettingsDoc, worstOf } from "../src/orchestrate.js";
 import type { SettingsFile } from "../src/schema.js";
 import { MockApi } from "./mock-api.js";
@@ -36,7 +36,7 @@ describe("runForRepo", () => {
       "GET /repos/o/r": { error: { status: 403, message: "Forbidden", body: "" } },
     });
     const { io, annotations } = captureIo();
-    const result = await runForRepo(api as unknown as GithubApi, opts(), io);
+    const result = await runForRepo(api, opts(), io);
     expect(result.result).toBe("failed");
     expect(result.preflightDenied).toHaveLength(1);
     expect(api.mutations()).toHaveLength(0);
@@ -48,11 +48,7 @@ describe("runForRepo", () => {
       "PATCH /repos/o/r": { error: { status: 403, message: "Forbidden", body: "" } },
     });
     const { io, annotations } = captureIo();
-    const result = await runForRepo(
-      api as unknown as GithubApi,
-      opts({ onMissingPermission: "warn" }),
-      io,
-    );
+    const result = await runForRepo(api, opts({ onMissingPermission: "warn" }), io);
     expect(result.result).toBe("partial");
     expect(result.skippedSections).toEqual(["repository"]);
     expect(annotations.some((a) => a.startsWith("warning: repository: skipped"))).toBe(true);
@@ -63,11 +59,7 @@ describe("runForRepo", () => {
       "GET /repos/o/r": { data: { has_wiki: true } },
     });
     const { io, logs } = captureIo();
-    const result = await runForRepo(
-      api as unknown as GithubApi,
-      opts({ mode: "check", label: "o/r: " }),
-      io,
-    );
+    const result = await runForRepo(api, opts({ mode: "check", label: "o/r: " }), io);
     expect(result.result).toBe("drift");
     expect(logs[0]).toStartWith("o/r: drift: repository.has_wiki");
   });
@@ -78,7 +70,7 @@ describe("runForRepo", () => {
     });
     const { io } = captureIo();
     const result = await runForRepo(
-      api as unknown as GithubApi,
+      api,
       opts({ mode: "check", settings: { pages: null } as SettingsFile }),
       io,
     );

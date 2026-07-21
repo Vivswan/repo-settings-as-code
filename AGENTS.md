@@ -46,6 +46,7 @@ Settings as Code: GitHub Action applying declarative repository settings: rulese
   `src/schema.ts`, and adding one registry line - the compiler flags any
   forgotten step. All GitHub API list calls must go through
   `listAll()` (bare-array endpoints) or `listAllEnveloped()` (endpoints
-  that wrap the list in a `{total_count, <key>: []}` envelope); errors
+  that wrap the list in a `{total_count, <key>: []}` envelope), both
+  backed by the single page loop in `src/github/paginate.ts`; errors
   through `call()`/`throwFor()` so the permission policy
   (`on-missing-permission`, `required-sections`) works.

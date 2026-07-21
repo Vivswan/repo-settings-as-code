@@ -1,8 +1,9 @@
 /** Shared section-handler contract and error classification. */
 
 import { z } from "zod";
-import type { ApiError, GithubApi } from "../api.js";
-import { isPermissionError, isRateLimitError } from "../api.js";
+import type { ApiError, GithubClient } from "../github/api.js";
+import { isPermissionError, isRateLimitError } from "../github/api.js";
+import { paginate } from "../github/paginate.js";
 import type { SectionKey } from "../schema.js";
 
 export class PermissionDenied extends Error {
@@ -15,7 +16,7 @@ export class PermissionDenied extends Error {
 }
 
 export interface SectionContext {
-  api: GithubApi;
+  api: GithubClient;
   repo: string; // owner/name
   owner: string;
   check: boolean;
@@ -130,8 +131,9 @@ export async function probeAbsent(
 }
 
 /**
- * One page loop for every list endpoint; `extract` adapts the response
- * shape (bare array, or a {total_count, <key>: []} envelope).
+ * Section-flavored pagination: delegate the page loop to github/paginate,
+ * classify errors through throwFor; `extract` adapts the response shape
+ * (bare array, or a {total_count, <key>: []} envelope).
  */
 async function listPages(
   ctx: SectionContext,
@@ -140,24 +142,16 @@ async function listPages(
   extract: (data: unknown) => unknown[] | null,
   shape: string,
 ): Promise<unknown[]> {
-  const items: unknown[] = [];
-  const separator = path.includes("?") ? "&" : "?";
-  for (let page = 1; ; page++) {
-    const result = await ctx.api.tryRequest("GET", `${path}${separator}per_page=100&page=${page}`);
-    if ("error" in result) {
-      throwFor(section, "GET", path, result.error);
-    }
-    const chunk = extract(result.data);
-    if (chunk === null) {
-      throw new Error(
-        `${section.key}: GET ${path} returned a JSON value without ${shape}, so the response cannot be paginated. Check the "api-version" input against the GitHub REST docs for this endpoint`,
-      );
-    }
-    items.push(...chunk);
-    if (chunk.length < 100) {
-      return items;
-    }
+  const result = await paginate(ctx.api, path, extract);
+  if ("error" in result) {
+    throwFor(section, "GET", path, result.error);
   }
+  if ("malformed" in result) {
+    throw new Error(
+      `${section.key}: GET ${path} returned a JSON value without ${shape}, so the response cannot be paginated. Check the "api-version" input against the GitHub REST docs for this endpoint`,
+    );
+  }
+  return result.items;
 }
 
 /** GET every page of a bare-array list endpoint. */

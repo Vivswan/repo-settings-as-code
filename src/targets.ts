@@ -9,7 +9,8 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { components } from "@octokit/openapi-types";
-import type { GithubApi } from "./api.js";
+import type { GithubClient } from "./github/api.js";
+import { paginate } from "./github/paginate.js";
 
 export interface Target {
   slug: string; // owner/name, original casing
@@ -192,7 +193,7 @@ export interface DiscoveryResult {
 
 /** Discover the repositories the token's user can see, applying the filters. */
 export async function discoverRepos(
-  api: GithubApi,
+  api: GithubClient,
   filters: DiscoveryFilters,
 ): Promise<DiscoveryResult | { error: string }> {
   const params = [`affiliation=${filters.affiliation.join(",")}`];
@@ -201,23 +202,38 @@ export async function discoverRepos(
     // internal-vs-private distinction on GHEC) is settled client-side below.
     params.push(`visibility=${filters.visibility}`);
   }
-  let repos: DiscoveredRepo[];
+  const path = `/user/repos?${params.join("&")}`;
+  const wrap = (message: string, advice: string): { error: string } => ({
+    error: `cannot discover repositories for repos: "*": ${message}. ${advice}`,
+  });
+  const RERUN_ADVICE =
+    "This is not a permission problem; re-run the workflow, and retry later if it persists";
+  let page: Awaited<ReturnType<typeof paginate>>;
   try {
-    repos = (await api.list(`/user/repos?${params.join("&")}`)) as DiscoveredRepo[];
+    page = await paginate(api, path);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    // Network-level failure: tryRequest throws once the retries are spent.
+    return wrap(error instanceof Error ? error.message : String(error), RERUN_ADVICE);
+  }
+  if ("error" in page) {
+    const cause = `GET ${path} failed: ${page.error.status} ${page.error.message}`;
     // The PAT advice fits denials only; transient failures need re-run
     // advice instead, or an operator abandons "*" discovery for nothing.
-    // The status sits right after "failed:" in the request error message.
-    if (/ failed: (401|403|404) /.test(message)) {
-      return {
-        error: `cannot discover repositories for repos: "*": ${message}. Discovery needs a user PAT; the workflow GITHUB_TOKEN and GitHub App installation tokens cannot enumerate a user's repositories. List the target repositories explicitly in the "repos" input`,
-      };
+    if ([401, 403, 404].includes(page.error.status)) {
+      return wrap(
+        cause,
+        `Discovery needs a user PAT; the workflow GITHUB_TOKEN and GitHub App installation tokens cannot enumerate a user's repositories. List the target repositories explicitly in the "repos" input`,
+      );
     }
-    return {
-      error: `cannot discover repositories for repos: "*": ${message}. This is not a permission problem; re-run the workflow, and retry later if it persists`,
-    };
+    return wrap(cause, RERUN_ADVICE);
   }
+  if ("malformed" in page) {
+    return wrap(
+      `GET ${path} returned a JSON value that is not a list, so the response cannot be paginated`,
+      RERUN_ADVICE,
+    );
+  }
+  const repos = page.items as DiscoveredRepo[];
   // One rule per filter, in reporting-attribution order; the first reason
   // returned is the one a skipped repo is grouped under.
   const rules: Array<(repo: DiscoveredRepo) => string | null> = [
