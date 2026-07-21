@@ -109,10 +109,27 @@ export async function runForRepo(
   // but not write access can still fail mid-apply; the engine is
   // idempotent, so re-running after fixing the token converges.)
   if (!ctx.check && opts.onMissingPermission === "fail") {
+    // Belt over the check-is-read-only convention: the probe client refuses
+    // every non-GET, so a handler that (wrongly) mutated under check cannot
+    // touch the repo during preflight. The thrown error is ignored below
+    // like any other non-permission error; the apply pass surfaces the bug.
+    const probeApi: GithubClient = {
+      tryRequest(method, path, payload, options) {
+        if (method !== "GET") {
+          throw new Error(
+            `preflight probe attempted ${method} ${path}, but section handlers must be read-only in check mode; this is a bug in the section handler`,
+          );
+        }
+        return api.tryRequest(method, path, payload, options);
+      },
+    };
     const denied: string[] = [];
     for (const section of active) {
       try {
-        await section.run({ ...ctx, check: true }, settings[section.key as keyof SettingsFile]);
+        await section.run(
+          { ...ctx, api: probeApi, check: true },
+          settings[section.key as keyof SettingsFile],
+        );
       } catch (error) {
         if (error instanceof PermissionDenied) {
           denied.push(`${section.key}: ${error.detail}`);
