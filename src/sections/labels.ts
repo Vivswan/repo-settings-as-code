@@ -30,7 +30,7 @@ interface LiveLabel {
 export const labelsSection: SectionModule<"labels"> = {
   key: "labels",
   grant: `grant "Issues" (read and write) under the PAT's Repository permissions`,
-  shape: z.array(z.looseObject({ name: z.string() })),
+  shape: z.array(z.looseObject({ name: z.string(), new_name: z.string().optional() })),
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
     const desired = desiredRaw as LabelConfig[];

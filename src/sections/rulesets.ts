@@ -63,7 +63,23 @@ interface LiveRulesetSummary {
 export const rulesetsSection: SectionModule<"rulesets"> = {
   key: "rulesets",
   grant: `grant "Administration" (read and write) under the PAT's Repository permissions`,
-  shape: z.array(z.looseObject({ name: z.string() })),
+  shape: z.array(
+    z.looseObject({
+      name: z.string(),
+      // normalizeRuleset maps over these before the API can reject them, so
+      // the shape must catch a non-list here (a classic missing "-" typo).
+      conditions: z
+        .looseObject({
+          ref_name: z
+            .looseObject({
+              include: z.array(z.string()).optional(),
+              exclude: z.array(z.string()).optional(),
+            })
+            .optional(),
+        })
+        .optional(),
+    }),
+  ),
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
     const desired = (desiredRaw as RulesetConfig[]).map(normalizeRuleset);
