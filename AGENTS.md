@@ -35,9 +35,13 @@ Settings as Code: GitHub Action applying declarative repository settings: rulese
      updates via three-way merge. -->
 
 - `lib/index.js` is the COMMITTED bundled entrypoint the action runs
-  (node24); regenerate with `bun run build` after any `src/` change. CI's
-  bundle-check job fails when it drifts. It is exempt from the typography
-  check (third-party unicode) and excluded from [biome](https://biomejs.dev).
+  (node24); `lib/settings.schema.json` is the COMMITTED JSON Schema for
+  settings.yml, generated from the `SettingsFile` types (JSDoc comments in
+  `src/schema.ts` become the schema descriptions). Regenerate both with
+  `bun run build` after any `src/` change. CI's bundle-check job fails
+  when either drifts. `lib/` is exempt from the typography check
+  (third-party unicode in the bundle; schema JSDoc is checked at source)
+  and excluded from [biome](https://biomejs.dev).
 - The apply/check engine layout: `src/main.ts` is the thin bundled
   entrypoint; `src/action/` is the GitHub Actions layer (inputs, Io over
   @actions/core, settings reading, step summaries, the single- and
@@ -47,10 +51,11 @@ Settings as Code: GitHub Action applying declarative repository settings: rulese
   targets; `src/sections/` holds one handler per settings section. Each
   section is a self-contained `SectionModule`
   (key, PAT grant advice, loose zod shape, handler) registered in
-  `src/sections/registry.ts`; adding a section means creating
-  `src/sections/<key>.ts`, adding the key to `SECTION_KEYS` in
-  `src/schema.ts`, and adding one registry line - the compiler flags any
-  forgotten step. All GitHub API list calls must go through
+  `src/sections/registry.ts`; adding a section means declaring its
+  property on `SettingsFile` in `src/schema.ts` (with a JSDoc comment,
+  which feeds the published schema), adding the key to `SECTION_KEYS`,
+  creating `src/sections/<key>.ts`, and adding one registry line - the
+  compiler flags any forgotten step. All GitHub API list calls must go through
   `listAll()` (bare-array endpoints) or `listAllEnveloped()` (endpoints
   that wrap the list in a `{total_count, <key>: []}` envelope), both
   backed by the single page loop in `src/github/paginate.ts`; errors

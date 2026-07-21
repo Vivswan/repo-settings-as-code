@@ -197,7 +197,11 @@ export const SECTION_KEYS = [
   "collaborators",
   "teams",
   "milestones",
-] as const;
+] as const satisfies readonly (keyof SettingsFile)[];
 
 /** A recognized top-level section name. */
 export type SectionKey = (typeof SECTION_KEYS)[number];
+
+/** Compile-time lockstep: a SettingsFile property missing from SECTION_KEYS fails here. */
+type MustBeNever<T extends never> = T;
+type _UnlistedSection = MustBeNever<Exclude<keyof SettingsFile, SectionKey>>;

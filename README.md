@@ -34,13 +34,32 @@ Most sections need a [fine-grained PAT](https://docs.github.com/en/authenticatio
 on the repository; the default `GITHUB_TOKEN` can never hold that
 permission.
 
+A JSON Schema describing every section and its structured fields is
+published at
+[`lib/settings.schema.json`](lib/settings.schema.json), generated from the
+commented types in `src/schema.ts`. Passthrough areas (the `repository`
+payload, branch protection, rule parameters) stay open objects on purpose.
+One line at the top of your `settings.yml` gives editor autocomplete and
+hover docs (agents can fetch the same URL):
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Vivswan/repo-settings-as-code/main/lib/settings.schema.json
+```
+
+The schema is documentation, not a gate: unknown fields validate on
+purpose, because payloads pass through to the API verbatim and declaring a
+field GitHub ships tomorrow must never read as an error (see
+[Forward compatibility](#forward-compatibility)).
+
 ## Development
 
-`src/` is TypeScript built with [bun](https://bun.com); `lib/index.js` is the committed bundle
-the action executes (`bun run build` regenerates it; CI fails on drift).
+`src/` is TypeScript built with [bun](https://bun.com); `lib/` holds the two
+committed generated artifacts: `index.js`, the bundle the action executes,
+and `settings.schema.json`, the published settings.yml schema (`bun run
+build` regenerates both; CI fails on drift).
 Runtime dependencies (@octokit/rest with the retry and throttling plugins,
 @actions/core, zod, yaml) are compiled into that single bundle. Run
-`bun run check` for lint + typecheck + tests + bundle freshness.
+`bun run check` for lint + typecheck + tests + generated-artifact freshness.
 
 ## Debugging
 

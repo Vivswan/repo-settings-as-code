@@ -30,8 +30,9 @@ jobs:
       - name: Test
         run: bun run test
 
-  # The bundled entrypoint is committed (the node24 runtime executes lib/index.js);
-  # fail if it drifts from src/.
+  # lib/ holds committed generated artifacts: the bundled entrypoint the
+  # node24 runtime executes and the settings.yml JSON Schema; fail if
+  # either drifts from src/.
   bundle-check:
     runs-on: ubuntu-latest
     steps:
