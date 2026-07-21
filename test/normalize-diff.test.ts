@@ -1,11 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { subsetDiff } from "../src/diff.js";
-import {
-  normalizeColor,
-  normalizeRefName,
-  normalizeRuleset,
-  normalizeTopics,
-} from "../src/normalize.js";
+import { normalizeColor } from "../src/sections/labels.js";
+import { normalizeTopics } from "../src/sections/repository.js";
+import { normalizeRefName, normalizeRuleset } from "../src/sections/rulesets.js";
 
 describe("normalizeTopics", () => {
   test("comma string", () => {

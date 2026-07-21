@@ -5,9 +5,46 @@
  */
 
 import { subsetDiff } from "../diff.js";
-import { normalizeRuleset } from "../normalize.js";
 import type { RulesetConfig } from "../schema.js";
 import { call, emptyResult, listAll, type Section, type SectionResult } from "./section.js";
+
+/**
+ * Ruleset ref includes/excludes: the file may use short names ("staging",
+ * "templates/*"); the API wants full refs. Native tokens (~DEFAULT_BRANCH,
+ * ~ALL) and already-qualified refs pass through untouched.
+ */
+export function normalizeRefName(value: string, target: string): string {
+  if (value.startsWith("~") || value.startsWith("refs/")) {
+    return value;
+  }
+  if (target === "tag") {
+    return `refs/tags/${value}`;
+  }
+  if (target === "branch") {
+    return `refs/heads/${value}`;
+  }
+  // Unknown (future) targets: never guess a prefix - pass through verbatim.
+  return value;
+}
+
+/** Deep-copy a ruleset with normalized ref conditions (never mutates input). */
+export function normalizeRuleset(ruleset: RulesetConfig): RulesetConfig {
+  const copy = structuredClone(ruleset);
+  copy.target = copy.target ?? "branch";
+  // The create endpoint requires enforcement; "active" is the useful default.
+  copy.enforcement = copy.enforcement ?? "active";
+  const target = copy.target;
+  const refName = copy.conditions?.ref_name;
+  if (refName && target !== "push") {
+    if (refName.include) {
+      refName.include = refName.include.map((v) => normalizeRefName(v, target));
+    }
+    if (refName.exclude) {
+      refName.exclude = refName.exclude.map((v) => normalizeRefName(v, target));
+    }
+  }
+  return copy;
+}
 
 interface LiveRulesetSummary {
   id: number;

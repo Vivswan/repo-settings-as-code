@@ -5,7 +5,6 @@
  */
 
 import { subsetDiff } from "../diff.js";
-import { normalizeTopics } from "../normalize.js";
 import {
   call,
   emptyResult,
@@ -14,6 +13,16 @@ import {
   type SectionResult,
   throwFor,
 } from "./section.js";
+
+/** Topics: accept a comma-separated string or an array; lowercase, dedupe. */
+export function normalizeTopics(raw: unknown): string[] {
+  const values = Array.isArray(raw)
+    ? raw.map(String)
+    : String(raw ?? "")
+        .split(",")
+        .map((t) => t.trim());
+  return [...new Set(values.map((t) => t.toLowerCase()).filter(Boolean))];
+}
 
 interface SecurityToggle {
   key: string;

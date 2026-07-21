@@ -3,8 +3,8 @@
  * personal account the section no-ops with a note.
  */
 
-import { roleForPermission } from "../normalize.js";
 import type { TeamConfig } from "../schema.js";
+import { roleForPermission } from "./roles.js";
 import {
   call,
   emptyResult,

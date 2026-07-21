@@ -3,8 +3,8 @@
  * Undeclared collaborators are REMOVED (the owner never is).
  */
 
-import { roleForPermission } from "../normalize.js";
 import type { CollaboratorConfig } from "../schema.js";
+import { roleForPermission } from "./roles.js";
 import {
   call,
   emptyResult,

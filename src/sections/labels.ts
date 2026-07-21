@@ -5,9 +5,20 @@
  */
 
 import { subsetDiff } from "../diff.js";
-import { nameKey, normalizeColor } from "../normalize.js";
 import type { LabelConfig } from "../schema.js";
 import { call, emptyResult, listAll, type Section, type SectionResult } from "./section.js";
+
+/** Case-insensitive key for name-matched resources (labels). */
+export function nameKey(name: string): string {
+  return name.toLowerCase();
+}
+
+/** Label colors: GitHub stores them without the leading '#', lowercase. */
+export function normalizeColor(color: unknown): string {
+  return String(color ?? "")
+    .replace(/^#/, "")
+    .toLowerCase();
+}
 
 interface LiveLabel {
   name: string;
