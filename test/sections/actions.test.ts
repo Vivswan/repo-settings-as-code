@@ -45,6 +45,28 @@ describe("actions", () => {
     expect(payload.enabled).toBe(true);
   });
 
+  test("the unrecognized-key note reports the enabled value and matches the mode", async () => {
+    const apply = new MockApi({});
+    const applied = await actionsSection.run(ctx(apply), { some_future_key: "x" });
+    expect(applied.notes).toHaveLength(1);
+    expect(applied.notes[0]).toContain("enabled: true");
+    expect(applied.notes[0]).toContain("were sent verbatim");
+    const explicitOff = new MockApi({});
+    const off = await actionsSection.run(ctx(explicitOff), {
+      enabled: false,
+      some_future_key: "x",
+    });
+    expect(off.notes[0]).toContain("enabled: false");
+    const check = new MockApi({
+      "GET /repos/o/r/actions/permissions": { data: { enabled: true } },
+    });
+    const checked = await actionsSection.run(ctx(check, true), { some_future_key: "x" });
+    expect(checked.notes).toHaveLength(1);
+    expect(checked.notes[0]).toContain("enabled: true");
+    expect(checked.notes[0]).toContain("would send");
+    expect(check.mutations()).toEqual([]);
+  });
+
   test("selected-actions check treats a 409 as drift, not failure", async () => {
     const api = new MockApi({
       "GET /repos/o/r/actions/permissions": { data: { enabled: true, allowed_actions: "all" } },

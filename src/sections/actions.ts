@@ -62,8 +62,15 @@ export const actionsSection: SectionModule<"actions"> = {
     const KNOWN_PERMISSION_KEYS = new Set(["enabled", "allowed_actions"]);
     const routed = Object.keys(permissions).filter((k) => !KNOWN_PERMISSION_KEYS.has(k));
     if (routed.length > 0) {
+      // The base PUT body always carries an enabled value (defaulted above),
+      // so a mis-routed key can flip Actions on as a side effect; say so.
+      // JSON.stringify keeps a malformed quoted "false" distinguishable from
+      // the boolean in the message.
+      const enabledValue = JSON.stringify(permissions.enabled);
       result.notes.push(
-        `key(s) [${routed.join(", ")}] are not recognized by this action; they were sent verbatim to PUT /actions/permissions, where GitHub may ignore them - run mode: check to confirm they took effect, or remove them from the actions section of the settings file`,
+        ctx.check
+          ? `key(s) [${routed.join(", ")}] are not recognized by this action; apply would send them verbatim to PUT /actions/permissions (a body that also sets enabled: ${enabledValue}), where GitHub may ignore them - a "no such field" drift line for a key below means GitHub does not accept it there; remove it from the actions section of the settings file`
+          : `key(s) [${routed.join(", ")}] are not recognized by this action; they were sent verbatim to PUT /actions/permissions (a body that also sets enabled: ${enabledValue}), where GitHub may ignore them - run mode: check to confirm they took effect, or remove them from the actions section of the settings file`,
       );
     }
 
