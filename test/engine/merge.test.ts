@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { applyDefaults, deepMerge } from "../src/engine/merge.js";
-import type { SettingsFile } from "../src/schema.js";
+import { applyDefaults, deepMerge } from "../../src/engine/merge.js";
+import type { SettingsFile } from "../../src/schema.js";
 
 describe("deepMerge", () => {
   test("objects merge recursively, override keys win", () => {

@@ -1,28 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { GithubApi, isPermissionError, isRateLimitError } from "../src/github/api.js";
-import { getRepoFile } from "../src/github/repo-file.js";
+import { isPermissionError, isRateLimitError } from "../../src/github/api.js";
+import { api, restoreFetch, stubFetch } from "./stub.js";
 
-const realFetch = globalThis.fetch;
-afterEach(() => {
-  globalThis.fetch = realFetch;
-});
-
-/** Stub fetch with a fixed response sequence (last one repeats); count calls. */
-function stubFetch(responses: Array<() => Response>): { calls: number } {
-  const state = { calls: 0 };
-  globalThis.fetch = (async () => {
-    const make = responses[Math.min(state.calls, responses.length - 1)];
-    state.calls++;
-    if (!make) {
-      throw new Error("no stubbed response");
-    }
-    return make();
-  }) as unknown as typeof fetch;
-  return state;
-}
-
-// retryAfterBaseValue: 1 turns every plugin wait into milliseconds.
-const api = () => new GithubApi("t", "https://api.test", "2022-11-28", 1);
+afterEach(restoreFetch);
 
 const okJson = () =>
   new Response('{"ok":true}', { headers: { "content-type": "application/json" } });
@@ -116,44 +96,6 @@ describe("response shaping", () => {
       raw: true,
     });
     expect("data" in result && result.data).toBe("repository:\n  has_wiki: false\n");
-  });
-});
-
-describe("getRepoFile 404 disambiguation", () => {
-  const notFound = () => new Response('{"message":"Not Found"}', { status: 404 });
-  const repoWithPull = () =>
-    new Response('{"permissions":{"pull":true}}', {
-      headers: { "content-type": "application/json" },
-    });
-  const repoWithoutPull = () =>
-    new Response('{"permissions":{"pull":false}}', {
-      headers: { "content-type": "application/json" },
-    });
-
-  test("contents 404 with readable contents means the file is missing", async () => {
-    const state = stubFetch([notFound, repoWithPull]);
-    const result = await getRepoFile(api(), "o/r", ".github/settings.yml");
-    expect(state.calls).toBe(2);
-    expect("missing" in result).toBe(true);
-  });
-
-  test("contents 404 without Contents access is an error, not a missing file", async () => {
-    stubFetch([notFound, repoWithoutPull]);
-    const result = await getRepoFile(api(), "o/r", ".github/settings.yml");
-    expect("error" in result && result.error.message).toContain("Contents");
-  });
-
-  test("contents 404 with an invisible repo surfaces the repo-level error", async () => {
-    stubFetch([notFound, notFound]);
-    const result = await getRepoFile(api(), "o/r", ".github/settings.yml");
-    expect("error" in result && result.error.status).toBe(404);
-  });
-
-  test("a found file never triggers the repo probe", async () => {
-    const state = stubFetch([() => new Response("labels: []\n")]);
-    const result = await getRepoFile(api(), "o/r", ".github/settings.yml");
-    expect(state.calls).toBe(1);
-    expect("content" in result && result.content).toBe("labels: []\n");
   });
 });
 

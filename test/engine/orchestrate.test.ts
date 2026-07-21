@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-import { runForRepo, validateSettingsDoc, worstOf } from "../src/engine/orchestrate.js";
-import type { Io } from "../src/io.js";
-import type { SettingsFile } from "../src/schema.js";
-import { MockApi } from "./mock-api.js";
+import { runForRepo, validateSettingsDoc, worstOf } from "../../src/engine/orchestrate.js";
+import type { Io } from "../../src/io.js";
+import type { SettingsFile } from "../../src/schema.js";
+import { MockApi } from "../mock-api.js";
 
 function captureIo(): { io: Io; annotations: string[]; logs: string[] } {
   const annotations: string[] = [];
