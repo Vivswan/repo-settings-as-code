@@ -19,6 +19,18 @@
 import { appendFileSync, readFileSync } from "node:fs";
 import * as core from "@actions/core";
 import { parse as parseYaml } from "yaml";
+import { resolveCentralTargets } from "./discovery/central.js";
+import {
+  AFFILIATIONS,
+  ARCHIVED_FILTERS,
+  type DiscoveryFilters,
+  discoverRepos,
+  FORKS_FILTERS,
+  formatSkipNotice,
+  VISIBILITY_FILTERS,
+} from "./discovery/discover.js";
+import { parseReposInput } from "./discovery/repos-input.js";
+import { dedupeTargets, SLUG_RE, type Target } from "./discovery/targets.js";
 import { GithubApi, type GithubClient, isPermissionError } from "./github/api.js";
 import { getRepoFile } from "./github/repo-file.js";
 import { applyDefaults } from "./merge.js";
@@ -32,19 +44,6 @@ import {
 } from "./orchestrate.js";
 import type { SettingsFile } from "./schema.js";
 import { SECTION_KEYS } from "./schema.js";
-import {
-  AFFILIATIONS,
-  ARCHIVED_FILTERS,
-  type DiscoveryFilters,
-  dedupeTargets,
-  discoverRepos,
-  FORKS_FILTERS,
-  parseReposInput,
-  resolveCentralTargets,
-  SLUG_RE,
-  type Target,
-  VISIBILITY_FILTERS,
-} from "./targets.js";
 
 function input(name: string): string {
   // @actions/core reads INPUT_<NAME> (uppercased, spaces to underscores -
@@ -163,20 +162,6 @@ function writeMultiSummary(targets: TargetOutcome[], mode: string): void {
 
 function quoteList(names: string[]): string {
   return names.map((name) => `"${name}"`).join(", ");
-}
-
-/**
- * One aggregate notice per filter reason: with "*" fleets, per-repo notices
- * would flood the annotations UI (GitHub caps annotations per step).
- */
-function formatSkipNotice(group: { reason: string; slugs: string[] }): string {
-  const shown = group.slugs.slice(0, 20).join(", ");
-  const more = group.slugs.length > 20 ? `, and ${group.slugs.length - 20} more` : "";
-  const count = `${group.slugs.length} ${group.slugs.length === 1 ? "repository" : "repositories"}`;
-  if (group.reason === "archived") {
-    return `repos: "*" discovery skipped ${count} because settings writes fail on archived repositories; unarchive them to manage them: ${shown}${more}`;
-  }
-  return `repos: "*" discovery skipped ${count} by ${group.reason}: ${shown}${more}`;
 }
 
 export interface MultiConfig {

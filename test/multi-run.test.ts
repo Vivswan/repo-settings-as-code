@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-
+import { DEFAULT_DISCOVERY_FILTERS } from "../src/discovery/discover.js";
 import { run, runMulti } from "../src/main.js";
 import type { Io } from "../src/orchestrate.js";
-import { DEFAULT_DISCOVERY_FILTERS } from "../src/targets.js";
 import { MockApi } from "./mock-api.js";
 
 function captureIo(): { io: Io; annotations: string[]; logs: string[] } {

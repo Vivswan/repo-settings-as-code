@@ -1,15 +1,14 @@
 import { describe, expect, test } from "bun:test";
 
+import { resolveCentralTargets } from "../src/discovery/central.js";
 import {
   DEFAULT_DISCOVERY_FILTERS,
   type DiscoveryFilters,
-  dedupeTargets,
   discoverRepos,
   excludeMatches,
-  parseReposInput,
-  resolveCentralTargets,
-  type Target,
-} from "../src/targets.js";
+} from "../src/discovery/discover.js";
+import { parseReposInput } from "../src/discovery/repos-input.js";
+import { dedupeTargets, type Target } from "../src/discovery/targets.js";
 import { MockApi } from "./mock-api.js";
 
 describe("resolveCentralTargets", () => {
