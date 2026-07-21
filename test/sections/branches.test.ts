@@ -31,4 +31,15 @@ describe("branches", () => {
     expect(result.drift).toHaveLength(1);
     expect(result.drift[0]).toContain("apply will protect it");
   });
+
+  test("duplicate branch names are rejected before any API call", async () => {
+    const api = new MockApi({});
+    await expect(
+      branchesSection.run(ctx(api), [
+        { name: "main", protection: { enforce_admins: true } },
+        { name: "main", protection: null },
+      ]),
+    ).rejects.toThrow(/same branches entry/);
+    expect(api.calls).toHaveLength(0);
+  });
 });

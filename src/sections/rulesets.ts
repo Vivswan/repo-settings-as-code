@@ -7,7 +7,14 @@
 import { z } from "zod";
 import { subsetDiff } from "../engine/diff.js";
 import type { RulesetConfig } from "../schema.js";
-import { call, emptyResult, listAll, type SectionModule, type SectionResult } from "./contract.js";
+import {
+  call,
+  emptyResult,
+  listAll,
+  rejectDuplicates,
+  type SectionModule,
+  type SectionResult,
+} from "./contract.js";
 
 /**
  * Ruleset ref includes/excludes: the file may use short names ("staging",
@@ -60,6 +67,14 @@ export const rulesetsSection: SectionModule<"rulesets"> = {
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
     const desired = (desiredRaw as RulesetConfig[]).map(normalizeRuleset);
+    // Upsert matches by exact name, so two entries with the same name would
+    // fight each other (create twice, then trade updates) on every run.
+    rejectDuplicates(
+      this,
+      desired,
+      (r) => r.name,
+      (r) => r.name,
+    );
     const summaries = (await listAll(
       ctx,
       this,

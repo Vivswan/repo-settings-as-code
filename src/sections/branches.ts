@@ -13,6 +13,7 @@ import {
   call,
   emptyResult,
   probeAbsent,
+  rejectDuplicates,
   type SectionModule,
   type SectionResult,
 } from "./contract.js";
@@ -30,7 +31,16 @@ export const branchesSection: SectionModule<"branches"> = {
   shape: z.array(z.looseObject({ name: z.string(), protection: anyRecord.nullable() })),
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
-    for (const branch of desiredRaw as BranchConfig[]) {
+    const desired = desiredRaw as BranchConfig[];
+    // Protection is keyed by exact branch name; two entries for the same
+    // branch would overwrite each other's PUT on every run.
+    rejectDuplicates(
+      this,
+      desired,
+      (b) => b.name,
+      (b) => b.name,
+    );
+    for (const branch of desired) {
       const path = `/repos/${ctx.repo}/branches/${encodeURIComponent(branch.name)}/protection`;
       if (branch.protection === null) {
         const probe = await probeAbsent(ctx, this, path);

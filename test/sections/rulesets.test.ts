@@ -82,4 +82,15 @@ describe("rulesets", () => {
     const payload = api.mutations()[0]?.payload as { enforcement?: string };
     expect(payload.enforcement).toBe("active");
   });
+
+  test("duplicate ruleset names are rejected before any API call", async () => {
+    const api = new MockApi({});
+    await expect(
+      rulesetsSection.run(ctx(api), [
+        { name: "main", target: "branch" },
+        { name: "main", target: "tag" },
+      ]),
+    ).rejects.toThrow(/same rulesets entry/);
+    expect(api.calls).toHaveLength(0);
+  });
 });
