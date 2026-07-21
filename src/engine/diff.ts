@@ -1,8 +1,11 @@
 /**
  * Declared-keys-only subset diff: desired is authoritative for exactly the
- * keys it declares; anything extra in the live object is ignored. Lists of
- * objects carrying a `type` key (ruleset rules) match by type instead of
- * position, because the API reorders them.
+ * keys it declares; anything extra in the live object is ignored. Object
+ * lists match by the `type` key when types are unique on BOTH sides
+ * (ruleset rules), because the API reorders them; lists with repeated or
+ * missing types (environment reviewers, bypass_actors) fall through to
+ * order-insensitive subset matching. Both consumers depend on that split,
+ * so keep the uniqueness gate intact when touching diffArray.
  */
 
 export function subsetDiff(desired: unknown, live: unknown, path: string): string[] {
