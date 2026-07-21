@@ -1,17 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import type { GithubApi } from "../src/api.js";
+import { actionsSection } from "../src/sections/actions.js";
 import { branchesSection } from "../src/sections/branches.js";
+import { codeScanningDefaultSetupSection } from "../src/sections/code-scanning.js";
 import { labelsSection } from "../src/sections/labels.js";
-import {
-  actionsSection,
-  codeScanningDefaultSetupSection,
-  pagesSection,
-  workflowsSection,
-} from "../src/sections/misc.js";
+import { pagesSection } from "../src/sections/pages.js";
 import { repositorySection } from "../src/sections/repository.js";
 import { rulesetsSection } from "../src/sections/rulesets.js";
 import type { SectionContext } from "../src/sections/section.js";
 import { PermissionDenied } from "../src/sections/section.js";
+import { workflowsSection } from "../src/sections/workflows.js";
 import { validateSectionShapes } from "../src/validate.js";
 import { MockApi } from "./mock-api.js";
 
@@ -563,7 +561,7 @@ describe("review fixes", () => {
         data: [{ login: "alice", role_name: "write" }],
       },
     });
-    const { collaboratorsSection } = await import("../src/sections/misc.js");
+    const { collaboratorsSection } = await import("../src/sections/collaborators.js");
     const result = await collaboratorsSection.run(ctx(api, true), [
       { username: "alice", permission: "push" },
     ]);
