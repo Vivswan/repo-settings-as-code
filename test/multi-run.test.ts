@@ -48,8 +48,9 @@ describe("runMulti", () => {
         data: "repository:\n  has_wiki: false\n",
       },
       "PATCH /repos/o/b": { error: { status: 500, message: "boom", body: "" } },
-      // o/c: repo visible but has no settings file (contents GET unrouted -> 404)
-      "GET /repos/o/c": { data: {} },
+      // o/c: repo visible with readable contents, but has no settings file
+      // (contents GET unrouted -> 404; the repo probe confirms Contents access)
+      "GET /repos/o/c": { data: { permissions: { pull: true } } },
     });
     const { io, annotations } = captureIo();
     const { fatal, targets } = await runMulti(
@@ -88,6 +89,31 @@ describe("runMulti", () => {
     const { io } = captureIo();
     const { fatal } = await runMulti(api as unknown as GithubApi, cfg({ reposInput: " ,  " }), io);
     expect(fatal).toContain("no targets");
+  });
+
+  test("a token-invisible repo fails loudly instead of skipping", async () => {
+    // No routes at all: the contents GET 404s, and so does the repo probe,
+    // which is how a fine-grained token reports lost access.
+    const api = new MockApi({});
+    const { io, annotations } = captureIo();
+    const { fatal, targets } = await runMulti(
+      api as unknown as GithubApi,
+      cfg({ reposInput: "o/x" }),
+      io,
+    );
+    expect(fatal).toBeNull();
+    expect(targets[0]?.result).toBe("failed");
+    expect(annotations.some((a) => a.includes("the token was denied"))).toBe(true);
+  });
+
+  test("a visible repo without Contents access fails, never skips", async () => {
+    const api = new MockApi({
+      "GET /repos/o/x": { data: { permissions: { pull: false } } },
+    });
+    const { io, annotations } = captureIo();
+    const { targets } = await runMulti(api as unknown as GithubApi, cfg({ reposInput: "o/x" }), io);
+    expect(targets[0]?.result).toBe("failed");
+    expect(annotations.some((a) => a.includes("Contents"))).toBe(true);
   });
 
   test("discovery filters with repos-dir-only targets are fatal", async () => {
@@ -365,5 +391,52 @@ describe("run in multi-repo mode (env glue)", () => {
     });
     expect(await run({ api: api as unknown as GithubApi })).toBe(0);
     expect(api.calls.some((c) => c.path.startsWith("/repos/o/y"))).toBe(false);
+  });
+
+  test("multi-repo check mode exits 1 on drift and on failure", async () => {
+    setDiscoveryEnv();
+    process.env.INPUT_REPOS = "o/a";
+    const drifted = new MockApi({
+      "GET /repos/o/a": { data: { has_wiki: true } },
+      "GET /repos/o/a/contents/.github/settings.yml": {
+        data: "repository:\n  has_wiki: false\n",
+      },
+    });
+    expect(await run({ api: drifted as unknown as GithubApi })).toBe(1);
+    const failing = new MockApi({
+      "GET /repos/o/a": { error: { status: 500, message: "boom", body: "" } },
+      "GET /repos/o/a/contents/.github/settings.yml": {
+        data: "repository:\n  has_wiki: false\n",
+      },
+    });
+    expect(await run({ api: failing as unknown as GithubApi })).toBe(1);
+  });
+
+  test("defaults-file in single-repo mode is a hard error", async () => {
+    setDiscoveryEnv();
+    process.env.INPUT_REPOSITORY = "o/r";
+    process.env["INPUT_DEFAULTS-FILE"] = "test/fixtures/defaults.yml";
+    const api = new MockApi({});
+    expect(await run({ api: api as unknown as GithubApi })).toBe(1);
+    expect(api.calls).toHaveLength(0);
+    delete process.env["INPUT_DEFAULTS-FILE"];
+  });
+
+  test("the step summary escapes pipes and marks drift rows", async () => {
+    setDiscoveryEnv();
+    process.env.INPUT_REPOS = "o/a";
+    const summaryFile = `${process.env.TMPDIR ?? "/tmp"}/sac-test-summary-${process.pid}.md`;
+    await Bun.write(summaryFile, "");
+    process.env.GITHUB_STEP_SUMMARY = summaryFile;
+    const api = new MockApi({
+      "GET /repos/o/a": { data: { description: "live | desc" } },
+      "GET /repos/o/a/contents/.github/settings.yml": {
+        data: 'repository:\n  description: "want | desc"\n',
+      },
+    });
+    expect(await run({ api: api as unknown as GithubApi })).toBe(1);
+    const summary = await Bun.file(summaryFile).text();
+    expect(summary).toContain(":warning: drift");
+    expect(summary).toContain("want \\| desc");
   });
 });

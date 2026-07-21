@@ -20,6 +20,24 @@ export const labelsSection: Section = {
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
     const desired = desiredRaw as LabelConfig[];
+    // Duplicate detection covers both identities of every entry: its name
+    // and its rename target. Two entries resolving to the same label would
+    // fight each other on every run (or fail mid-rename).
+    const claimed = new Map<string, string>();
+    for (const label of desired) {
+      const identities = new Set([nameKey(label.name), nameKey(label.new_name ?? label.name)]);
+      for (const key of identities) {
+        const first = claimed.get(key);
+        if (first !== undefined) {
+          throw new Error(
+            `labels: the entries for "${first}" and "${label.name}" both resolve to the label "${key}" (via name or new_name), so they cannot converge. Keep exactly one entry per label`,
+          );
+        }
+      }
+      for (const key of identities) {
+        claimed.set(key, label.name);
+      }
+    }
     const live = (await listAll(ctx, this.key, `/repos/${ctx.repo}/labels`)) as LiveLabel[];
     const liveByKey = new Map<string, LiveLabel>();
     for (const label of live) {

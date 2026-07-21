@@ -1,10 +1,12 @@
 /**
- * `environments:`, `autolinks:`, `actions:`, `pages:`, `milestones:`,
- * `collaborators:`, `teams:` sections. Grouped here because each is a small
- * handler over one or two endpoints; they share nothing but the contract.
+ * The one-or-two-endpoint section handlers: `environments:`, `autolinks:`,
+ * `actions:`, `workflows:`, `pages:`, `code_scanning_default_setup:`,
+ * `milestones:`, `collaborators:`, `teams:`. They share nothing but the
+ * contract and the section.ts helpers.
  */
 
 import { subsetDiff } from "../diff.js";
+import { roleForPermission } from "../normalize.js";
 import type {
   ActionsConfig,
   AutolinkConfig,
@@ -13,11 +15,15 @@ import type {
   MilestoneConfig,
   PagesConfig,
   TeamConfig,
+  WorkflowConfig,
 } from "../schema.js";
 import {
   call,
   emptyResult,
   listAll,
+  listAllEnveloped,
+  probeAbsent,
+  rejectDuplicates,
   type Section,
   type SectionResult,
   throwFor,
@@ -27,15 +33,19 @@ export const environmentsSection: Section = {
   key: "environments",
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
-    for (const env of desiredRaw as EnvironmentConfig[]) {
+    const desired = desiredRaw as EnvironmentConfig[];
+    rejectDuplicates(
+      this.key,
+      desired,
+      (env) => env.name.toLowerCase(),
+      (env) => env.name,
+    );
+    for (const env of desired) {
       const { name, ...settings } = env;
       const path = `/repos/${ctx.repo}/environments/${encodeURIComponent(name)}`;
       if (ctx.check) {
-        const probe = await ctx.api.tryRequest("GET", path);
-        if ("error" in probe && probe.error.status !== 404) {
-          throwFor(this.key, "GET", path, probe.error);
-        }
-        if ("error" in probe) {
+        const probe = await probeAbsent(ctx, this.key, path);
+        if ("missing" in probe) {
           result.drift.push(
             `environments[${name}]: missing - declared in the settings file but not on the repo; apply will create it`,
           );
@@ -101,7 +111,20 @@ export const autolinksSection: Section = {
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
     const desired = desiredRaw as AutolinkConfig[];
-    const live = (await listAll(ctx, this.key, `/repos/${ctx.repo}/autolinks`)) as LiveAutolink[];
+    rejectDuplicates(
+      this.key,
+      desired,
+      (a) => a.key_prefix,
+      (a) => a.key_prefix,
+    );
+    // The autolinks list endpoint is not paginated; a single GET returns
+    // everything, and sending page params would not advance anything.
+    const live = (await call(
+      ctx,
+      this.key,
+      "GET",
+      `/repos/${ctx.repo}/autolinks`,
+    )) as LiveAutolink[];
     const liveByPrefix = new Map(live.map((a) => [a.key_prefix, a]));
     const declared = new Set<string>();
 
@@ -155,9 +178,10 @@ export const actionsSection: Section = {
     const result = emptyResult();
     const desired = desiredRaw as ActionsConfig;
     // Forward-compatible key routing: known workflow-token keys go to the
-    // /workflow sub-endpoint, selected_actions to its own endpoint, and
-    // EVERYTHING else (including future fields GitHub adds) passes through
-    // to the base permissions PUT verbatim - never silently dropped.
+    // /workflow sub-endpoint, selected_actions and access_level to their own
+    // endpoints, and EVERYTHING else (including future fields GitHub adds)
+    // passes through to the base permissions PUT verbatim - never silently
+    // dropped.
     const WORKFLOW_KEYS = new Set([
       "default_workflow_permissions",
       "can_approve_pull_request_reviews",
@@ -165,7 +189,7 @@ export const actionsSection: Section = {
     const permissions: Record<string, unknown> = {};
     const workflow: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(desired as Record<string, unknown>)) {
-      if (key === "selected_actions") {
+      if (key === "selected_actions" || key === "access_level") {
         continue;
       }
       if (WORKFLOW_KEYS.has(key)) {
@@ -174,8 +198,19 @@ export const actionsSection: Section = {
         permissions[key] = value;
       }
     }
-    if (permissions.allowed_actions !== undefined) {
-      // The PUT body requires `enabled`; declaring an allowed-actions policy
+    if (desired.selected_actions !== undefined) {
+      // The allowlist endpoint answers 409 unless the policy is "selected";
+      // infer the policy when it is undeclared, reject a contradiction.
+      if (permissions.allowed_actions === undefined) {
+        permissions.allowed_actions = "selected";
+      } else if (permissions.allowed_actions !== "selected") {
+        throw new Error(
+          `actions: selected_actions is declared together with allowed_actions: "${permissions.allowed_actions}", but an allowlist only applies under allowed_actions: "selected". Set allowed_actions to "selected", or remove selected_actions`,
+        );
+      }
+    }
+    if (Object.keys(permissions).length > 0) {
+      // The PUT body requires `enabled`; declaring any base-permissions key
       // implies actions are on unless said otherwise.
       permissions.enabled = permissions.enabled ?? true;
     }
@@ -193,13 +228,30 @@ export const actionsSection: Section = {
         result.drift.push(...subsetDiff(permissions, live, "actions.permissions"));
       }
       if (desired.selected_actions !== undefined) {
-        const live = await call(
-          ctx,
-          this.key,
+        // This GET errors (409) when the live allowed_actions policy is not
+        // "selected"; that is drift, not a failure.
+        const probe = await ctx.api.tryRequest(
           "GET",
           `/repos/${ctx.repo}/actions/permissions/selected-actions`,
         );
-        result.drift.push(...subsetDiff(desired.selected_actions, live, "actions.selected"));
+        if ("error" in probe) {
+          if (probe.error.status === 409 || probe.error.status === 404) {
+            result.drift.push(
+              'actions.selected: the live allowed_actions policy is not "selected", so no selected-actions allowlist exists; apply will set the declared policy and allowlist',
+            );
+          } else {
+            throwFor(
+              this.key,
+              "GET",
+              `/repos/${ctx.repo}/actions/permissions/selected-actions`,
+              probe.error,
+            );
+          }
+        } else {
+          result.drift.push(
+            ...subsetDiff(desired.selected_actions, probe.data, "actions.selected"),
+          );
+        }
       }
       if (Object.keys(workflow).length > 0) {
         const live = await call(
@@ -209,6 +261,17 @@ export const actionsSection: Section = {
           `/repos/${ctx.repo}/actions/permissions/workflow`,
         );
         result.drift.push(...subsetDiff(workflow, live, "actions.workflow"));
+      }
+      if (desired.access_level !== undefined) {
+        const live = await call(
+          ctx,
+          this.key,
+          "GET",
+          `/repos/${ctx.repo}/actions/permissions/access`,
+        );
+        result.drift.push(
+          ...subsetDiff({ access_level: desired.access_level }, live, "actions.access"),
+        );
       }
       return result;
     }
@@ -231,6 +294,12 @@ export const actionsSection: Section = {
       await call(ctx, this.key, "PUT", `/repos/${ctx.repo}/actions/permissions/workflow`, workflow);
       result.changes.push("applied workflow token permissions");
     }
+    if (desired.access_level !== undefined) {
+      await call(ctx, this.key, "PUT", `/repos/${ctx.repo}/actions/permissions/access`, {
+        access_level: desired.access_level,
+      });
+      result.changes.push("applied workflows access level");
+    }
     return result;
   },
 };
@@ -239,12 +308,45 @@ export const pagesSection: Section = {
   key: "pages",
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
-    const desired = desiredRaw as PagesConfig;
-    const probe = await ctx.api.tryRequest("GET", `/repos/${ctx.repo}/pages`);
-    if ("error" in probe && probe.error.status !== 404) {
-      throwFor(this.key, "GET", `/repos/${ctx.repo}/pages`, probe.error);
+    const probe = await probeAbsent(ctx, this.key, `/repos/${ctx.repo}/pages`);
+    const exists = !("missing" in probe);
+    const liveSite = "data" in probe ? probe.data : undefined;
+
+    // pages: null declares Pages OFF, mirroring branches' protection: null.
+    if (desiredRaw === null) {
+      if (!exists) {
+        // A 404 here is ambiguous: no Pages site, or a fine-grained token
+        // without the Pages permission (which also answers 404). The
+        // non-null path stays loud either way (the POST would fail); this
+        // no-op path must say so instead of silently succeeding.
+        result.notes.push(
+          "pages: declared null and GitHub reports no Pages site, so there is nothing to disable. A fine-grained token missing the Pages permission gets the same answer; if this repo does have a Pages site, grant the token Pages read and write",
+        );
+        return result;
+      }
+      if (ctx.check) {
+        result.drift.push(
+          "pages: enabled live but the settings file declares pages: null; apply will disable GitHub Pages",
+        );
+        return result;
+      }
+      await call(ctx, this.key, "DELETE", `/repos/${ctx.repo}/pages`);
+      result.changes.push("disabled GitHub Pages");
+      return result;
     }
-    const exists = !("error" in probe);
+    const desired = desiredRaw as PagesConfig;
+    if (Object.keys(desired).length === 0) {
+      result.notes.push(
+        "pages: declared as an empty mapping, which configures nothing (the update endpoint rejects an empty body). Declare at least one field, use pages: null to disable the site, or remove the section",
+      );
+      return result;
+    }
+    // The update PUT requires path alongside branch when source is sent;
+    // the create POST defaults it, so default it everywhere.
+    const payload: Record<string, unknown> = { ...desired };
+    if (desired.source !== undefined && desired.source.path === undefined) {
+      payload.source = { ...desired.source, path: "/" };
+    }
 
     if (ctx.check) {
       if (!exists) {
@@ -252,7 +354,7 @@ export const pagesSection: Section = {
           "pages: declared in the settings file but GitHub Pages is not enabled on the repo; apply will enable it",
         );
       } else {
-        result.drift.push(...subsetDiff(desired, probe.data, "pages"));
+        result.drift.push(...subsetDiff(payload, liveSite, "pages"));
       }
       return result;
     }
@@ -261,22 +363,129 @@ export const pagesSection: Section = {
       // The create endpoint accepts only build_type/source; cname and the
       // rest are update-only, so create first, then PUT the remainder.
       const create: Record<string, unknown> = {};
-      if (desired.build_type !== undefined) {
-        create.build_type = desired.build_type;
+      if (payload.build_type !== undefined) {
+        create.build_type = payload.build_type;
       }
-      if (desired.source !== undefined) {
-        create.source = desired.source;
+      if (payload.source !== undefined) {
+        create.source = payload.source;
       }
       await call(ctx, this.key, "POST", `/repos/${ctx.repo}/pages`, create);
       result.changes.push("enabled GitHub Pages");
-      const rest = Object.keys(desired).filter((k) => !(k in create));
+      const rest = Object.keys(payload).filter((k) => !(k in create));
       if (rest.length > 0) {
-        await call(ctx, this.key, "PUT", `/repos/${ctx.repo}/pages`, desired);
+        await call(ctx, this.key, "PUT", `/repos/${ctx.repo}/pages`, payload);
         result.changes.push("applied remaining Pages configuration");
       }
     } else {
-      await call(ctx, this.key, "PUT", `/repos/${ctx.repo}/pages`, desired);
+      await call(ctx, this.key, "PUT", `/repos/${ctx.repo}/pages`, payload);
       result.changes.push("updated GitHub Pages configuration");
+    }
+    return result;
+  },
+};
+
+interface LiveWorkflow {
+  id: number;
+  name: string;
+  path: string;
+  state: string;
+}
+
+export const workflowsSection: Section = {
+  key: "workflows",
+  async run(ctx, desiredRaw): Promise<SectionResult> {
+    const result = emptyResult();
+    const desired = desiredRaw as WorkflowConfig[];
+    // Two entries naming the same file (e.g. "ci.yml" and
+    // ".github/workflows/ci.yml") would fight each other on every run.
+    rejectDuplicates(
+      this.key,
+      desired,
+      (w) => (w.path.includes("/") ? w.path : `.github/workflows/${w.path}`),
+      (w) => w.path,
+    );
+    const live = (await listAllEnveloped(
+      ctx,
+      this.key,
+      `/repos/${ctx.repo}/actions/workflows`,
+      "workflows",
+    )) as LiveWorkflow[];
+    // A "deleted" workflow has no file behind it anymore; treat as absent.
+    const present = live.filter((w) => w.state !== "deleted");
+
+    for (const workflow of desired) {
+      const match = present.find(
+        (w) => w.path === workflow.path || w.path === `.github/workflows/${workflow.path}`,
+      );
+      if (!match) {
+        if (ctx.check) {
+          result.drift.push(
+            `workflows[${workflow.path}]: declared in the settings file but no workflow with that path exists on the repo; apply will skip it - create the workflow file, or remove it from the workflows section`,
+          );
+        } else {
+          result.notes.push(
+            `workflow "${workflow.path}" is declared in the settings file but no workflow with that path exists on the repo; skipped - create the workflow file, or remove it from the workflows section`,
+          );
+        }
+        continue;
+      }
+      // Every disabled_* live state counts as "disabled".
+      const liveState = match.state === "active" ? "active" : "disabled";
+      if (liveState === workflow.state) {
+        continue;
+      }
+      const action = workflow.state === "active" ? "enable" : "disable";
+      if (ctx.check) {
+        const raw = match.state === liveState ? "" : ` (${match.state})`;
+        result.drift.push(
+          `workflows[${workflow.path}]: declared "${workflow.state}" != live "${liveState}"${raw}; apply will ${action} the workflow`,
+        );
+      } else {
+        await call(
+          ctx,
+          this.key,
+          "PUT",
+          `/repos/${ctx.repo}/actions/workflows/${match.id}/${action}`,
+        );
+        result.changes.push(`${action}d workflow "${match.path}"`);
+      }
+    }
+    return result;
+  },
+};
+
+export const codeScanningDefaultSetupSection: Section = {
+  key: "code_scanning_default_setup",
+  async run(ctx, desiredRaw): Promise<SectionResult> {
+    const result = emptyResult();
+    const desired = desiredRaw as Record<string, unknown>;
+    const path = `/repos/${ctx.repo}/code-scanning/default-setup`;
+
+    if (ctx.check) {
+      const live = await call(ctx, this.key, "GET", path);
+      result.drift.push(...subsetDiff(desired, live, "code_scanning_default_setup"));
+      return result;
+    }
+
+    // Raw tryRequest so a 409 (a configuration run is already in progress)
+    // gets accurate advice instead of throwFor's generic fix-the-file text.
+    const patch = await ctx.api.tryRequest("PATCH", path, desired);
+    if ("error" in patch) {
+      if (patch.error.status === 409) {
+        throw new Error(
+          `code_scanning_default_setup: PATCH ${path}: 409 ${patch.error.message}. A default-setup configuration run is already in progress on the repository; re-run the workflow after it finishes`,
+        );
+      }
+      throwFor(this.key, "PATCH", path, patch.error);
+    }
+    const run = patch.data as { run_id?: number; run_url?: string } | null;
+    if (run?.run_id !== undefined) {
+      const url = run.run_url ? ` (${run.run_url})` : "";
+      result.changes.push(
+        `applied code scanning default setup; GitHub started configuration run ${run.run_id}${url} to roll it out, and the settings take effect when it finishes`,
+      );
+    } else {
+      result.changes.push("applied code scanning default setup");
     }
     return result;
   },
@@ -294,6 +503,12 @@ export const milestonesSection: Section = {
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
     const desired = desiredRaw as MilestoneConfig[];
+    rejectDuplicates(
+      this.key,
+      desired,
+      (m) => m.title,
+      (m) => m.title,
+    );
     const live = (await listAll(
       ctx,
       this.key,
@@ -361,6 +576,12 @@ export const collaboratorsSection: Section = {
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
     const desired = desiredRaw as CollaboratorConfig[];
+    rejectDuplicates(
+      this.key,
+      desired,
+      (c) => c.username.toLowerCase(),
+      (c) => c.username,
+    );
     const live = (await listAll(
       ctx,
       this.key,
@@ -374,10 +595,7 @@ export const collaboratorsSection: Section = {
       declared.add(login);
       const permission = collaborator.permission ?? "push";
       const existing = liveByLogin.get(login);
-      // GET reports role_name in read/triage/write/maintain/admin; the PUT
-      // vocabulary is pull/triage/push/maintain/admin. Compare like for like.
-      const roleForPermission: Record<string, string> = { push: "write", pull: "read" };
-      const wantRole = roleForPermission[permission] ?? permission;
+      const wantRole = roleForPermission(permission);
       if (existing && (existing.role_name ?? "") === wantRole) {
         continue;
       }
@@ -430,39 +648,37 @@ export const teamsSection: Section = {
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
     const desired = desiredRaw as TeamConfig[];
+    rejectDuplicates(
+      this.key,
+      desired,
+      (t) => t.name.toLowerCase(),
+      (t) => t.name,
+    );
     // Teams only exist on organization repos; on a personal account the org
-    // endpoints 404. Probe once and no-op with a note instead of failing.
-    const orgProbe = await ctx.api.tryRequest("GET", `/orgs/${ctx.owner}`);
-    if ("error" in orgProbe) {
-      // Only a confirmed non-org (404) skips; 403/5xx must flow through the
-      // permission policy instead of silently no-opping.
-      if (orgProbe.error.status !== 404) {
-        throwFor(this.key, "GET", `/orgs/${ctx.owner}`, orgProbe.error);
-      }
+    // endpoints 404. Probe once and no-op with a note instead of failing;
+    // 403/5xx still flow through the permission policy via probeAbsent.
+    const orgProbe = await probeAbsent(ctx, this.key, `/orgs/${ctx.owner}`);
+    if ("missing" in orgProbe) {
       result.notes.push(
         `teams: owner "${ctx.owner}" is a personal account, not an organization, so team access does not apply; section skipped - remove the teams section from the settings file to silence this note`,
       );
       return result;
     }
-    const roleForPermission: Record<string, string> = { push: "write", pull: "read" };
     for (const team of desired) {
+      const permission = team.permission ?? "push";
       const path = `/orgs/${ctx.owner}/teams/${encodeURIComponent(team.name)}/repos/${ctx.repo}`;
       if (ctx.check) {
         // The repository media type makes this endpoint return the repo
         // object (with role_name) instead of 204.
-        const probe = await ctx.api.tryRequest("GET", path, undefined, {
+        const probe = await probeAbsent(ctx, this.key, path, {
           accept: "application/vnd.github.v3.repository+json",
         });
-        if ("error" in probe && probe.error.status !== 404) {
-          throwFor(this.key, "GET", path, probe.error);
-        }
-        if ("error" in probe) {
+        if ("missing" in probe) {
           result.drift.push(
-            `teams[${team.name}]: no access to ${ctx.repo}; apply will grant "${team.permission ?? "push"}"`,
+            `teams[${team.name}]: no access to ${ctx.repo}; apply will grant "${permission}"`,
           );
         } else {
-          const permission = team.permission ?? "push";
-          const wantRole = roleForPermission[permission] ?? permission;
+          const wantRole = roleForPermission(permission);
           const liveRole = (probe.data as { role_name?: string } | null)?.role_name ?? "";
           if (liveRole !== wantRole) {
             result.drift.push(
@@ -474,9 +690,9 @@ export const teamsSection: Section = {
         const { name: _n, ...body } = team;
         await call(ctx, this.key, "PUT", path, {
           ...body, // future sibling keys pass through
-          permission: team.permission ?? "push",
+          permission,
         });
-        result.changes.push(`granted team "${team.name}" ${team.permission ?? "push"}`);
+        result.changes.push(`granted team "${team.name}" ${permission}`);
       }
     }
     return result;

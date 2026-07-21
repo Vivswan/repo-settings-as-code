@@ -14,11 +14,17 @@ inputs:
     required: false
     default: ${{ github.token }}
   repository:
-    description: Target repository (owner/name). Defaults to the current repository.
+    description: >-
+      Target repository (owner/name). Defaults to the current repository.
+      Single-repo mode only; cannot be combined with repos or repos-dir.
     required: false
     default: ""
   settings-file:
-    description: Path to the settings YAML file.
+    description: >-
+      Path to the settings YAML file. Single-repo mode only; multi-repo
+      targets read repos-dir files or each repository's own
+      .github/settings.yml, so overriding it alongside repos or repos-dir
+      fails the run.
     required: false
     default: .github/settings.yml
   mode:
@@ -115,6 +121,7 @@ inputs:
       YAML file deep-merged UNDER every multi-repo target's settings.
       Target keys win; objects merge, arrays and scalars replace; a target
       section set to null opts that repository out of the defaults section.
+      Multi-repo mode only; fails when set without repos or repos-dir.
     required: false
     default: ""
 

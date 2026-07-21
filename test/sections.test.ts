@@ -2,10 +2,17 @@ import { describe, expect, test } from "bun:test";
 import type { GithubApi } from "../src/api.js";
 import { branchesSection } from "../src/sections/branches.js";
 import { labelsSection } from "../src/sections/labels.js";
+import {
+  actionsSection,
+  codeScanningDefaultSetupSection,
+  pagesSection,
+  workflowsSection,
+} from "../src/sections/misc.js";
 import { repositorySection } from "../src/sections/repository.js";
 import { rulesetsSection } from "../src/sections/rulesets.js";
 import type { SectionContext } from "../src/sections/section.js";
 import { PermissionDenied } from "../src/sections/section.js";
+import { validateSectionShapes } from "../src/validate.js";
 import { MockApi } from "./mock-api.js";
 
 function ctx(api: MockApi, check = false): SectionContext {
@@ -59,6 +66,17 @@ describe("labels", () => {
       { name: "autorelease: pending", color: "ffffff", description: "x" },
     ]);
     expect(api.mutations()[0]?.path).toBe("/repos/o/r/labels/autorelease%3A%20pending");
+  });
+
+  test("two entries renaming onto the same label are rejected before any API call", async () => {
+    const api = new MockApi({});
+    await expect(
+      labelsSection.run(ctx(api), [
+        { name: "bug", new_name: "triage" },
+        { name: "enhancement", new_name: "Triage" },
+      ]),
+    ).rejects.toThrow(/cannot converge/);
+    expect(api.calls).toHaveLength(0);
   });
 });
 
@@ -131,6 +149,402 @@ describe("repository", () => {
       PermissionDenied,
     );
   });
+
+  test("private vulnerability reporting toggles its own endpoint", async () => {
+    const api = new MockApi({});
+    const on = await repositorySection.run(ctx(api), {
+      enable_private_vulnerability_reporting: true,
+    });
+    expect(on.changes).toEqual(["private vulnerability reporting: enabled"]);
+    await repositorySection.run(ctx(api), { enable_private_vulnerability_reporting: false });
+    expect(api.mutations().map((m) => `${m.method} ${m.path}`)).toEqual([
+      "PUT /repos/o/r/private-vulnerability-reporting",
+      "DELETE /repos/o/r/private-vulnerability-reporting",
+    ]);
+  });
+
+  test("private vulnerability reporting check reads the {enabled} body", async () => {
+    const api = new MockApi({
+      "GET /repos/o/r": { data: {} },
+      "GET /repos/o/r/private-vulnerability-reporting": { data: { enabled: false } },
+    });
+    const result = await repositorySection.run(ctx(api, true), {
+      enable_private_vulnerability_reporting: true,
+    });
+    expect(result.drift).toEqual([
+      "repository.enable_private_vulnerability_reporting: declared true != live false; apply will set the declared value",
+    ]);
+    expect(api.mutations()).toEqual([]);
+    const clean = new MockApi({
+      "GET /repos/o/r": { data: {} },
+      "GET /repos/o/r/private-vulnerability-reporting": { data: { enabled: true } },
+    });
+    const noDrift = await repositorySection.run(ctx(clean, true), {
+      enable_private_vulnerability_reporting: true,
+    });
+    expect(noDrift.drift).toEqual([]);
+  });
+
+  test("private vulnerability reporting probe errors are not swallowed", async () => {
+    const api = new MockApi({
+      "GET /repos/o/r": { data: {} },
+      "GET /repos/o/r/private-vulnerability-reporting": {
+        error: { status: 403, message: "Forbidden", body: "" },
+      },
+    });
+    await expect(
+      repositorySection.run(ctx(api, true), { enable_private_vulnerability_reporting: true }),
+    ).rejects.toBeInstanceOf(PermissionDenied);
+  });
+
+  test("private vulnerability reporting treats 404/422 as not applicable", async () => {
+    // Check mode: a private repo (422) with a matching declared false is clean.
+    const check = new MockApi({
+      "GET /repos/o/r": { data: {} },
+      "GET /repos/o/r/private-vulnerability-reporting": {
+        error: { status: 422, message: "Bad Request", body: "" },
+      },
+    });
+    const clean = await repositorySection.run(ctx(check, true), {
+      enable_private_vulnerability_reporting: false,
+    });
+    expect(clean.drift).toEqual([]);
+    const drift = await repositorySection.run(ctx(check, true), {
+      enable_private_vulnerability_reporting: true,
+    });
+    expect(drift.drift).toHaveLength(1);
+    // Apply mode: DELETE answering 422 is already the declared state.
+    const apply = new MockApi({
+      "DELETE /repos/o/r/private-vulnerability-reporting": {
+        error: { status: 422, message: "Bad Request", body: "" },
+      },
+    });
+    const off = await repositorySection.run(ctx(apply), {
+      enable_private_vulnerability_reporting: false,
+    });
+    expect(off.changes).toEqual(["private vulnerability reporting: disabled"]);
+  });
+
+  test("non-boolean security toggles are rejected with the YAML hint", async () => {
+    const api = new MockApi({});
+    await expect(
+      repositorySection.run(ctx(api), { enable_vulnerability_alerts: "no" }),
+    ).rejects.toThrow(/not a boolean/);
+    expect(api.calls).toHaveLength(0);
+  });
+});
+
+describe("actions", () => {
+  test("routes every key to its endpoint, access_level included", async () => {
+    const api = new MockApi({});
+    const result = await actionsSection.run(ctx(api), {
+      enabled: true,
+      allowed_actions: "selected",
+      selected_actions: { github_owned_allowed: true },
+      default_workflow_permissions: "read",
+      access_level: "organization",
+    });
+    expect(api.mutations().map((m) => `${m.method} ${m.path}`)).toEqual([
+      "PUT /repos/o/r/actions/permissions",
+      "PUT /repos/o/r/actions/permissions/selected-actions",
+      "PUT /repos/o/r/actions/permissions/workflow",
+      "PUT /repos/o/r/actions/permissions/access",
+    ]);
+    const base = api.mutations()[0]?.payload as Record<string, unknown>;
+    expect("access_level" in base).toBe(false);
+    expect(api.mutations()[3]?.payload).toEqual({ access_level: "organization" });
+    expect(result.notes).toEqual([]);
+  });
+
+  test("check compares access_level against its own endpoint", async () => {
+    const api = new MockApi({
+      "GET /repos/o/r/actions/permissions/access": { data: { access_level: "none" } },
+    });
+    const result = await actionsSection.run(ctx(api, true), { access_level: "organization" });
+    expect(result.drift).toHaveLength(1);
+    expect(result.drift[0]).toContain("actions.access.access_level");
+    expect(api.mutations()).toEqual([]);
+  });
+
+  test("any base-permissions key implies enabled: true in the PUT body", async () => {
+    const api = new MockApi({});
+    await actionsSection.run(ctx(api), { allowed_actions: "all" });
+    expect(api.mutations()[0]?.payload).toEqual({ allowed_actions: "all", enabled: true });
+    const future = new MockApi({});
+    await actionsSection.run(ctx(future), { some_future_key: "x" });
+    const payload = future.mutations()[0]?.payload as Record<string, unknown>;
+    expect(payload.enabled).toBe(true);
+  });
+
+  test("selected-actions check treats a 409 as drift, not failure", async () => {
+    const api = new MockApi({
+      "GET /repos/o/r/actions/permissions": { data: { enabled: true, allowed_actions: "all" } },
+      "GET /repos/o/r/actions/permissions/selected-actions": {
+        error: { status: 409, message: "Conflict", body: "" },
+      },
+    });
+    const result = await actionsSection.run(ctx(api, true), {
+      allowed_actions: "selected",
+      selected_actions: { github_owned_allowed: true },
+    });
+    expect(result.drift.some((d) => d.includes('not "selected"'))).toBe(true);
+    expect(api.mutations()).toEqual([]);
+  });
+
+  test("selected_actions implies allowed_actions: selected and rejects contradictions", async () => {
+    const api = new MockApi({});
+    await actionsSection.run(ctx(api), { selected_actions: { github_owned_allowed: true } });
+    const base = api.mutations()[0]?.payload as Record<string, unknown>;
+    expect(base.allowed_actions).toBe("selected");
+    await expect(
+      actionsSection.run(ctx(new MockApi({})), {
+        allowed_actions: "all",
+        selected_actions: { github_owned_allowed: true },
+      }),
+    ).rejects.toThrow(/allowed_actions/);
+  });
+});
+
+describe("pages", () => {
+  test("creates when absent, then PUTs the update-only fields", async () => {
+    const api = new MockApi({}); // GET /pages 404s
+    const result = await pagesSection.run(ctx(api), {
+      build_type: "legacy",
+      source: { branch: "main", path: "/docs" },
+      cname: "docs.example.com",
+      https_enforced: true,
+    });
+    expect(result.changes).toEqual([
+      "enabled GitHub Pages",
+      "applied remaining Pages configuration",
+    ]);
+    expect(api.mutations().map((m) => `${m.method} ${m.path}`)).toEqual([
+      "POST /repos/o/r/pages",
+      "PUT /repos/o/r/pages",
+    ]);
+  });
+
+  test("updates in place when the site exists", async () => {
+    const api = new MockApi({
+      "GET /repos/o/r/pages": { data: { build_type: "legacy" } },
+    });
+    const result = await pagesSection.run(ctx(api), { build_type: "workflow" });
+    expect(result.changes).toEqual(["updated GitHub Pages configuration"]);
+    expect(api.mutations().map((m) => `${m.method} ${m.path}`)).toEqual(["PUT /repos/o/r/pages"]);
+  });
+
+  test("a source without a path gets the default path everywhere", async () => {
+    const api = new MockApi({
+      "GET /repos/o/r/pages": { data: {} },
+    });
+    await pagesSection.run(ctx(api), { source: { branch: "main" } });
+    expect(api.mutations()[0]?.payload).toEqual({ source: { branch: "main", path: "/" } });
+  });
+
+  test("an empty pages mapping is a note, not an empty PUT", async () => {
+    const api = new MockApi({
+      "GET /repos/o/r/pages": { data: {} },
+    });
+    const result = await pagesSection.run(ctx(api), {});
+    expect(result.notes).toHaveLength(1);
+    expect(api.mutations()).toEqual([]);
+  });
+
+  test("pages: null disables a live site and no-ops on an absent one", async () => {
+    const api = new MockApi({
+      "GET /repos/o/r/pages": { data: { build_type: "legacy" } },
+    });
+    const result = await pagesSection.run(ctx(api), null);
+    expect(result.changes).toEqual(["disabled GitHub Pages"]);
+    expect(api.mutations().map((m) => `${m.method} ${m.path}`)).toEqual([
+      "DELETE /repos/o/r/pages",
+    ]);
+    const absent = new MockApi({});
+    const noop = await pagesSection.run(ctx(absent), null);
+    expect(noop.changes).toEqual([]);
+    expect(noop.notes).toHaveLength(1);
+    expect(noop.notes[0]).toContain("nothing to disable");
+    expect(absent.mutations()).toEqual([]);
+  });
+
+  test("pages: null check drifts on a live site and is clean without one", async () => {
+    const api = new MockApi({
+      "GET /repos/o/r/pages": { data: { build_type: "legacy" } },
+    });
+    const result = await pagesSection.run(ctx(api, true), null);
+    expect(result.drift).toEqual([
+      "pages: enabled live but the settings file declares pages: null; apply will disable GitHub Pages",
+    ]);
+    const absent = new MockApi({});
+    const clean = await pagesSection.run(ctx(absent, true), null);
+    expect(clean.drift).toEqual([]);
+    expect(clean.notes).toHaveLength(1);
+  });
+});
+
+describe("workflows", () => {
+  const liveWorkflows = {
+    total_count: 3,
+    workflows: [
+      { id: 1, name: "CI", path: ".github/workflows/ci.yml", state: "active" },
+      { id: 2, name: "Old", path: ".github/workflows/old.yml", state: "disabled_inactivity" },
+      { id: 3, name: "Gone", path: ".github/workflows/gone.yml", state: "deleted" },
+    ],
+  };
+  const route = "GET /repos/o/r/actions/workflows?per_page=100&page=1";
+
+  test("enables and disables by live id, matching bare file names", async () => {
+    const api = new MockApi({ [route]: { data: liveWorkflows } });
+    const result = await workflowsSection.run(ctx(api), [
+      { path: "ci.yml", state: "disabled" },
+      { path: ".github/workflows/old.yml", state: "active" },
+    ]);
+    expect(result.changes).toEqual([
+      'disabled workflow ".github/workflows/ci.yml"',
+      'enabled workflow ".github/workflows/old.yml"',
+    ]);
+    expect(api.mutations().map((m) => `${m.method} ${m.path}`)).toEqual([
+      "PUT /repos/o/r/actions/workflows/1/disable",
+      "PUT /repos/o/r/actions/workflows/2/enable",
+    ]);
+  });
+
+  test("matching state means no mutation; undeclared workflows stay silent", async () => {
+    const api = new MockApi({ [route]: { data: liveWorkflows } });
+    const result = await workflowsSection.run(ctx(api), [{ path: "ci.yml", state: "active" }]);
+    expect(result.changes).toEqual([]);
+    expect(result.notes).toEqual([]);
+    expect(api.mutations()).toEqual([]);
+  });
+
+  test("check reports drift with the raw live state", async () => {
+    const api = new MockApi({ [route]: { data: liveWorkflows } });
+    const result = await workflowsSection.run(ctx(api, true), [
+      { path: "old.yml", state: "active" },
+    ]);
+    expect(result.drift).toEqual([
+      'workflows[old.yml]: declared "active" != live "disabled" (disabled_inactivity); apply will enable the workflow',
+    ]);
+    expect(api.mutations()).toEqual([]);
+  });
+
+  test("a declared path with no live workflow drifts in check and notes in apply", async () => {
+    const api = new MockApi({ [route]: { data: liveWorkflows } });
+    const check = await workflowsSection.run(ctx(api, true), [
+      { path: "nope.yml", state: "disabled" },
+    ]);
+    expect(check.drift).toHaveLength(1);
+    expect(check.drift[0]).toContain("no workflow with that path exists");
+    // A live "deleted" workflow counts as absent too.
+    const apply = await workflowsSection.run(ctx(api), [{ path: "gone.yml", state: "active" }]);
+    expect(apply.notes).toHaveLength(1);
+    expect(apply.changes).toEqual([]);
+    expect(api.mutations()).toEqual([]);
+  });
+
+  test("duplicate declarations for the same file are rejected before any API call", async () => {
+    const api = new MockApi({});
+    await expect(
+      workflowsSection.run(ctx(api), [
+        { path: "ci.yml", state: "disabled" },
+        { path: ".github/workflows/ci.yml", state: "active" },
+      ]),
+    ).rejects.toThrow(/same workflows entry/);
+    expect(api.calls).toHaveLength(0);
+  });
+
+  test("the workflows envelope paginates past the first page", async () => {
+    const page1 = Array.from({ length: 100 }, (_, i) => ({
+      id: i,
+      name: `w${i}`,
+      path: `.github/workflows/w${i}.yml`,
+      state: "active",
+    }));
+    const page2 = [{ id: 100, name: "tail", path: ".github/workflows/tail.yml", state: "active" }];
+    const api = new MockApi({
+      "GET /repos/o/r/actions/workflows?per_page=100&page=1": {
+        data: { total_count: 101, workflows: page1 },
+      },
+      "GET /repos/o/r/actions/workflows?per_page=100&page=2": {
+        data: { total_count: 101, workflows: page2 },
+      },
+    });
+    const result = await workflowsSection.run(ctx(api), [{ path: "tail.yml", state: "disabled" }]);
+    expect(result.changes).toEqual(['disabled workflow ".github/workflows/tail.yml"']);
+  });
+
+  test("an envelope without the expected list key is an actionable error", async () => {
+    const api = new MockApi({
+      [route]: { data: { unexpected: true } },
+    });
+    await expect(
+      workflowsSection.run(ctx(api), [{ path: "ci.yml", state: "active" }]),
+    ).rejects.toThrow(/"workflows" list/);
+  });
+});
+
+describe("code_scanning_default_setup", () => {
+  const path = "/repos/o/r/code-scanning/default-setup";
+  const live = {
+    state: "configured",
+    query_suite: "default",
+    languages: ["javascript-typescript", "python"],
+  };
+
+  test("check compares declared keys only, languages as a set", async () => {
+    const api = new MockApi({ [`GET ${path}`]: { data: live } });
+    const drifted = await codeScanningDefaultSetupSection.run(ctx(api, true), {
+      state: "configured",
+      query_suite: "extended",
+    });
+    expect(drifted.drift).toHaveLength(1);
+    expect(drifted.drift[0]).toContain("query_suite");
+    const reordered = await codeScanningDefaultSetupSection.run(ctx(api, true), {
+      languages: ["python", "javascript-typescript"],
+    });
+    expect(reordered.drift).toEqual([]);
+    expect(api.mutations()).toEqual([]);
+  });
+
+  test("apply PATCHes the declared payload verbatim", async () => {
+    const api = new MockApi({});
+    const result = await codeScanningDefaultSetupSection.run(ctx(api), {
+      state: "configured",
+      query_suite: "extended",
+    });
+    expect(result.changes).toEqual(["applied code scanning default setup"]);
+    expect(api.mutations()).toEqual([
+      {
+        method: "PATCH",
+        path,
+        payload: { state: "configured", query_suite: "extended" },
+      },
+    ]);
+  });
+
+  test("a 202 configuration run is named in the change line", async () => {
+    const api = new MockApi({
+      [`PATCH ${path}`]: { data: { run_id: 42, run_url: "https://example.test/runs/42" } },
+    });
+    const result = await codeScanningDefaultSetupSection.run(ctx(api), { state: "configured" });
+    expect(result.changes).toHaveLength(1);
+    expect(result.changes[0]).toContain("configuration run 42");
+  });
+
+  test("409 gets wait-and-retry advice; 403 mentions Advanced Security", async () => {
+    const busy = new MockApi({
+      [`PATCH ${path}`]: { error: { status: 409, message: "Conflict", body: "" } },
+    });
+    await expect(
+      codeScanningDefaultSetupSection.run(ctx(busy), { state: "configured" }),
+    ).rejects.toThrow(/already in progress/);
+    const denied = new MockApi({
+      [`PATCH ${path}`]: { error: { status: 403, message: "Forbidden", body: "" } },
+    });
+    await expect(
+      codeScanningDefaultSetupSection.run(ctx(denied), { state: "configured" }),
+    ).rejects.toThrow(/Advanced Security/);
+  });
 });
 
 describe("review fixes", () => {
@@ -154,6 +568,17 @@ describe("review fixes", () => {
       { username: "alice", permission: "push" },
     ]);
     expect(result.drift).toEqual([]);
+  });
+});
+
+describe("section shape validation", () => {
+  test("pages: null passes; a bad workflows state fails naming the path", () => {
+    expect(validateSectionShapes({ pages: null }, "f.yml")).toBeNull();
+    const error = validateSectionShapes(
+      { workflows: [{ path: "ci.yml", state: "paused" }] },
+      "f.yml",
+    );
+    expect(error).toContain("workflows[0].state");
   });
 });
 

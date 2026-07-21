@@ -29,8 +29,11 @@ export function deepMerge(base: unknown, override: unknown): unknown {
 /**
  * Merge the central defaults document under one target's settings. A
  * TOP-LEVEL section whose merged value is null is the target's explicit
- * opt-out of that defaults section: it is stripped from the result and
- * reported in `disabled` so the caller can say so out loud.
+ * opt-out of that defaults section, but only when the defaults file
+ * declares that section: it is stripped from the result and reported in
+ * `disabled` so the caller can say so out loud. A null section the
+ * defaults do not declare passes through to the engine, where null can
+ * carry meaning of its own (pages: null disables GitHub Pages).
  */
 export function applyDefaults(
   defaults: SettingsFile,
@@ -39,7 +42,7 @@ export function applyDefaults(
   const merged = deepMerge(defaults, repoSettings) as Record<string, unknown>;
   const disabled: string[] = [];
   for (const [key, value] of Object.entries(merged)) {
-    if (value === null) {
+    if (value === null && (defaults as Record<string, unknown>)[key] != null) {
       delete merged[key];
       disabled.push(key);
     }

@@ -1,25 +1,77 @@
 /**
- * `repository:` section - PATCH passthrough for repo fields, plus the three
- * settings that live on their own endpoints in the REST API even though the
- * Probot schema nests them here: topics, vulnerability alerts, automated
- * security fixes.
+ * `repository:` section - PATCH passthrough for repo fields, plus the
+ * settings that live on their own endpoints in the REST API even though
+ * the Probot schema nests them here: topics and the security toggles.
  */
 
 import { subsetDiff } from "../diff.js";
 import { normalizeTopics } from "../normalize.js";
-import { call, emptyResult, type Section, type SectionResult, throwFor } from "./section.js";
+import {
+  call,
+  emptyResult,
+  probeAbsent,
+  type Section,
+  type SectionResult,
+  throwFor,
+} from "./section.js";
 
-const SPECIAL_KEYS = new Set([
-  "topics",
-  "enable_vulnerability_alerts",
-  "enable_automated_security_fixes",
-]);
+interface SecurityToggle {
+  key: string;
+  path: string;
+  label: string;
+  /** GET statuses meaning "not enabled" rather than a failure. */
+  tolerate: number[];
+  /** Read the enabled state from a successful GET. */
+  isEnabled: (data: unknown) => boolean;
+  /** DELETE statuses meaning "already off or not applicable here". */
+  tolerateOnDisable: number[];
+}
+
+const SECURITY_TOGGLES: SecurityToggle[] = [
+  {
+    key: "enable_vulnerability_alerts",
+    path: "vulnerability-alerts",
+    label: "vulnerability alerts",
+    tolerate: [404],
+    // A 204 empty body means enabled.
+    isEnabled: () => true,
+    tolerateOnDisable: [],
+  },
+  {
+    key: "enable_automated_security_fixes",
+    path: "automated-security-fixes",
+    label: "automated security fixes",
+    tolerate: [404],
+    // A 204 empty body means enabled; a JSON body carries {enabled}.
+    isEnabled: (data) => data === null || (data as { enabled?: boolean })?.enabled !== false,
+    tolerateOnDisable: [],
+  },
+  {
+    key: "enable_private_vulnerability_reporting",
+    path: "private-vulnerability-reporting",
+    label: "private vulnerability reporting",
+    // Repositories where the feature does not apply (observed: private
+    // repos) answer 404 or 422 instead of 200 + {enabled}.
+    tolerate: [404, 422],
+    isEnabled: (data) => (data as { enabled?: boolean } | null)?.enabled === true,
+    tolerateOnDisable: [404, 422],
+  },
+];
+
+const SPECIAL_KEYS = new Set(["topics", ...SECURITY_TOGGLES.map((toggle) => toggle.key)]);
 
 export const repositorySection: Section = {
   key: "repository",
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
     const desired = desiredRaw as Record<string, unknown>;
+    for (const toggle of SECURITY_TOGGLES) {
+      if (toggle.key in desired && typeof desired[toggle.key] !== "boolean") {
+        throw new Error(
+          `repository.${toggle.key} is ${JSON.stringify(desired[toggle.key])}, which is not a boolean, so the toggle direction is ambiguous. Use unquoted true or false (YAML parses "no"/"off"/"yes" as strings, not booleans)`,
+        );
+      }
+    }
     const patch: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(desired)) {
       if (!SPECIAL_KEYS.has(key)) {
@@ -42,33 +94,17 @@ export const repositorySection: Section = {
           ),
         );
       }
-      if ("enable_vulnerability_alerts" in desired) {
-        const probe = await ctx.api.tryRequest("GET", `/repos/${ctx.repo}/vulnerability-alerts`);
-        if ("error" in probe && probe.error.status !== 404) {
-          throwFor(this.key, "GET", `/repos/${ctx.repo}/vulnerability-alerts`, probe.error);
+      for (const toggle of SECURITY_TOGGLES) {
+        if (!(toggle.key in desired)) {
+          continue;
         }
-        const enabled = !("error" in probe);
-        if (enabled !== Boolean(desired.enable_vulnerability_alerts)) {
+        const probe = await probeAbsent(ctx, this.key, `/repos/${ctx.repo}/${toggle.path}`, {
+          tolerate: toggle.tolerate,
+        });
+        const enabled = "missing" in probe ? false : toggle.isEnabled(probe.data);
+        if (enabled !== desired[toggle.key]) {
           result.drift.push(
-            `repository.enable_vulnerability_alerts: declared ${desired.enable_vulnerability_alerts} != live ${enabled}; apply will set the declared value`,
-          );
-        }
-      }
-      if ("enable_automated_security_fixes" in desired) {
-        const probe = await ctx.api.tryRequest(
-          "GET",
-          `/repos/${ctx.repo}/automated-security-fixes`,
-        );
-        if ("error" in probe && probe.error.status !== 404) {
-          throwFor(this.key, "GET", `/repos/${ctx.repo}/automated-security-fixes`, probe.error);
-        }
-        // A 204 empty body means enabled; a JSON body carries {enabled}.
-        const enabled =
-          !("error" in probe) &&
-          (probe.data === null || (probe.data as { enabled?: boolean })?.enabled !== false);
-        if (enabled !== Boolean(desired.enable_automated_security_fixes)) {
-          result.drift.push(
-            `repository.enable_automated_security_fixes: declared ${desired.enable_automated_security_fixes} != live ${enabled}; apply will set the declared value`,
+            `repository.${toggle.key}: declared ${desired[toggle.key]} != live ${enabled}; apply will set the declared value`,
           );
         }
       }
@@ -84,15 +120,24 @@ export const repositorySection: Section = {
       await call(ctx, this.key, "PUT", `/repos/${ctx.repo}/topics`, { names });
       result.changes.push(`set topics: ${names.join(", ") || "(none)"}`);
     }
-    if ("enable_vulnerability_alerts" in desired) {
-      const method = desired.enable_vulnerability_alerts ? "PUT" : "DELETE";
-      await call(ctx, this.key, method, `/repos/${ctx.repo}/vulnerability-alerts`);
-      result.changes.push(`vulnerability alerts: ${method === "PUT" ? "enabled" : "disabled"}`);
-    }
-    if ("enable_automated_security_fixes" in desired) {
-      const method = desired.enable_automated_security_fixes ? "PUT" : "DELETE";
-      await call(ctx, this.key, method, `/repos/${ctx.repo}/automated-security-fixes`);
-      result.changes.push(`automated security fixes: ${method === "PUT" ? "enabled" : "disabled"}`);
+    for (const toggle of SECURITY_TOGGLES) {
+      if (!(toggle.key in desired)) {
+        continue;
+      }
+      const path = `/repos/${ctx.repo}/${toggle.path}`;
+      if (desired[toggle.key]) {
+        await call(ctx, this.key, "PUT", path);
+      } else if (toggle.tolerateOnDisable.length === 0) {
+        await call(ctx, this.key, "DELETE", path);
+      } else {
+        // Disabling where the feature does not apply is already the
+        // declared state; anything else is a real failure.
+        const off = await ctx.api.tryRequest("DELETE", path);
+        if ("error" in off && !toggle.tolerateOnDisable.includes(off.error.status)) {
+          throwFor(this.key, "DELETE", path, off.error);
+        }
+      }
+      result.changes.push(`${toggle.label}: ${desired[toggle.key] ? "enabled" : "disabled"}`);
     }
     return result;
   },

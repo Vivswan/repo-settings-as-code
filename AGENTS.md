@@ -40,5 +40,7 @@ Settings as Code: GitHub Action applying declarative repository settings: rulese
   check (third-party unicode) and excluded from [biome](https://biomejs.dev).
 - The apply/check engine lives in `src/`; one handler per settings section
   in `src/sections/`. All GitHub API list calls must go through
-  `listAll()` (pagination); errors through `call()`/`throwFor()` so the
-  permission policy (`on-missing-permission`, `required-sections`) works.
+  `listAll()` (bare-array endpoints) or `listAllEnveloped()` (endpoints
+  that wrap the list in a `{total_count, <key>: []}` envelope); errors
+  through `call()`/`throwFor()` so the permission policy
+  (`on-missing-permission`, `required-sections`) works.

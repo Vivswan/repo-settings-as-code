@@ -13,11 +13,13 @@ import { labelsSection } from "./sections/labels.js";
 import {
   actionsSection,
   autolinksSection,
+  codeScanningDefaultSetupSection,
   collaboratorsSection,
   environmentsSection,
   milestonesSection,
   pagesSection,
   teamsSection,
+  workflowsSection,
 } from "./sections/misc.js";
 import { repositorySection } from "./sections/repository.js";
 import { rulesetsSection } from "./sections/rulesets.js";
@@ -37,7 +39,9 @@ export const SECTIONS: Section[] = [
   environmentsSection,
   autolinksSection,
   actionsSection,
+  workflowsSection,
   pagesSection,
+  codeScanningDefaultSetupSection,
   collaboratorsSection,
   teamsSection,
   milestonesSection,

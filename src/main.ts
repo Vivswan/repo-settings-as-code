@@ -32,19 +32,43 @@ import {
 import type { SettingsFile } from "./schema.js";
 import { SECTION_KEYS } from "./schema.js";
 import {
+  AFFILIATIONS,
+  ARCHIVED_FILTERS,
   type DiscoveryFilters,
   dedupeTargets,
   discoverRepos,
+  FORKS_FILTERS,
   parseReposInput,
   resolveCentralTargets,
   SLUG_RE,
   type Target,
+  VISIBILITY_FILTERS,
 } from "./targets.js";
 
 function input(name: string): string {
   // @actions/core reads INPUT_<NAME> (uppercased, spaces to underscores -
   // dashes survive, e.g. `settings-file` -> INPUT_SETTINGS-FILE) and trims.
   return core.getInput(name);
+}
+
+/**
+ * Read an enum-valued input against the allowed list its type derives
+ * from, so the type, the check, and the error message cannot drift apart.
+ */
+function readEnum<T extends string>(
+  name: string,
+  allowed: readonly T[],
+  fallback: T,
+  noun: string,
+): T | { error: string } {
+  const value = input(name) || fallback;
+  if (!(allowed as readonly string[]).includes(value)) {
+    const values = allowed.map((v) => (v === fallback ? `"${v}" (default)` : `"${v}"`));
+    return {
+      error: `the "${name}" input is "${value}", which is not a supported ${noun}. Set it to ${values.join(", ")}`,
+    };
+  }
+  return value as T;
 }
 
 function annotate(level: "notice" | "warning" | "error", message: string): void {
@@ -59,7 +83,9 @@ function setOutput(name: string, value: string): void {
   }
 }
 
-const STATUS_ICON: Record<string, string> = {
+// Typed over every status both summary writers can meet, so a new status
+// value fails compilation here instead of rendering ":undefined:".
+const STATUS_ICON: Record<SectionOutcome["status"] | RepoResult, string> = {
   applied: "white_check_mark",
   clean: "white_check_mark",
   drift: "warning",
@@ -284,17 +310,6 @@ export async function runMulti(
         }
       } else {
         sourceLabel = `${target.slug}:.github/settings.yml`;
-        // Visibility gate: a repo-level 404 here is a token problem, so a
-        // later missing-FILE 404 from the contents API is unambiguous.
-        const gate = await api.tryRequest("GET", `/repos/${target.slug}`);
-        if ("error" in gate) {
-          failTarget(
-            isPermissionError(gate.error)
-              ? `the token was denied GET /repos/${target.slug}: ${gate.error.status} ${gate.error.message}. Grant the PAT access to this repository, or remove it from the "repos" input`
-              : `GET /repos/${target.slug} failed: ${gate.error.status} ${gate.error.message}. This is not a permission problem; re-run the workflow, and retry later if it persists`,
-          );
-          continue;
-        }
         const file = await api.getRepoFile(target.slug, ".github/settings.yml");
         if ("missing" in file) {
           io.annotate(
@@ -315,7 +330,7 @@ export async function runMulti(
         if ("error" in file) {
           failTarget(
             isPermissionError(file.error)
-              ? `the token was denied reading ${sourceLabel}: ${file.error.status} ${file.error.message}. Grant the PAT Contents (read) on this repository, or remove it from the "repos" input`
+              ? `the token was denied reading ${sourceLabel}: ${file.error.status} ${file.error.message}. Grant the PAT access to this repository (Contents: read), or remove it from the "repos" input`
               : `reading ${sourceLabel} failed: ${file.error.status} ${file.error.message}. This is not a permission problem; re-run the workflow, and retry later if it persists`,
           );
           continue;
@@ -403,11 +418,14 @@ export async function run(overrides?: { api?: GithubApi }): Promise<number> {
       `the "mode" input is "${mode}", which is not a supported mode. Set it to "apply" (mutate settings) or "check" (report drift only)`,
     );
   }
-  const onMissingPermission = input("on-missing-permission") || "fail";
-  if (onMissingPermission !== "fail" && onMissingPermission !== "warn") {
-    return fail(
-      `the "on-missing-permission" input is "${onMissingPermission}", which is not a supported policy. Set it to "fail" (default) or "warn" (skip sections the token cannot touch)`,
-    );
+  const onMissingPermission = readEnum(
+    "on-missing-permission",
+    ["fail", "warn"] as const,
+    "fail",
+    "policy",
+  );
+  if (typeof onMissingPermission !== "string") {
+    return fail(onMissingPermission.error);
   }
   const requiredSections = new Set(
     input("required-sections")
@@ -439,34 +457,23 @@ export async function run(overrides?: { api?: GithubApi }): Promise<number> {
       .split(/[\n,]/)
       .map((s) => s.trim())
       .filter(Boolean);
-  const visibility = input("visibility") || "all";
-  if (
-    visibility !== "all" &&
-    visibility !== "public" &&
-    visibility !== "private" &&
-    visibility !== "internal"
-  ) {
-    return fail(
-      `the "visibility" input is "${visibility}", which is not a supported discovery filter. Set it to "all" (default), "public", "private", or "internal"`,
-    );
+  const visibility = readEnum("visibility", VISIBILITY_FILTERS, "all", "discovery filter");
+  if (typeof visibility !== "string") {
+    return fail(visibility.error);
   }
-  const archived = input("archived") || "skip";
-  if (archived !== "skip" && archived !== "include" && archived !== "only") {
-    return fail(
-      `the "archived" input is "${archived}", which is not a supported archived-repository policy. Set it to "skip" (default), "include", or "only"`,
-    );
+  const archived = readEnum("archived", ARCHIVED_FILTERS, "skip", "archived-repository policy");
+  if (typeof archived !== "string") {
+    return fail(archived.error);
   }
-  const forks = input("forks") || "include";
-  if (forks !== "include" && forks !== "exclude" && forks !== "only") {
-    return fail(
-      `the "forks" input is "${forks}", which is not a supported fork policy. Set it to "include" (default), "exclude", or "only"`,
-    );
+  const forks = readEnum("forks", FORKS_FILTERS, "include", "fork policy");
+  if (typeof forks !== "string") {
+    return fail(forks.error);
   }
   const affiliation = [...new Set(list("affiliation"))];
   for (const entry of affiliation) {
-    if (entry !== "owner" && entry !== "collaborator" && entry !== "organization_member") {
+    if (!(AFFILIATIONS as readonly string[]).includes(entry)) {
       return fail(
-        `the "affiliation" input entry "${entry}" is not a supported affiliation, so discovery cannot build the /user/repos query. Use a comma-separated list of "owner", "collaborator", and "organization_member"`,
+        `the "affiliation" input entry "${entry}" is not a supported affiliation, so discovery cannot build the /user/repos query. Use a comma-separated list of ${AFFILIATIONS.map((a) => `"${a}"`).join(", ")}`,
       );
     }
   }
@@ -544,15 +551,19 @@ export async function run(overrides?: { api?: GithubApi }): Promise<number> {
     const overall = worstOf(targets, mode === "check");
     setOutput("result", overall);
     console.log(`result: ${overall}`);
-    const anyFailed = targets.some((t) => t.result === "failed");
-    const anyDrift = targets.some((t) => t.result === "drift");
-    return anyFailed || (mode === "check" && anyDrift) ? 1 : 0;
+    // The exit code follows the same worst-of ranking the output reports.
+    return overall === "failed" || (mode === "check" && overall === "drift") ? 1 : 0;
   }
 
   // Single-repo mode (unchanged legacy behavior).
   if (discoveryFiltersSet.length > 0) {
     return fail(
       `the discovery filter input(s) ${quoteList(discoveryFiltersSet)} only apply to repos: "*" discovery, but this run is in single-repo mode. Set repos: "*" to discover repositories, or remove the filter input(s)`,
+    );
+  }
+  if (defaultsFile) {
+    return fail(
+      'the "defaults-file" input only applies to multi-repo mode, but this run is in single-repo mode, so the defaults would never be merged. Remove the input, or add "repos" or "repos-dir" to switch to multi-repo mode',
     );
   }
   const repo = input("repository") || process.env.GITHUB_REPOSITORY || "";

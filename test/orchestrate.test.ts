@@ -71,6 +71,20 @@ describe("runForRepo", () => {
     expect(result.result).toBe("drift");
     expect(logs[0]).toStartWith("o/r: drift: repository.has_wiki");
   });
+
+  test("pages: null is an active section, not an omitted one", async () => {
+    const api = new MockApi({
+      "GET /repos/o/r/pages": { data: { build_type: "legacy" } },
+    });
+    const { io } = captureIo();
+    const result = await runForRepo(
+      api as unknown as GithubApi,
+      opts({ mode: "check", settings: { pages: null } as SettingsFile }),
+      io,
+    );
+    expect(result.result).toBe("drift");
+    expect(result.outcomes.map((o) => o.key)).toEqual(["pages"]);
+  });
 });
 
 describe("validateSettingsDoc", () => {

@@ -143,11 +143,17 @@ type DiscoveredRepo = Pick<
   "full_name" | "archived" | "fork" | "topics" | "visibility"
 >;
 
+/** Allowed values per discovery-filter input; the single source the input validation and types derive from. */
+export const VISIBILITY_FILTERS = ["all", "public", "private", "internal"] as const;
+export const ARCHIVED_FILTERS = ["skip", "include", "only"] as const;
+export const FORKS_FILTERS = ["include", "exclude", "only"] as const;
+export const AFFILIATIONS = ["owner", "collaborator", "organization_member"] as const;
+
 /** Filters applied to repos: "*" discovery only, never to explicit targets. */
 export interface DiscoveryFilters {
-  visibility: "all" | "public" | "private" | "internal";
-  archived: "skip" | "include" | "only";
-  forks: "include" | "exclude" | "only";
+  visibility: (typeof VISIBILITY_FILTERS)[number];
+  archived: (typeof ARCHIVED_FILTERS)[number];
+  forks: (typeof FORKS_FILTERS)[number];
   affiliation: string[];
   topics: string[];
   exclude: string[];
@@ -200,8 +206,16 @@ export async function discoverRepos(
     repos = (await api.list(`/user/repos?${params.join("&")}`)) as DiscoveredRepo[];
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    // The PAT advice fits denials only; transient failures need re-run
+    // advice instead, or an operator abandons "*" discovery for nothing.
+    // The status sits right after "failed:" in the request error message.
+    if (/ failed: (401|403|404) /.test(message)) {
+      return {
+        error: `cannot discover repositories for repos: "*": ${message}. Discovery needs a user PAT; the workflow GITHUB_TOKEN and GitHub App installation tokens cannot enumerate a user's repositories. List the target repositories explicitly in the "repos" input`,
+      };
+    }
     return {
-      error: `cannot discover repositories for repos: "*": ${message}. Discovery needs a user PAT; the workflow GITHUB_TOKEN and GitHub App installation tokens cannot enumerate a user's repositories. List the target repositories explicitly in the "repos" input`,
+      error: `cannot discover repositories for repos: "*": ${message}. This is not a permission problem; re-run the workflow, and retry later if it persists`,
     };
   }
   // One rule per filter, in reporting-attribution order; the first reason

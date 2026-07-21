@@ -57,8 +57,8 @@ section.
 | Input | Default | Meaning |
 |---|---|---|
 | `token` | `github.token` | Token for the API calls (see permissions table below) |
-| `repository` | current repo | Target `owner/name` |
-| `settings-file` | `.github/settings.yml` | Settings file path |
+| `repository` | current repo | Target `owner/name` (single-repo mode only) |
+| `settings-file` | `.github/settings.yml` | Settings file path (single-repo mode only) |
 | `mode` | `apply` | `apply` mutates; `check` reports drift and exits 1 on any, writing nothing |
 | `on-missing-permission` | `fail` | `warn` skips sections the token cannot access (partial success) |
 | `required-sections` | (empty) | Sections that must fully apply even under `warn` |
@@ -66,7 +66,7 @@ section.
 | `api-version` | `2022-11-28` | `X-GitHub-Api-Version` header; override to opt into a newer REST API version |
 | `repos` | (empty) | Multi-repo remote mode: `owner/name` list (comma/newline), or `*` to discover owned repos |
 | `repos-dir` | (empty) | Multi-repo central mode: directory of per-repo settings files in this repo |
-| `defaults-file` | (empty) | YAML merged under every multi-repo target's settings |
+| `defaults-file` | (empty) | YAML merged under every multi-repo target's settings (multi-repo mode only) |
 | `visibility` | `all` | Discovery-only: keep `public`, `private`, or `internal` repositories |
 | `archived` | `skip` | Discovery-only: `skip`, `include`, or `only` archived repositories |
 | `forks` | `include` | Discovery-only: `include`, `exclude`, or `only` forks |
@@ -144,9 +144,15 @@ reason.
 When the same repository appears in both, the central file wins (with a
 notice). `defaults-file` names a YAML document deep-merged UNDER every
 target's settings: target keys win, objects merge, arrays and scalars
-replace (an array is always a full payload, matching check-mode semantics),
-and a target section set to `null` opts that repository out of the
-defaults section.
+replace (an array is always a full payload, matching check-mode semantics).
+A target section set to `null` opts that repository out of the defaults
+section, when the defaults file declares that section with a non-null
+value. A `null` section the defaults do not override passes through to
+the engine, where null can carry meaning of its own; the consequences
+are that `pages: null` in the defaults file disables Pages fleet-wide,
+while `pages: null` in a target under a defaults file that declares a
+`pages` object means "leave this repo's Pages alone", not "disable
+Pages".
 
 Targets run independently and sequentially: one repository's failure never
 stops the others; the run exits 1 at the end if any target failed (or, in
@@ -173,14 +179,16 @@ the table below) on every target.
 
 | Section | Endpoints | Notes |
 |---|---|---|
-| `repository` | PATCH repo, PUT topics, vulnerability-alerts, automated-security-fixes | Probot schema incl. `topics` as string or list |
+| `repository` | PATCH repo, PUT topics, vulnerability-alerts, automated-security-fixes, private-vulnerability-reporting | Probot schema incl. `topics` as string or list; `enable_private_vulnerability_reporting` toggle |
 | `labels` | labels CRUD | deletes undeclared |
 | `rulesets` | repo rulesets CRUD | branch AND tag targets; short ref names auto-prefixed (`staging` -> `refs/heads/staging`); `~DEFAULT_BRANCH` passes through |
 | `branches` | classic branch protection | `protection: null` removes protection |
 | `environments` | PUT environments | reviewers, wait timer, branch policies |
 | `autolinks` | autolinks CRUD | immutable upstream, so changed entries are replaced; undeclared deleted |
-| `actions` | actions permissions + workflow token | `enabled`, `allowed_actions`, `default_workflow_permissions`, `can_approve_pull_request_reviews` |
-| `pages` | POST/PUT pages | `build_type: workflow` or `legacy` + source |
+| `actions` | actions permissions + selected-actions + workflow token + access level | `enabled`, `allowed_actions`, `selected_actions`, `default_workflow_permissions`, `can_approve_pull_request_reviews`, `access_level` (private repos only) |
+| `workflows` | list workflows, enable/disable | `{path, state: active or disabled}`; bare file names match `.github/workflows/`; undeclared workflows untouched |
+| `pages` | POST/PUT/DELETE pages | `build_type: workflow` or `legacy` + source, `cname`, `https_enforced`; `pages: null` disables the site |
+| `code_scanning_default_setup` | code scanning default setup | `state`, `query_suite`, `languages` (compared as a set), and future PATCH fields; needs Advanced Security on private repos |
 | `collaborators` | direct collaborators | invitations for new users; undeclared direct collaborators removed (owner never touched) |
 | `teams` | org team repo permissions | skipped with a notice on personal accounts |
 | `milestones` | milestones | upsert by title, never deletes |
@@ -197,6 +205,15 @@ repository:
   squash_merge_commit_title: PR_TITLE
   delete_branch_on_merge: true
   enable_vulnerability_alerts: true
+  enable_private_vulnerability_reporting: true
+
+workflows:
+  - path: vendored-sync.yml
+    state: disabled
+
+code_scanning_default_setup:
+  state: configured
+  query_suite: default
 
 labels:
   - name: bug
@@ -229,7 +246,8 @@ except for documented normalizations (ref prefixes, topics splitting,
 vocabulary mapping), so new fields and rule types GitHub ships work the day
 they exist: declare them in `settings.yml`, no action update needed. This
 holds for `rulesets` (new rule types, bypass-actor fields, condition
-types), `repository`, `branches`, `environments`, `actions`, and `pages`.
+types), `repository`, `branches`, `environments`, `actions`, `pages`, and
+`code_scanning_default_setup`.
 Two deliberate boundaries: a brand-new top-level settings *category* needs
 a handler (a new API endpoint cannot be guessed, so unknown sections fail
 loudly rather than no-op), and the pinned `X-GitHub-Api-Version` only
@@ -254,13 +272,39 @@ side-by-side table is in
 
 ## Token permissions by section
 
-| Section | Fine-grained PAT permission |
-|---|---|
-| repository, rulesets, autolinks | Administration: write |
-| labels, milestones | Issues: write |
-| branches | Administration: write (optionally Contents: read, so check mode can tell a missing branch from an unprotected one) |
-| environments | Environments: write |
-| pages | Pages: write |
-| actions | Administration: write |
-| collaborators | Administration: write |
-| teams | Organization members (org repos only) |
+Grant only the permissions for the sections your settings file declares;
+the action never needs more. In multi-repo mode the token needs the same
+permissions on every target repository.
+
+| Section | Fine-grained PAT permission | Notes |
+|---|---|---|
+| `repository` | Administration: write | Covers the PATCH passthrough and the three security toggles |
+| `labels` | Issues: write | |
+| `rulesets` | Administration: write | |
+| `branches` | Administration: write | Add Contents: read so check mode can tell a missing branch from an unprotected one |
+| `environments` | Environments: write | |
+| `autolinks` | Administration: write | |
+| `actions` | Administration: write | `access_level` applies to private repositories only |
+| `workflows` | Actions: write | |
+| `pages` | Pages: write | |
+| `code_scanning_default_setup` | Administration or Code scanning alerts: write | Also needs GitHub Advanced Security on private repos; a 403 here can mean Advanced Security is off or the repo is archived rather than a missing permission |
+| `collaborators` | Administration: write | |
+| `teams` | Members: read (organization permission) + Administration: write | Org repos only; skipped with a notice on personal accounts |
+| `milestones` | Issues: write | |
+
+To manage everything in one PAT: Administration, Issues, Environments,
+Pages, and Actions at write, plus Contents at read and (for org repos)
+the Members organization permission at read.
+
+Three things worth knowing when a run fails on permissions:
+
+- `mode: check` never writes, so the read half of each permission is
+  enough for a drift-report-only workflow.
+- Fine-grained tokens surface a missing Administration permission as a
+  404, not a 403, on admin endpoints. The action treats both as
+  permission errors and its messages name the exact permission to grant.
+- `repos: "*"` discovery needs a user PAT; the workflow `GITHUB_TOKEN`
+  and GitHub App installation tokens cannot enumerate a user's
+  repositories. Remote multi-repo targets also need Contents: read on
+  every target, because each repository's own settings.yml is fetched
+  through the contents API.

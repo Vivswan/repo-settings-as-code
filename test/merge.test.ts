@@ -55,4 +55,27 @@ describe("applyDefaults", () => {
     expect(settings).toEqual(repo);
     expect(disabled).toEqual([]);
   });
+
+  test("a null section the defaults do not declare passes through", () => {
+    const defaults = { repository: { has_wiki: false } } as SettingsFile;
+    const repo = { pages: null } as SettingsFile;
+    const { settings, disabled } = applyDefaults(defaults, repo);
+    expect(settings.pages).toBeNull();
+    expect(disabled).toEqual([]);
+  });
+
+  test("a null section the defaults declare non-null is still an opt-out", () => {
+    const defaults = { pages: { build_type: "workflow" } } as SettingsFile;
+    const repo = { pages: null } as SettingsFile;
+    const { settings, disabled } = applyDefaults(defaults, repo);
+    expect("pages" in settings).toBe(false);
+    expect(disabled).toEqual(["pages"]);
+  });
+
+  test("a null section in the defaults themselves passes through to every target", () => {
+    const defaults = { pages: null } as SettingsFile;
+    const { settings, disabled } = applyDefaults(defaults, {} as SettingsFile);
+    expect(settings.pages).toBeNull();
+    expect(disabled).toEqual([]);
+  });
 });

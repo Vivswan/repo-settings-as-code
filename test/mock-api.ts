@@ -30,7 +30,9 @@ export class MockApi {
   async request(method: string, path: string, payload?: unknown) {
     const result = await this.tryRequest(method, path, payload);
     if ("error" in result && result.error) {
-      throw new Error(`${method} ${path}: ${result.error.status}`);
+      // Same message shape as GithubApi.request, so error-classifying
+      // callers behave identically under test.
+      throw new Error(`${method} ${path} failed: ${result.error.status} ${result.error.message}`);
     }
     return "data" in result ? result.data : null;
   }
@@ -48,7 +50,7 @@ export class MockApi {
     }
   }
 
-  /** Same file-vs-permission 404 contract as GithubApi.getRepoFile. */
+  /** Same lazy file-vs-repo 404 disambiguation as GithubApi.getRepoFile. */
   async getRepoFile(slug: string, filePath: string) {
     const result = await this.tryRequest("GET", `/repos/${slug}/contents/${filePath}`, undefined, {
       accept: "application/vnd.github.raw+json",
@@ -56,7 +58,22 @@ export class MockApi {
     });
     if ("error" in result && result.error) {
       if (result.error.status === 404) {
-        return { missing: true as const };
+        const repoProbe = await this.tryRequest("GET", `/repos/${slug}`);
+        if ("error" in repoProbe && repoProbe.error) {
+          return { error: repoProbe.error };
+        }
+        const data = "data" in repoProbe ? repoProbe.data : null;
+        const pull = (data as { permissions?: { pull?: boolean } } | null)?.permissions?.pull;
+        if (pull === true) {
+          return { missing: true as const };
+        }
+        return {
+          error: {
+            status: 404,
+            message: `the repository is visible but the token cannot read its contents, so ${filePath} cannot be fetched (grant Contents: read)`,
+            body: "",
+          },
+        };
       }
       return { error: result.error };
     }

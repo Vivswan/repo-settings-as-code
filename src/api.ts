@@ -172,9 +172,12 @@ export class GithubApi {
 
   /**
    * Fetch one file's raw content from a repository's default branch.
-   * `missing` is a FILE-level 404, distinct from a repo-level permission
-   * 404 - callers must gate repo visibility first (GET /repos/{slug}) so
-   * the two cannot be confused.
+   * A contents 404 is ambiguous (missing file, missing Contents
+   * permission, or a token that cannot see the repo at all), so it is
+   * disambiguated here: the repo probe runs only on that rare path, and
+   * `missing` always means the FILE. Every fine-grained PAT can read the
+   * repo object (Metadata), so the probe's permissions block settles
+   * whether the token could have read the contents.
    */
   async getRepoFile(
     slug: string,
@@ -186,7 +189,22 @@ export class GithubApi {
     });
     if ("error" in result) {
       if (result.error.status === 404) {
-        return { missing: true };
+        const repoProbe = await this.tryRequest("GET", `/repos/${slug}`);
+        if ("error" in repoProbe) {
+          return { error: repoProbe.error };
+        }
+        const pull = (repoProbe.data as { permissions?: { pull?: boolean } } | null)?.permissions
+          ?.pull;
+        if (pull === true) {
+          return { missing: true };
+        }
+        return {
+          error: {
+            status: 404,
+            message: `the repository is visible but the token cannot read its contents, so ${filePath} cannot be fetched (grant Contents: read)`,
+            body: "",
+          },
+        };
       }
       return { error: result.error };
     }
@@ -213,8 +231,20 @@ export class GithubApi {
   }
 }
 
+/**
+ * True when a response is rate limiting in a 403 costume: primary REST
+ * rate-limit exhaustion and secondary (abuse) limits arrive as 403, not
+ * 429, once the throttling plugin gives up retrying.
+ */
+export function isRateLimitError(error: ApiError): boolean {
+  return error.status === 429 || (error.status === 403 && /rate limit/i.test(error.message));
+}
+
 /** True when an error means the token lacks access, as opposed to a bad payload. */
 export function isPermissionError(error: ApiError): boolean {
+  if (isRateLimitError(error)) {
+    return false;
+  }
   // 403 = classic missing scope; fine-grained tokens surface missing
   // permissions as 404 on admin endpoints ("Not Found" hides the resource).
   return error.status === 403 || error.status === 404;
