@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-
+import { validateSectionShapes } from "../src/engine/validate.js";
 import { actionsSection } from "../src/sections/actions.js";
 import { branchesSection } from "../src/sections/branches.js";
 import { codeScanningDefaultSetupSection } from "../src/sections/code-scanning.js";
@@ -10,7 +10,6 @@ import { pagesSection } from "../src/sections/pages.js";
 import { repositorySection } from "../src/sections/repository.js";
 import { rulesetsSection } from "../src/sections/rulesets.js";
 import { workflowsSection } from "../src/sections/workflows.js";
-import { validateSectionShapes } from "../src/validate.js";
 import { MockApi } from "./mock-api.js";
 
 function ctx(api: MockApi, check = false): SectionContext {

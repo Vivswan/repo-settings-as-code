@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { applyDefaults, deepMerge } from "../src/merge.js";
+import { applyDefaults, deepMerge } from "../src/engine/merge.js";
 import type { SettingsFile } from "../src/schema.js";
 
 describe("deepMerge", () => {

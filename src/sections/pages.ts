@@ -3,7 +3,7 @@
  * declares Pages OFF (mirroring branches' `protection: null`).
  */
 
-import { subsetDiff } from "../diff.js";
+import { subsetDiff } from "../engine/diff.js";
 import type { PagesConfig } from "../schema.js";
 import {
   anyRecord,

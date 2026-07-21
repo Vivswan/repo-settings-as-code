@@ -6,21 +6,17 @@
  * multi-repo mode ("" in single-repo mode keeps output byte-identical).
  */
 
-import type { GithubClient } from "./github/api.js";
-import { SECTION_KEYS, type SettingsFile } from "./schema.js";
-import { PermissionDenied, type SectionContext, type SectionResult } from "./sections/contract.js";
-import { SECTIONS } from "./sections/registry.js";
+import type { GithubClient } from "../github/api.js";
+import type { Io } from "../io.js";
+import { SECTION_KEYS, type SettingsFile } from "../schema.js";
+import { PermissionDenied, type SectionContext, type SectionResult } from "../sections/contract.js";
+import { SECTIONS } from "../sections/registry.js";
 import { validateSectionShapes } from "./validate.js";
 
 export interface SectionOutcome {
   key: string;
   status: "applied" | "clean" | "drift" | "skipped" | "excluded" | "failed";
   detail: string[];
-}
-
-export interface Io {
-  annotate(level: "notice" | "warning" | "error", message: string): void;
-  log(line: string): void;
 }
 
 export interface RepoRunOptions {
@@ -231,7 +227,7 @@ export async function runForRepo(
 }
 
 /** Aggregate result across targets: the worst outcome wins. */
-export function worstOf(results: Array<{ result: RepoResult }>, check: boolean): string {
+export function worstOf(results: Array<{ result: RepoResult }>, check: boolean): RepoResult {
   const ranks: RepoResult[] = ["failed", "drift", "partial", "skipped", "applied", "clean"];
   for (const rank of ranks) {
     if (results.some((r) => r.result === rank)) {

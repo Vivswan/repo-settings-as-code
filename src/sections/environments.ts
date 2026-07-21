@@ -4,7 +4,7 @@
  */
 
 import { z } from "zod";
-import { subsetDiff } from "../diff.js";
+import { subsetDiff } from "../engine/diff.js";
 import type { EnvironmentConfig } from "../schema.js";
 import {
   call,

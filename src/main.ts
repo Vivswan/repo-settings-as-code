@@ -31,17 +31,17 @@ import {
 } from "./discovery/discover.js";
 import { parseReposInput } from "./discovery/repos-input.js";
 import { dedupeTargets, SLUG_RE, type Target } from "./discovery/targets.js";
-import { GithubApi, type GithubClient, isPermissionError } from "./github/api.js";
-import { getRepoFile } from "./github/repo-file.js";
-import { applyDefaults } from "./merge.js";
+import { applyDefaults } from "./engine/merge.js";
 import {
-  type Io,
   type RepoResult,
   runForRepo,
   type SectionOutcome,
   validateSettingsDoc,
   worstOf,
-} from "./orchestrate.js";
+} from "./engine/orchestrate.js";
+import { GithubApi, type GithubClient, isPermissionError } from "./github/api.js";
+import { getRepoFile } from "./github/repo-file.js";
+import type { Io } from "./io.js";
 import type { SettingsFile } from "./schema.js";
 import { SECTION_KEYS } from "./schema.js";
 

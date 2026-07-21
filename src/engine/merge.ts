@@ -6,7 +6,7 @@
  * document nobody declared. Inputs are never mutated.
  */
 
-import type { SettingsFile } from "./schema.js";
+import type { SettingsFile } from "../schema.js";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

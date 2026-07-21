@@ -5,7 +5,7 @@
  */
 
 import { z } from "zod";
-import { subsetDiff } from "../diff.js";
+import { subsetDiff } from "../engine/diff.js";
 import type { LabelConfig } from "../schema.js";
 import { call, emptyResult, listAll, type SectionModule, type SectionResult } from "./contract.js";
 

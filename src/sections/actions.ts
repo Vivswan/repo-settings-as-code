@@ -4,7 +4,7 @@
  * defaults, access level), with unknown keys passed through verbatim.
  */
 
-import { subsetDiff } from "../diff.js";
+import { subsetDiff } from "../engine/diff.js";
 import type { ActionsConfig } from "../schema.js";
 import {
   anyRecord,

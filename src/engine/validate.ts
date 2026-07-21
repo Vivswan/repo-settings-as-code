@@ -4,8 +4,8 @@
  * sections and reports every mismatch.
  */
 
-import { SECTION_KEYS } from "./schema.js";
-import { sectionShape } from "./sections/registry.js";
+import { SECTION_KEYS } from "../schema.js";
+import { sectionShape } from "../sections/registry.js";
 
 /**
  * Validate the declared sections' shapes. Returns an error message naming

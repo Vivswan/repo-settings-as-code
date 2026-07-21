@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { type Io, runForRepo, validateSettingsDoc, worstOf } from "../src/orchestrate.js";
+import { runForRepo, validateSettingsDoc, worstOf } from "../src/engine/orchestrate.js";
+import type { Io } from "../src/io.js";
 import type { SettingsFile } from "../src/schema.js";
 import { MockApi } from "./mock-api.js";
 

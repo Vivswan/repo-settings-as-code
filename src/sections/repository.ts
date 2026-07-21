@@ -4,7 +4,7 @@
  * the Probot schema nests them here: topics and the security toggles.
  */
 
-import { subsetDiff } from "../diff.js";
+import { subsetDiff } from "../engine/diff.js";
 import {
   anyRecord,
   call,

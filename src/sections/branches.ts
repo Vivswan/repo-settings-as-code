@@ -6,7 +6,7 @@
  */
 
 import { z } from "zod";
-import { subsetDiff } from "../diff.js";
+import { subsetDiff } from "../engine/diff.js";
 import type { BranchConfig } from "../schema.js";
 import {
   anyRecord,

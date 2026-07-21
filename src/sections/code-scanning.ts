@@ -3,7 +3,7 @@
  * configuration; a 409 (configuration run in progress) gets its own advice.
  */
 
-import { subsetDiff } from "../diff.js";
+import { subsetDiff } from "../engine/diff.js";
 import {
   anyRecord,
   call,

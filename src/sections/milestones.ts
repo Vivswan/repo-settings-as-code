@@ -5,7 +5,7 @@
  */
 
 import { z } from "zod";
-import { subsetDiff } from "../diff.js";
+import { subsetDiff } from "../engine/diff.js";
 import type { MilestoneConfig } from "../schema.js";
 import {
   call,

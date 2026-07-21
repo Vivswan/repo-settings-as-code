@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { subsetDiff } from "../src/diff.js";
+import { subsetDiff } from "../src/engine/diff.js";
 import { normalizeColor } from "../src/sections/labels.js";
 import { normalizeTopics } from "../src/sections/repository.js";
 import { normalizeRefName, normalizeRuleset } from "../src/sections/rulesets.js";
