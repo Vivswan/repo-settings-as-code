@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { GithubApi } from "../src/api.js";
 import { run, runMulti } from "../src/main.js";
 import type { Io } from "../src/orchestrate.js";
+import { DEFAULT_DISCOVERY_FILTERS } from "../src/targets.js";
 import { MockApi } from "./mock-api.js";
 
 function captureIo(): { io: Io; annotations: string[]; logs: string[] } {
@@ -27,6 +28,8 @@ function cfg(overrides: Partial<Parameters<typeof runMulti>[1]> = {}) {
     onMissingPermission: "fail" as const,
     requiredSections: new Set<string>(),
     onlySections: new Set<string>(),
+    discoveryFilters: DEFAULT_DISCOVERY_FILTERS,
+    discoveryFiltersSet: [],
     ...overrides,
   };
 }
@@ -85,6 +88,73 @@ describe("runMulti", () => {
     const { io } = captureIo();
     const { fatal } = await runMulti(api as unknown as GithubApi, cfg({ reposInput: " ,  " }), io);
     expect(fatal).toContain("no targets");
+  });
+
+  test("discovery filters with repos-dir-only targets are fatal", async () => {
+    const api = new MockApi({});
+    const { io } = captureIo();
+    const { fatal } = await runMulti(
+      api as unknown as GithubApi,
+      cfg({ reposDir: "test/fixtures/repos", adminOwner: "viv", discoveryFiltersSet: ["forks"] }),
+      io,
+    );
+    expect(fatal).toContain("repos-dir");
+    expect(fatal).toContain('"forks"');
+  });
+
+  test("filters removing every discovered repo suggest relaxing them", async () => {
+    const api = new MockApi({
+      "GET /user/repos?affiliation=owner&per_page=100&page=1": {
+        data: [
+          { full_name: "o/a", fork: true },
+          { full_name: "o/b", fork: true },
+        ],
+      },
+    });
+    const { io } = captureIo();
+    const { fatal } = await runMulti(
+      api as unknown as GithubApi,
+      cfg({
+        reposInput: "*",
+        discoveryFilters: { ...DEFAULT_DISCOVERY_FILTERS, forks: "exclude" },
+        discoveryFiltersSet: ["forks"],
+      }),
+      io,
+    );
+    expect(fatal).toContain("discovery filters removed all of them");
+    expect(fatal).toContain("2 repositories");
+  });
+
+  test("skip notices list at most 20 slugs, then a count of the rest", async () => {
+    const repos = Array.from({ length: 21 }, (_, i) => ({
+      full_name: `o/fork-${String(i).padStart(2, "0")}`,
+      fork: true,
+    }));
+    const api = new MockApi({
+      "GET /user/repos?affiliation=owner&per_page=100&page=1": {
+        data: [{ full_name: "o/keep" }, ...repos],
+      },
+      "GET /repos/o/keep": { data: { has_wiki: false } },
+      "GET /repos/o/keep/contents/.github/settings.yml": {
+        data: "repository:\n  has_wiki: false\n",
+      },
+    });
+    const { io, annotations } = captureIo();
+    const { fatal } = await runMulti(
+      api as unknown as GithubApi,
+      cfg({
+        reposInput: "*",
+        discoveryFilters: { ...DEFAULT_DISCOVERY_FILTERS, forks: "exclude" },
+        discoveryFiltersSet: ["forks"],
+      }),
+      io,
+    );
+    expect(fatal).toBeNull();
+    const notice = annotations.find((a) => a.includes("forks=exclude"));
+    expect(notice).toContain("skipped 21 repositories");
+    expect(notice).toContain("o/fork-19");
+    expect(notice).not.toContain("o/fork-20");
+    expect(notice).toContain(", and 1 more");
   });
 });
 
@@ -174,6 +244,12 @@ describe("run in multi-repo mode (env glue)", () => {
     "INPUT_MODE",
     "INPUT_REPOS",
     "INPUT_REPOSITORY",
+    "INPUT_VISIBILITY",
+    "INPUT_ARCHIVED",
+    "INPUT_FORKS",
+    "INPUT_EXCLUDE",
+    "INPUT_TOPICS",
+    "INPUT_AFFILIATION",
     "GITHUB_OUTPUT",
     "GITHUB_STEP_SUMMARY",
     "GITHUB_REPOSITORY",
@@ -223,5 +299,71 @@ describe("run in multi-repo mode (env glue)", () => {
     const api = new MockApi({});
     expect(await run({ api: api as unknown as GithubApi })).toBe(1);
     expect(api.calls).toHaveLength(0);
+  });
+
+  function setDiscoveryEnv() {
+    process.env.INPUT_TOKEN = "t";
+    process.env.INPUT_MODE = "check";
+    delete process.env.INPUT_REPOS;
+    delete process.env.INPUT_REPOSITORY;
+    delete process.env.GITHUB_OUTPUT;
+    delete process.env.GITHUB_STEP_SUMMARY;
+    delete process.env.GITHUB_REPOSITORY;
+  }
+
+  test("invalid filter values are hard errors before any API call", async () => {
+    const bad: Array<[string, string]> = [
+      ["INPUT_VISIBILITY", "sometimes"],
+      ["INPUT_ARCHIVED", "maybe"],
+      ["INPUT_FORKS", "never"],
+      ["INPUT_AFFILIATION", "member"],
+      ["INPUT_EXCLUDE", "a/b/c"],
+      ["INPUT_EXCLUDE", "octo/"],
+      ["INPUT_EXCLUDE", "/repo"],
+    ];
+    for (const [key, value] of bad) {
+      setDiscoveryEnv();
+      process.env.INPUT_REPOS = "*";
+      process.env[key] = value;
+      const api = new MockApi({});
+      expect(await run({ api: api as unknown as GithubApi })).toBe(1);
+      expect(api.calls).toHaveLength(0);
+      delete process.env[key];
+    }
+  });
+
+  test("filters with an explicit repos list are a hard error", async () => {
+    setDiscoveryEnv();
+    process.env.INPUT_REPOS = "o/a";
+    process.env.INPUT_FORKS = "exclude";
+    const api = new MockApi({});
+    expect(await run({ api: api as unknown as GithubApi })).toBe(1);
+    expect(api.calls).toHaveLength(0);
+  });
+
+  test("filters in single-repo mode are a hard error", async () => {
+    setDiscoveryEnv();
+    process.env.INPUT_REPOSITORY = "o/r";
+    process.env.INPUT_TOPICS = "team-a";
+    const api = new MockApi({});
+    expect(await run({ api: api as unknown as GithubApi })).toBe(1);
+    expect(api.calls).toHaveLength(0);
+  });
+
+  test("discovery with forks: exclude processes only the non-fork", async () => {
+    setDiscoveryEnv();
+    process.env.INPUT_REPOS = "*";
+    process.env.INPUT_FORKS = "exclude";
+    const api = new MockApi({
+      "GET /user/repos?affiliation=owner&per_page=100&page=1": {
+        data: [{ full_name: "o/x" }, { full_name: "o/y", fork: true }],
+      },
+      "GET /repos/o/x": { data: { has_wiki: false } },
+      "GET /repos/o/x/contents/.github/settings.yml": {
+        data: "repository:\n  has_wiki: false\n",
+      },
+    });
+    expect(await run({ api: api as unknown as GithubApi })).toBe(0);
+    expect(api.calls.some((c) => c.path.startsWith("/repos/o/y"))).toBe(false);
   });
 });

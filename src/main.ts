@@ -32,6 +32,7 @@ import {
 import type { SettingsFile } from "./schema.js";
 import { SECTION_KEYS } from "./schema.js";
 import {
+  type DiscoveryFilters,
   dedupeTargets,
   discoverRepos,
   parseReposInput,
@@ -133,6 +134,24 @@ function writeMultiSummary(targets: TargetOutcome[], mode: string): void {
   appendFileSync(file, `${lines.join("\n")}\n`);
 }
 
+function quoteList(names: string[]): string {
+  return names.map((name) => `"${name}"`).join(", ");
+}
+
+/**
+ * One aggregate notice per filter reason: with "*" fleets, per-repo notices
+ * would flood the annotations UI (GitHub caps annotations per step).
+ */
+function formatSkipNotice(group: { reason: string; slugs: string[] }): string {
+  const shown = group.slugs.slice(0, 20).join(", ");
+  const more = group.slugs.length > 20 ? `, and ${group.slugs.length - 20} more` : "";
+  const count = `${group.slugs.length} ${group.slugs.length === 1 ? "repository" : "repositories"}`;
+  if (group.reason === "archived") {
+    return `repos: "*" discovery skipped ${count} because settings writes fail on archived repositories; unarchive them to manage them: ${shown}${more}`;
+  }
+  return `repos: "*" discovery skipped ${count} by ${group.reason}: ${shown}${more}`;
+}
+
 export interface MultiConfig {
   reposDir: string;
   reposInput: string;
@@ -142,6 +161,9 @@ export interface MultiConfig {
   onMissingPermission: "fail" | "warn";
   requiredSections: Set<string>;
   onlySections: Set<string>;
+  discoveryFilters: DiscoveryFilters;
+  /** Filter inputs the user explicitly set, for the misuse rejections. */
+  discoveryFiltersSet: string[];
 }
 
 /**
@@ -186,6 +208,7 @@ export async function runMulti(
   }
 
   let remote: Target[] = [];
+  let filteredOutCount = 0;
   if (cfg.reposInput) {
     const parsed = parseReposInput(cfg.reposInput);
     if ("error" in parsed) {
@@ -194,24 +217,38 @@ export async function runMulti(
     let slugs = parsed.slugs;
     let origin = 'the "repos" input';
     if (parsed.discover) {
-      const discovered = await discoverRepos(api);
+      const discovered = await discoverRepos(api, cfg.discoveryFilters);
       if ("error" in discovered) {
         return { fatal: discovered.error, targets: none };
       }
-      for (const archived of discovered.archivedSkipped) {
-        io.annotate(
-          "notice",
-          `${archived}: skipped - the repository is archived, and settings writes fail on archived repositories. Unarchive it to manage it`,
-        );
+      for (const group of discovered.filtered) {
+        io.annotate("notice", formatSkipNotice(group));
+        filteredOutCount += group.slugs.length;
       }
       slugs = discovered.slugs;
       origin = 'repos: "*" discovery';
+    } else if (cfg.discoveryFiltersSet.length > 0) {
+      return {
+        fatal: `the discovery filter input(s) ${quoteList(cfg.discoveryFiltersSet)} only apply when repos is "*", but the "repos" input lists explicit repositories. Set repos: "*", or remove the filter input(s)`,
+        targets: none,
+      };
     }
     remote = slugs.map((slug) => ({ slug, source: "remote" as const, origin }));
+  } else if (cfg.discoveryFiltersSet.length > 0) {
+    return {
+      fatal: `the discovery filter input(s) ${quoteList(cfg.discoveryFiltersSet)} only apply to repos: "*" discovery, but targets come only from repos-dir files. Set repos: "*", or remove the filter input(s)`,
+      targets: none,
+    };
   }
 
   const targets = dedupeTargets(central, remote, (message) => io.annotate("notice", message));
   if (targets.length === 0) {
+    if (filteredOutCount > 0) {
+      return {
+        fatal: `multi-repo mode found no targets: repos: "*" discovery found ${filteredOutCount} ${filteredOutCount === 1 ? "repository" : "repositories"}, but the discovery filters removed all of them (see the notices above). Relax the filter inputs, or add per-repo files to the repos-dir`,
+        targets: none,
+      };
+    }
     return {
       fatal: `multi-repo mode found no targets: repos-dir yielded no settings files and the "repos" input resolved to no repositories. Add per-repo files to the repos-dir, or list repositories in the "repos" input`,
       targets: none,
@@ -395,6 +432,62 @@ export async function run(overrides?: { api?: GithubApi }): Promise<number> {
   const apiVersion = input("api-version") || "2022-11-28";
   const api = overrides?.api ?? new GithubApi(token, undefined, apiVersion);
 
+  const FILTER_INPUTS = ["visibility", "archived", "forks", "exclude", "topics", "affiliation"];
+  const discoveryFiltersSet = FILTER_INPUTS.filter((name) => input(name) !== "");
+  const list = (name: string): string[] =>
+    input(name)
+      .split(/[\n,]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  const visibility = input("visibility") || "all";
+  if (
+    visibility !== "all" &&
+    visibility !== "public" &&
+    visibility !== "private" &&
+    visibility !== "internal"
+  ) {
+    return fail(
+      `the "visibility" input is "${visibility}", which is not a supported discovery filter. Set it to "all" (default), "public", "private", or "internal"`,
+    );
+  }
+  const archived = input("archived") || "skip";
+  if (archived !== "skip" && archived !== "include" && archived !== "only") {
+    return fail(
+      `the "archived" input is "${archived}", which is not a supported archived-repository policy. Set it to "skip" (default), "include", or "only"`,
+    );
+  }
+  const forks = input("forks") || "include";
+  if (forks !== "include" && forks !== "exclude" && forks !== "only") {
+    return fail(
+      `the "forks" input is "${forks}", which is not a supported fork policy. Set it to "include" (default), "exclude", or "only"`,
+    );
+  }
+  const affiliation = [...new Set(list("affiliation"))];
+  for (const entry of affiliation) {
+    if (entry !== "owner" && entry !== "collaborator" && entry !== "organization_member") {
+      return fail(
+        `the "affiliation" input entry "${entry}" is not a supported affiliation, so discovery cannot build the /user/repos query. Use a comma-separated list of "owner", "collaborator", and "organization_member"`,
+      );
+    }
+  }
+  const exclude = list("exclude");
+  for (const pattern of exclude) {
+    const parts = pattern.split("/");
+    if (parts.length > 2 || (parts.length === 2 && (!parts[0] || !parts[1]))) {
+      return fail(
+        `the "exclude" input pattern "${pattern}" can never match an owner/name repository: a pattern takes at most one "/", with a non-empty glob on each side of it. Use "<name-glob>" or "<owner-glob>/<name-glob>", where "*" matches any characters`,
+      );
+    }
+  }
+  const discoveryFilters: DiscoveryFilters = {
+    visibility,
+    archived,
+    forks,
+    affiliation: affiliation.length > 0 ? affiliation : ["owner"],
+    topics: list("topics").map((topic) => topic.toLowerCase()),
+    exclude,
+  };
+
   const reposInput = input("repos");
   const reposDir = input("repos-dir");
   const defaultsFile = input("defaults-file");
@@ -424,6 +517,8 @@ export async function run(overrides?: { api?: GithubApi }): Promise<number> {
         onMissingPermission,
         requiredSections,
         onlySections,
+        discoveryFilters,
+        discoveryFiltersSet,
       },
       io,
     );
@@ -455,6 +550,11 @@ export async function run(overrides?: { api?: GithubApi }): Promise<number> {
   }
 
   // Single-repo mode (unchanged legacy behavior).
+  if (discoveryFiltersSet.length > 0) {
+    return fail(
+      `the discovery filter input(s) ${quoteList(discoveryFiltersSet)} only apply to repos: "*" discovery, but this run is in single-repo mode. Set repos: "*" to discover repositories, or remove the filter input(s)`,
+    );
+  }
   const repo = input("repository") || process.env.GITHUB_REPOSITORY || "";
   if (!SLUG_RE.test(repo)) {
     return fail(

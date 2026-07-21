@@ -51,9 +51,56 @@ inputs:
     description: >-
       Multi-repo remote mode: comma- or newline-separated owner/name
       targets, each applied from its own .github/settings.yml (default
-      branch), or "*" alone to discover every non-archived repository the
-      token's user owns. Combinable with repos-dir; a repos-dir file for
-      the same repository wins.
+      branch), or "*" alone to discover every repository the token's user
+      owns, filterable via the visibility, archived, forks, exclude,
+      topics, and affiliation inputs. Combinable with repos-dir; a
+      repos-dir file for the same repository wins.
+    required: false
+    default: ""
+  visibility:
+    description: >-
+      Keeps only repositories of this visibility in repos: "*" discovery.
+      One of all (default), public, private, or internal; internal is
+      matched client-side (Enterprise only). Fails if set without
+      repos: "*".
+    required: false
+    default: ""
+  archived:
+    description: >-
+      Archived-repository policy for repos: "*" discovery. One of skip
+      (default; settings writes fail on archived repositories), include,
+      or only (mostly useful with mode: check). Fails if set without
+      repos: "*".
+    required: false
+    default: ""
+  forks:
+    description: >-
+      Fork policy for repos: "*" discovery. One of include (default),
+      exclude, or only. Fails if set without repos: "*".
+    required: false
+    default: ""
+  exclude:
+    description: >-
+      Comma- or newline-separated wildcard patterns removing repositories
+      from repos: "*" discovery. "*" matches any characters; a pattern
+      containing "/" matches the full owner/name, any other the name
+      alone. Case-insensitive. Fails if set without repos: "*".
+    required: false
+    default: ""
+  topics:
+    description: >-
+      Comma- or newline-separated topics; repos: "*" discovery keeps only
+      repositories carrying at least one of them. Unrelated to the topics
+      settings section. Fails if set without repos: "*".
+    required: false
+    default: ""
+  affiliation:
+    description: >-
+      Comma-separated affiliations for repos: "*" discovery, passed to
+      the GitHub /user/repos listing. Any of owner, collaborator,
+      organization_member; the list replaces the default (owner), so use
+      owner,collaborator to widen rather than move discovery. Fails if
+      set without repos: "*".
     required: false
     default: ""
   repos-dir:

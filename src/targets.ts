@@ -138,31 +138,142 @@ export function parseReposInput(
   return { slugs: items, discover: false };
 }
 
-type DiscoveredRepo = Pick<components["schemas"]["repository"], "full_name" | "archived">;
+type DiscoveredRepo = Pick<
+  components["schemas"]["repository"],
+  "full_name" | "archived" | "fork" | "topics" | "visibility"
+>;
 
-/** Discover every non-archived repository the token's user owns. */
+/** Filters applied to repos: "*" discovery only, never to explicit targets. */
+export interface DiscoveryFilters {
+  visibility: "all" | "public" | "private" | "internal";
+  archived: "skip" | "include" | "only";
+  forks: "include" | "exclude" | "only";
+  affiliation: string[];
+  topics: string[];
+  exclude: string[];
+}
+
+export const DEFAULT_DISCOVERY_FILTERS: DiscoveryFilters = {
+  visibility: "all",
+  archived: "skip",
+  forks: "include",
+  affiliation: ["owner"],
+  topics: [],
+  exclude: [],
+};
+
+/** Compile a "*"-only wildcard into an anchored, case-insensitive RegExp. */
+function compileExcludePattern(pattern: string): RegExp {
+  const escaped = pattern.replace(/[.+^${}()|[\]\\?]/g, "\\$&").replace(/\*/g, ".*");
+  return new RegExp(`^${escaped}$`, "i");
+}
+
+/**
+ * True when the pattern excludes this owner/name slug. A pattern containing
+ * "/" matches the full slug; otherwise it matches the name alone (same
+ * split as the repos-dir <name>.yml vs <owner>/<name>.yml layout).
+ */
+export function excludeMatches(pattern: string, slug: string): boolean {
+  const candidate = pattern.includes("/") ? slug : (slug.split("/")[1] ?? slug);
+  return compileExcludePattern(pattern).test(candidate);
+}
+
+export interface DiscoveryResult {
+  slugs: string[];
+  /** Repositories dropped by a filter, grouped by the first reason that hit. */
+  filtered: Array<{ reason: string; slugs: string[] }>;
+}
+
+/** Discover the repositories the token's user can see, applying the filters. */
 export async function discoverRepos(
   api: GithubApi,
-): Promise<{ slugs: string[]; archivedSkipped: string[] } | { error: string }> {
+  filters: DiscoveryFilters,
+): Promise<DiscoveryResult | { error: string }> {
+  const params = [`affiliation=${filters.affiliation.join(",")}`];
+  if (filters.visibility === "public" || filters.visibility === "private") {
+    // The API's visibility param has no "internal" value; that case (and the
+    // internal-vs-private distinction on GHEC) is settled client-side below.
+    params.push(`visibility=${filters.visibility}`);
+  }
   let repos: DiscoveredRepo[];
   try {
-    repos = (await api.list("/user/repos?affiliation=owner")) as DiscoveredRepo[];
+    repos = (await api.list(`/user/repos?${params.join("&")}`)) as DiscoveredRepo[];
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
       error: `cannot discover repositories for repos: "*": ${message}. Discovery needs a user PAT; the workflow GITHUB_TOKEN and GitHub App installation tokens cannot enumerate a user's repositories. List the target repositories explicitly in the "repos" input`,
     };
   }
+  // One rule per filter, in reporting-attribution order; the first reason
+  // returned is the one a skipped repo is grouped under.
+  const rules: Array<(repo: DiscoveredRepo) => string | null> = [
+    (repo) => {
+      const isInternal = repo.visibility === "internal";
+      if (filters.visibility === "internal" && !isInternal) {
+        return "visibility=internal";
+      }
+      if (filters.visibility === "private" && isInternal) {
+        return "visibility=private";
+      }
+      return null;
+    },
+    (repo) => {
+      if (filters.archived === "skip" && repo.archived) {
+        return "archived";
+      }
+      if (filters.archived === "only" && !repo.archived) {
+        return "archived=only";
+      }
+      return null;
+    },
+    (repo) => {
+      if (filters.forks === "exclude" && repo.fork) {
+        return "forks=exclude";
+      }
+      if (filters.forks === "only" && !repo.fork) {
+        return "forks=only";
+      }
+      return null;
+    },
+    (repo) => {
+      if (
+        filters.topics.length > 0 &&
+        !(repo.topics ?? []).some((topic) => filters.topics.includes(topic.toLowerCase()))
+      ) {
+        return `topics (has none of: ${filters.topics.join(", ")})`;
+      }
+      return null;
+    },
+    (repo) => {
+      const hit = filters.exclude.find((pattern) => excludeMatches(pattern, repo.full_name));
+      return hit ? `exclude pattern "${hit}"` : null;
+    },
+  ];
   const slugs: string[] = [];
-  const archivedSkipped: string[] = [];
+  const filtered = new Map<string, string[]>();
   for (const repo of repos) {
-    if (repo.archived) {
-      archivedSkipped.push(repo.full_name);
-    } else {
+    let reason: string | null = null;
+    for (const rule of rules) {
+      reason = rule(repo);
+      if (reason) {
+        break;
+      }
+    }
+    if (!reason) {
       slugs.push(repo.full_name);
+      continue;
+    }
+    const group = filtered.get(reason);
+    if (group) {
+      group.push(repo.full_name);
+    } else {
+      filtered.set(reason, [repo.full_name]);
     }
   }
-  return { slugs, archivedSkipped };
+  return {
+    slugs,
+    filtered: [...filtered.entries()].map(([reason, group]) => ({ reason, slugs: group })),
+  };
 }
 
 /**

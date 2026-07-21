@@ -67,6 +67,12 @@ section.
 | `repos` | (empty) | Multi-repo remote mode: `owner/name` list (comma/newline), or `*` to discover owned repos |
 | `repos-dir` | (empty) | Multi-repo central mode: directory of per-repo settings files in this repo |
 | `defaults-file` | (empty) | YAML merged under every multi-repo target's settings |
+| `visibility` | `all` | Discovery-only: keep `public`, `private`, or `internal` repositories |
+| `archived` | `skip` | Discovery-only: `skip`, `include`, or `only` archived repositories |
+| `forks` | `include` | Discovery-only: `include`, `exclude`, or `only` forks |
+| `exclude` | (empty) | Discovery-only: `*` wildcard patterns (name, or `owner/name` if the pattern has a `/`) to drop |
+| `topics` | (empty) | Discovery-only: keep repositories carrying at least one listed topic |
+| `affiliation` | `owner` | Discovery-only: `owner`, `collaborator`, `organization_member` (comma list) |
 
 Outputs: `result` (`applied` / `partial` / `clean` / `drift` / `failed`;
 worst-of across targets in multi-repo mode, where `skipped` can also
@@ -115,9 +121,25 @@ but without a hosted app. Two sourcing modes, usable together:
   curated, code-reviewed source of truth.
 - Remote (`repos`): a comma- or newline-separated list of `owner/name`
   targets, each applied from its own `.github/settings.yml` (default
-  branch). `repos: "*"` alone discovers every non-archived repository the
-  token's user owns (needs a user PAT; the workflow `GITHUB_TOKEN` cannot
-  enumerate). A target without a settings file is skipped with a notice.
+  branch). `repos: "*"` alone discovers every repository the token's user
+  owns (needs a user PAT; the workflow `GITHUB_TOKEN` cannot enumerate).
+  A target without a settings file is skipped with a notice.
+
+Discovery takes six filter inputs that apply only to `repos: "*"`;
+setting any of them in another mode fails the run. `visibility` keeps
+public, private, or internal repositories. `archived` defaults to `skip`,
+because settings writes fail on archived repositories; `archived: only`
+is mostly useful with `mode: check`. `forks` includes, excludes, or keeps
+only forks. `topics` keeps repositories carrying at least one listed
+topic, so a single marker topic can opt repositories in. `exclude` takes
+wildcard patterns where `*` matches anything: a pattern containing `/` is
+matched against the full `owner/name`, any other against the name alone,
+case-insensitively. `affiliation` selects which relationships to the
+token's user qualify: `owner` (the default), `collaborator`, or
+`organization_member`; the list replaces the default, so widening
+discovery beyond owned repositories takes `owner,collaborator`.
+Repositories a filter drops are reported in one aggregate notice per
+reason.
 
 When the same repository appears in both, the central file wins (with a
 notice). `defaults-file` names a YAML document deep-merged UNDER every
