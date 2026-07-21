@@ -38,8 +38,14 @@ Settings as Code: GitHub Action applying declarative repository settings: rulese
   (node24); regenerate with `bun run build` after any `src/` change. CI's
   bundle-check job fails when it drifts. It is exempt from the typography
   check (third-party unicode) and excluded from [biome](https://biomejs.dev).
-- The apply/check engine lives in `src/`; one handler per settings section
-  in `src/sections/`. Each section is a self-contained `SectionModule`
+- The apply/check engine layout: `src/main.ts` is the thin bundled
+  entrypoint; `src/action/` is the GitHub Actions layer (inputs, Io over
+  @actions/core, settings reading, step summaries, the single- and
+  multi-repo run flows); `src/engine/` is the per-repo pipeline
+  (orchestrate, validate, merge, diff); `src/github/` is the REST client,
+  pagination, and repo-file fetch; `src/discovery/` resolves multi-repo
+  targets; `src/sections/` holds one handler per settings section. Each
+  section is a self-contained `SectionModule`
   (key, PAT grant advice, loose zod shape, handler) registered in
   `src/sections/registry.ts`; adding a section means creating
   `src/sections/<key>.ts`, adding the key to `SECTION_KEYS` in
