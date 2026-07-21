@@ -34,6 +34,10 @@ Most sections need a [fine-grained PAT](https://docs.github.com/en/authenticatio
 on the repository; the default `GITHUB_TOKEN` can never hold that
 permission.
 
+On a repository with existing labels, autolinks, or collaborators, run
+once with `mode: check` before enabling apply on push: the drift report
+lists everything an apply would delete.
+
 A JSON Schema describing every section and its structured fields is
 published at
 [`lib/settings.schema.json`](lib/settings.schema.json), generated from the
@@ -201,15 +205,15 @@ the table below) on every target.
 | `repository` | PATCH repo, PUT topics, vulnerability-alerts, automated-security-fixes, private-vulnerability-reporting | Probot schema incl. `topics` as string or list; `enable_private_vulnerability_reporting` toggle |
 | `labels` | labels CRUD | deletes undeclared |
 | `rulesets` | repo rulesets CRUD | branch AND tag targets; short ref names auto-prefixed (`staging` -> `refs/heads/staging`); `~DEFAULT_BRANCH` passes through |
-| `branches` | classic branch protection | `protection: null` removes protection |
-| `environments` | PUT environments | reviewers, wait timer, branch policies |
+| `branches` | classic branch protection | `protection: null` removes protection; undeclared branches untouched |
+| `environments` | PUT environments | reviewers, wait timer, branch policies; undeclared environments untouched |
 | `autolinks` | autolinks CRUD | immutable upstream, so changed entries are replaced; undeclared deleted |
 | `actions` | actions permissions + selected-actions + workflow token + access level | `enabled`, `allowed_actions`, `selected_actions`, `default_workflow_permissions`, `can_approve_pull_request_reviews`, `access_level` (private repos only) |
 | `workflows` | list workflows, enable/disable | `{path, state: active or disabled}`; bare file names match `.github/workflows/`; undeclared workflows untouched |
 | `pages` | POST/PUT/DELETE pages | `build_type: workflow` or `legacy` + source, `cname`, `https_enforced`; `pages: null` disables the site |
 | `code_scanning_default_setup` | code scanning default setup | `state`, `query_suite`, `languages` (compared as a set), and future PATCH fields; needs Advanced Security on private repos |
 | `collaborators` | direct collaborators | invitations for new users; undeclared direct collaborators removed (owner never touched) |
-| `teams` | org team repo permissions | skipped with a notice on personal accounts |
+| `teams` | org team repo permissions | skipped with a notice on personal accounts; undeclared team access untouched |
 | `milestones` | milestones | upsert by title, never deletes |
 
 ## Example settings.yml
