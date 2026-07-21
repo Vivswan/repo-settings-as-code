@@ -1,5 +1,6 @@
 /** Shared section-handler contract and error classification. */
 
+import { z } from "zod";
 import type { ApiError, GithubApi } from "../api.js";
 import { isPermissionError, isRateLimitError } from "../api.js";
 import type { SectionKey } from "../schema.js";
@@ -29,10 +30,39 @@ export interface SectionResult {
   notes: string[];
 }
 
-export interface Section {
-  key: SectionKey;
+/**
+ * The identity every helper needs to classify an error: the section's key
+ * and its fine-grained-PAT grant advice. Handlers pass `this`, so the
+ * advice always travels with the section that owns it.
+ */
+export interface SectionMeta<K extends SectionKey = SectionKey> {
+  key: K;
+  /**
+   * How to grant a fine-grained PAT access to this section's endpoints,
+   * used verbatim in permission errors. The README's "Token permissions
+   * by section" table mirrors these.
+   */
+  grant: string;
+}
+
+/**
+ * One settings section, self-contained: identity and grant advice
+ * (SectionMeta), the loose shape validation accepts for its declared
+ * value, and the handler. Modules register in ./registry.ts.
+ */
+export interface SectionModule<K extends SectionKey = SectionKey> extends SectionMeta<K> {
+  /**
+   * Loose zod shape for the declared value: only the natural keys the
+   * handler needs are checked; every unknown field passes through
+   * untouched, so validation can never fight the passthrough-first
+   * forward-compatibility tenet.
+   */
+  shape: z.ZodType;
   run(ctx: SectionContext, desired: unknown): Promise<SectionResult>;
 }
+
+/** The loose "any YAML mapping" shape for passthrough-heavy sections. */
+export const anyRecord = z.record(z.string(), z.unknown());
 
 export function emptyResult(): SectionResult {
   return { changes: [], drift: [], notes: [] };
@@ -45,7 +75,7 @@ export function emptyResult(): SectionResult {
  */
 export async function call(
   ctx: SectionContext,
-  section: SectionKey,
+  section: SectionMeta,
   method: string,
   path: string,
   payload?: unknown,
@@ -65,7 +95,7 @@ export async function call(
  */
 export async function probeAbsent(
   ctx: SectionContext,
-  section: SectionKey,
+  section: SectionMeta,
   path: string,
   options?: { tolerate?: number[]; accept?: string },
 ): Promise<{ data: unknown } | { missing: true }> {
@@ -86,7 +116,7 @@ export async function probeAbsent(
  */
 async function listPages(
   ctx: SectionContext,
-  section: SectionKey,
+  section: SectionMeta,
   path: string,
   extract: (data: unknown) => unknown[] | null,
   shape: string,
@@ -101,7 +131,7 @@ async function listPages(
     const chunk = extract(result.data);
     if (chunk === null) {
       throw new Error(
-        `${section}: GET ${path} returned a JSON value without ${shape}, so the response cannot be paginated. Check the "api-version" input against the GitHub REST docs for this endpoint`,
+        `${section.key}: GET ${path} returned a JSON value without ${shape}, so the response cannot be paginated. Check the "api-version" input against the GitHub REST docs for this endpoint`,
       );
     }
     items.push(...chunk);
@@ -114,7 +144,7 @@ async function listPages(
 /** GET every page of a bare-array list endpoint. */
 export async function listAll(
   ctx: SectionContext,
-  section: SectionKey,
+  section: SectionMeta,
   path: string,
 ): Promise<unknown[]> {
   return listPages(ctx, section, path, (data) => (Array.isArray(data) ? data : null), "a list");
@@ -126,7 +156,7 @@ export async function listAll(
  */
 export async function listAllEnveloped(
   ctx: SectionContext,
-  section: SectionKey,
+  section: SectionMeta,
   path: string,
   envelopeKey: string,
 ): Promise<unknown[]> {
@@ -147,7 +177,7 @@ export async function listAllEnveloped(
  * would fight each other on every run instead of converging.
  */
 export function rejectDuplicates<T>(
-  section: SectionKey,
+  section: SectionMeta,
   items: T[],
   keyOf: (item: T) => string,
   describe: (item: T) => string,
@@ -158,37 +188,15 @@ export function rejectDuplicates<T>(
     const first = seen.get(key);
     if (first !== undefined) {
       throw new Error(
-        `${section}: the settings file declares both "${first}" and "${describe(item)}", which name the same ${section} entry. Keep exactly one entry per resource`,
+        `${section.key}: the settings file declares both "${first}" and "${describe(item)}", which name the same ${section.key} entry. Keep exactly one entry per resource`,
       );
     }
     seen.set(key, describe(item));
   }
 }
 
-/**
- * The full fine-grained-PAT grant advice per section. A total Record over
- * SectionKey, so adding a section without deciding its advice is a
- * compile error, and the README's "Token permissions by section" table
- * has a single code-side source to mirror.
- */
-const SECTION_GRANT: Record<SectionKey, string> = {
-  repository: `grant "Administration" (read and write) under the PAT's Repository permissions`,
-  labels: `grant "Issues" (read and write) under the PAT's Repository permissions`,
-  rulesets: `grant "Administration" (read and write) under the PAT's Repository permissions`,
-  branches: `grant "Administration" (read and write) under the PAT's Repository permissions`,
-  environments: `grant "Environments" (read and write) under the PAT's Repository permissions`,
-  autolinks: `grant "Administration" (read and write) under the PAT's Repository permissions`,
-  actions: `grant "Administration" (read and write) under the PAT's Repository permissions`,
-  workflows: `grant "Actions" (read and write) under the PAT's Repository permissions`,
-  pages: `grant "Pages" (read and write) under the PAT's Repository permissions`,
-  code_scanning_default_setup: `grant "Administration" or "Code scanning alerts" (read and write) under the PAT's Repository permissions; a 403 on this endpoint can also mean GitHub Advanced Security (code security) is not enabled on the repository, or the repository is archived`,
-  collaborators: `grant "Administration" (read and write) under the PAT's Repository permissions`,
-  teams: `grant "Members" (read) under the PAT's Organization permissions and "Administration" (read and write) under its Repository permissions`,
-  milestones: `grant "Issues" (read and write) under the PAT's Repository permissions`,
-};
-
 export function throwFor(
-  section: SectionKey,
+  section: SectionMeta,
   method: string,
   path: string,
   error: ApiError,
@@ -198,28 +206,28 @@ export function throwFor(
     // Includes primary and secondary rate limits delivered as 403; those
     // must not be mistaken for missing permissions.
     throw new Error(
-      `${section}: ${cause}. The API rate limit was hit; re-run the workflow after the limit resets, or use a token with a higher rate limit`,
+      `${section.key}: ${cause}. The API rate limit was hit; re-run the workflow after the limit resets, or use a token with a higher rate limit`,
     );
   }
   if (isPermissionError(error)) {
     const alsoMissing =
       error.status === 404 ? " (a 404 here can also mean the resource does not exist)" : "";
     throw new PermissionDenied(
-      section,
-      `the token was denied ${cause}${alsoMissing}. To fix, ${SECTION_GRANT[section]}`,
+      section.key,
+      `the token was denied ${cause}${alsoMissing}. To fix, ${section.grant}`,
     );
   }
   if (error.status >= 500) {
     throw new Error(
-      `${section}: ${cause}. GitHub returned a server error; re-run the workflow, and retry later if it persists`,
+      `${section.key}: ${cause}. GitHub returned a server error; re-run the workflow, and retry later if it persists`,
     );
   }
   if (error.status === 401) {
     throw new Error(
-      `${section}: ${cause}. The token was rejected as invalid or expired; update the token input (or the secret it reads) with a valid, unexpired PAT`,
+      `${section.key}: ${cause}. The token was rejected as invalid or expired; update the token input (or the secret it reads) with a valid, unexpired PAT`,
     );
   }
   throw new Error(
-    `${section}: ${cause}. The API rejected the request; fix the "${section}" values in the settings file to satisfy the message above`,
+    `${section.key}: ${cause}. The API rejected the request; fix the "${section.key}" values in the settings file to satisfy the message above`,
   );
 }

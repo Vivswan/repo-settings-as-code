@@ -5,9 +5,17 @@
  * protection entirely.
  */
 
+import { z } from "zod";
 import { subsetDiff } from "../diff.js";
 import type { BranchConfig } from "../schema.js";
-import { call, emptyResult, type Section, type SectionResult, throwFor } from "./section.js";
+import {
+  anyRecord,
+  call,
+  emptyResult,
+  type SectionModule,
+  type SectionResult,
+  throwFor,
+} from "./contract.js";
 
 const REQUIRED_PROTECTION_KEYS = [
   "required_status_checks",
@@ -16,8 +24,10 @@ const REQUIRED_PROTECTION_KEYS = [
   "restrictions",
 ] as const;
 
-export const branchesSection: Section = {
+export const branchesSection: SectionModule<"branches"> = {
   key: "branches",
+  grant: `grant "Administration" (read and write) under the PAT's Repository permissions`,
+  shape: z.array(z.looseObject({ name: z.string(), protection: anyRecord.nullable() })),
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
     for (const branch of desiredRaw as BranchConfig[]) {
@@ -25,7 +35,7 @@ export const branchesSection: Section = {
       if (branch.protection === null) {
         const probe = await ctx.api.tryRequest("GET", path);
         if ("error" in probe && probe.error.status !== 404) {
-          throwFor(this.key, "GET", path, probe.error);
+          throwFor(this, "GET", path, probe.error);
         }
         const isProtected = !("error" in probe);
         if (ctx.check) {
@@ -35,7 +45,7 @@ export const branchesSection: Section = {
             );
           }
         } else if (isProtected) {
-          await call(ctx, this.key, "DELETE", path);
+          await call(ctx, this, "DELETE", path);
           result.changes.push(`removed protection from "${branch.name}"`);
         }
         continue;
@@ -50,7 +60,7 @@ export const branchesSection: Section = {
       if (ctx.check) {
         const probe = await ctx.api.tryRequest("GET", path);
         if ("error" in probe && probe.error.status !== 404) {
-          throwFor(this.key, "GET", path, probe.error);
+          throwFor(this, "GET", path, probe.error);
         }
         if ("error" in probe) {
           // Protection 404s for a missing BRANCH too. The branch probe is
@@ -85,7 +95,7 @@ export const branchesSection: Section = {
           }
         }
       } else {
-        await call(ctx, this.key, "PUT", path, payload);
+        await call(ctx, this, "PUT", path, payload);
         result.changes.push(`applied protection to "${branch.name}"`);
       }
     }

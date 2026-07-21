@@ -6,10 +6,19 @@
 
 import { subsetDiff } from "../diff.js";
 import type { ActionsConfig } from "../schema.js";
-import { call, emptyResult, type Section, type SectionResult, throwFor } from "./section.js";
+import {
+  anyRecord,
+  call,
+  emptyResult,
+  type SectionModule,
+  type SectionResult,
+  throwFor,
+} from "./contract.js";
 
-export const actionsSection: Section = {
+export const actionsSection: SectionModule<"actions"> = {
   key: "actions",
+  grant: `grant "Administration" (read and write) under the PAT's Repository permissions`,
+  shape: anyRecord,
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
     const desired = desiredRaw as ActionsConfig;
@@ -60,7 +69,7 @@ export const actionsSection: Section = {
 
     if (ctx.check) {
       if (Object.keys(permissions).length > 0) {
-        const live = await call(ctx, this.key, "GET", `/repos/${ctx.repo}/actions/permissions`);
+        const live = await call(ctx, this, "GET", `/repos/${ctx.repo}/actions/permissions`);
         result.drift.push(...subsetDiff(permissions, live, "actions.permissions"));
       }
       if (desired.selected_actions !== undefined) {
@@ -77,7 +86,7 @@ export const actionsSection: Section = {
             );
           } else {
             throwFor(
-              this.key,
+              this,
               "GET",
               `/repos/${ctx.repo}/actions/permissions/selected-actions`,
               probe.error,
@@ -92,19 +101,14 @@ export const actionsSection: Section = {
       if (Object.keys(workflow).length > 0) {
         const live = await call(
           ctx,
-          this.key,
+          this,
           "GET",
           `/repos/${ctx.repo}/actions/permissions/workflow`,
         );
         result.drift.push(...subsetDiff(workflow, live, "actions.workflow"));
       }
       if (desired.access_level !== undefined) {
-        const live = await call(
-          ctx,
-          this.key,
-          "GET",
-          `/repos/${ctx.repo}/actions/permissions/access`,
-        );
+        const live = await call(ctx, this, "GET", `/repos/${ctx.repo}/actions/permissions/access`);
         result.drift.push(
           ...subsetDiff({ access_level: desired.access_level }, live, "actions.access"),
         );
@@ -113,13 +117,13 @@ export const actionsSection: Section = {
     }
 
     if (Object.keys(permissions).length > 0) {
-      await call(ctx, this.key, "PUT", `/repos/${ctx.repo}/actions/permissions`, permissions);
+      await call(ctx, this, "PUT", `/repos/${ctx.repo}/actions/permissions`, permissions);
       result.changes.push("applied actions permissions");
     }
     if (desired.selected_actions !== undefined) {
       await call(
         ctx,
-        this.key,
+        this,
         "PUT",
         `/repos/${ctx.repo}/actions/permissions/selected-actions`,
         desired.selected_actions,
@@ -127,11 +131,11 @@ export const actionsSection: Section = {
       result.changes.push("applied selected-actions policy");
     }
     if (Object.keys(workflow).length > 0) {
-      await call(ctx, this.key, "PUT", `/repos/${ctx.repo}/actions/permissions/workflow`, workflow);
+      await call(ctx, this, "PUT", `/repos/${ctx.repo}/actions/permissions/workflow`, workflow);
       result.changes.push("applied workflow token permissions");
     }
     if (desired.access_level !== undefined) {
-      await call(ctx, this.key, "PUT", `/repos/${ctx.repo}/actions/permissions/access`, {
+      await call(ctx, this, "PUT", `/repos/${ctx.repo}/actions/permissions/access`, {
         access_level: desired.access_level,
       });
       result.changes.push("applied workflows access level");

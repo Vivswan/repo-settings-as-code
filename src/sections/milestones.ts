@@ -4,6 +4,7 @@
  * notes instead of deleted.
  */
 
+import { z } from "zod";
 import { subsetDiff } from "../diff.js";
 import type { MilestoneConfig } from "../schema.js";
 import {
@@ -11,9 +12,9 @@ import {
   emptyResult,
   listAll,
   rejectDuplicates,
-  type Section,
+  type SectionModule,
   type SectionResult,
-} from "./section.js";
+} from "./contract.js";
 
 interface LiveMilestone {
   number: number;
@@ -22,20 +23,22 @@ interface LiveMilestone {
   state: string;
 }
 
-export const milestonesSection: Section = {
+export const milestonesSection: SectionModule<"milestones"> = {
   key: "milestones",
+  grant: `grant "Issues" (read and write) under the PAT's Repository permissions`,
+  shape: z.array(z.looseObject({ title: z.string() })),
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
     const desired = desiredRaw as MilestoneConfig[];
     rejectDuplicates(
-      this.key,
+      this,
       desired,
       (m) => m.title,
       (m) => m.title,
     );
     const live = (await listAll(
       ctx,
-      this.key,
+      this,
       `/repos/${ctx.repo}/milestones?state=all`,
     )) as LiveMilestone[];
     const liveByTitle = new Map(live.map((m) => [m.title, m]));
@@ -54,7 +57,7 @@ export const milestonesSection: Section = {
             `milestones[${milestone.title}]: missing - declared in the settings file but not on the repo; apply will create it`,
           );
         } else {
-          await call(ctx, this.key, "POST", `/repos/${ctx.repo}/milestones`, want);
+          await call(ctx, this, "POST", `/repos/${ctx.repo}/milestones`, want);
           result.changes.push(`created milestone "${milestone.title}"`);
         }
         continue;
@@ -65,13 +68,7 @@ export const milestonesSection: Section = {
         if (ctx.check) {
           result.drift.push(...drift);
         } else {
-          await call(
-            ctx,
-            this.key,
-            "PATCH",
-            `/repos/${ctx.repo}/milestones/${existing.number}`,
-            want,
-          );
+          await call(ctx, this, "PATCH", `/repos/${ctx.repo}/milestones/${existing.number}`, want);
           result.changes.push(`updated milestone "${milestone.title}"`);
         }
       }

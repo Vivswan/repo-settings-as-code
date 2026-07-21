@@ -1,30 +1,11 @@
 /**
- * Shape validation for one settings document, powered by zod. Every schema
- * is LOOSE: only the natural keys each section needs are checked, and
- * every unknown field passes through untouched, so validation can never
- * fight the passthrough-first forward-compatibility tenet.
+ * Shape validation for one settings document. Each section's loose zod
+ * shape lives on its module (sections/<key>.ts); this walks the declared
+ * sections and reports every mismatch.
  */
 
-import { z } from "zod";
 import { SECTION_KEYS } from "./schema.js";
-
-const anyRecord = z.record(z.string(), z.unknown());
-
-const SECTION_SHAPES: Record<(typeof SECTION_KEYS)[number], z.ZodType> = {
-  repository: anyRecord,
-  labels: z.array(z.looseObject({ name: z.string() })),
-  rulesets: z.array(z.looseObject({ name: z.string() })),
-  branches: z.array(z.looseObject({ name: z.string(), protection: anyRecord.nullable() })),
-  environments: z.array(z.looseObject({ name: z.string() })),
-  autolinks: z.array(z.looseObject({ key_prefix: z.string(), url_template: z.string() })),
-  actions: anyRecord,
-  workflows: z.array(z.looseObject({ path: z.string(), state: z.enum(["active", "disabled"]) })),
-  pages: anyRecord.nullable(),
-  code_scanning_default_setup: anyRecord,
-  collaborators: z.array(z.looseObject({ username: z.string() })),
-  teams: z.array(z.looseObject({ name: z.string() })),
-  milestones: z.array(z.looseObject({ title: z.string() })),
-};
+import { sectionShape } from "./sections/registry.js";
 
 /**
  * Validate the declared sections' shapes. Returns an error message naming
@@ -42,7 +23,7 @@ export function validateSectionShapes(
     if (declared === undefined) {
       continue;
     }
-    const parsed = SECTION_SHAPES[key].safeParse(declared);
+    const parsed = sectionShape(key).safeParse(declared);
     if (!parsed.success) {
       for (const issue of parsed.error.issues.slice(0, 5)) {
         const path = issue.path.length

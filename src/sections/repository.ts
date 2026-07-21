@@ -6,13 +6,14 @@
 
 import { subsetDiff } from "../diff.js";
 import {
+  anyRecord,
   call,
   emptyResult,
   probeAbsent,
-  type Section,
+  type SectionModule,
   type SectionResult,
   throwFor,
-} from "./section.js";
+} from "./contract.js";
 
 /** Topics: accept a comma-separated string or an array; lowercase, dedupe. */
 export function normalizeTopics(raw: unknown): string[] {
@@ -69,8 +70,10 @@ const SECURITY_TOGGLES: SecurityToggle[] = [
 
 const SPECIAL_KEYS = new Set(["topics", ...SECURITY_TOGGLES.map((toggle) => toggle.key)]);
 
-export const repositorySection: Section = {
+export const repositorySection: SectionModule<"repository"> = {
   key: "repository",
+  grant: `grant "Administration" (read and write) under the PAT's Repository permissions`,
+  shape: anyRecord,
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
     const desired = desiredRaw as Record<string, unknown>;
@@ -89,10 +92,7 @@ export const repositorySection: Section = {
     }
 
     if (ctx.check) {
-      const live = (await call(ctx, this.key, "GET", `/repos/${ctx.repo}`)) as Record<
-        string,
-        unknown
-      >;
+      const live = (await call(ctx, this, "GET", `/repos/${ctx.repo}`)) as Record<string, unknown>;
       result.drift.push(...subsetDiff(patch, live, "repository"));
       if ("topics" in desired) {
         result.drift.push(
@@ -107,7 +107,7 @@ export const repositorySection: Section = {
         if (!(toggle.key in desired)) {
           continue;
         }
-        const probe = await probeAbsent(ctx, this.key, `/repos/${ctx.repo}/${toggle.path}`, {
+        const probe = await probeAbsent(ctx, this, `/repos/${ctx.repo}/${toggle.path}`, {
           tolerate: toggle.tolerate,
         });
         const enabled = "missing" in probe ? false : toggle.isEnabled(probe.data);
@@ -121,12 +121,12 @@ export const repositorySection: Section = {
     }
 
     if (Object.keys(patch).length > 0) {
-      await call(ctx, this.key, "PATCH", `/repos/${ctx.repo}`, patch);
+      await call(ctx, this, "PATCH", `/repos/${ctx.repo}`, patch);
       result.changes.push(`patched repository fields: ${Object.keys(patch).join(", ")}`);
     }
     if ("topics" in desired) {
       const names = normalizeTopics(desired.topics);
-      await call(ctx, this.key, "PUT", `/repos/${ctx.repo}/topics`, { names });
+      await call(ctx, this, "PUT", `/repos/${ctx.repo}/topics`, { names });
       result.changes.push(`set topics: ${names.join(", ") || "(none)"}`);
     }
     for (const toggle of SECURITY_TOGGLES) {
@@ -135,15 +135,15 @@ export const repositorySection: Section = {
       }
       const path = `/repos/${ctx.repo}/${toggle.path}`;
       if (desired[toggle.key]) {
-        await call(ctx, this.key, "PUT", path);
+        await call(ctx, this, "PUT", path);
       } else if (toggle.tolerateOnDisable.length === 0) {
-        await call(ctx, this.key, "DELETE", path);
+        await call(ctx, this, "DELETE", path);
       } else {
         // Disabling where the feature does not apply is already the
         // declared state; anything else is a real failure.
         const off = await ctx.api.tryRequest("DELETE", path);
         if ("error" in off && !toggle.tolerateOnDisable.includes(off.error.status)) {
-          throwFor(this.key, "DELETE", path, off.error);
+          throwFor(this, "DELETE", path, off.error);
         }
       }
       result.changes.push(`${toggle.label}: ${desired[toggle.key] ? "enabled" : "disabled"}`);

@@ -39,7 +39,12 @@ Settings as Code: GitHub Action applying declarative repository settings: rulese
   bundle-check job fails when it drifts. It is exempt from the typography
   check (third-party unicode) and excluded from [biome](https://biomejs.dev).
 - The apply/check engine lives in `src/`; one handler per settings section
-  in `src/sections/`. All GitHub API list calls must go through
+  in `src/sections/`. Each section is a self-contained `SectionModule`
+  (key, PAT grant advice, loose zod shape, handler) registered in
+  `src/sections/registry.ts`; adding a section means creating
+  `src/sections/<key>.ts`, adding the key to `SECTION_KEYS` in
+  `src/schema.ts`, and adding one registry line - the compiler flags any
+  forgotten step. All GitHub API list calls must go through
   `listAll()` (bare-array endpoints) or `listAllEnveloped()` (endpoints
   that wrap the list in a `{total_count, <key>: []}` envelope); errors
   through `call()`/`throwFor()` so the permission policy

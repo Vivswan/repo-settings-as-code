@@ -3,6 +3,7 @@
  * Undeclared environments are left untouched.
  */
 
+import { z } from "zod";
 import { subsetDiff } from "../diff.js";
 import type { EnvironmentConfig } from "../schema.js";
 import {
@@ -10,17 +11,19 @@ import {
   emptyResult,
   probeAbsent,
   rejectDuplicates,
-  type Section,
+  type SectionModule,
   type SectionResult,
-} from "./section.js";
+} from "./contract.js";
 
-export const environmentsSection: Section = {
+export const environmentsSection: SectionModule<"environments"> = {
   key: "environments",
+  grant: `grant "Environments" (read and write) under the PAT's Repository permissions`,
+  shape: z.array(z.looseObject({ name: z.string() })),
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
     const desired = desiredRaw as EnvironmentConfig[];
     rejectDuplicates(
-      this.key,
+      this,
       desired,
       (env) => env.name.toLowerCase(),
       (env) => env.name,
@@ -29,7 +32,7 @@ export const environmentsSection: Section = {
       const { name, ...settings } = env;
       const path = `/repos/${ctx.repo}/environments/${encodeURIComponent(name)}`;
       if (ctx.check) {
-        const probe = await probeAbsent(ctx, this.key, path);
+        const probe = await probeAbsent(ctx, this, path);
         if ("missing" in probe) {
           result.drift.push(
             `environments[${name}]: missing - declared in the settings file but not on the repo; apply will create it`,
@@ -40,7 +43,7 @@ export const environmentsSection: Section = {
           );
         }
       } else {
-        await call(ctx, this.key, "PUT", path, settings);
+        await call(ctx, this, "PUT", path, settings);
         result.changes.push(`applied environment "${name}"`);
       }
     }

@@ -4,9 +4,10 @@
  * undeclared labels, loudly.
  */
 
+import { z } from "zod";
 import { subsetDiff } from "../diff.js";
 import type { LabelConfig } from "../schema.js";
-import { call, emptyResult, listAll, type Section, type SectionResult } from "./section.js";
+import { call, emptyResult, listAll, type SectionModule, type SectionResult } from "./contract.js";
 
 /** Case-insensitive key for name-matched resources (labels). */
 export function nameKey(name: string): string {
@@ -26,8 +27,10 @@ interface LiveLabel {
   description: string | null;
 }
 
-export const labelsSection: Section = {
+export const labelsSection: SectionModule<"labels"> = {
   key: "labels",
+  grant: `grant "Issues" (read and write) under the PAT's Repository permissions`,
+  shape: z.array(z.looseObject({ name: z.string() })),
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
     const desired = desiredRaw as LabelConfig[];
@@ -49,7 +52,7 @@ export const labelsSection: Section = {
         claimed.set(key, label.name);
       }
     }
-    const live = (await listAll(ctx, this.key, `/repos/${ctx.repo}/labels`)) as LiveLabel[];
+    const live = (await listAll(ctx, this, `/repos/${ctx.repo}/labels`)) as LiveLabel[];
     const liveByKey = new Map<string, LiveLabel>();
     for (const label of live) {
       liveByKey.set(nameKey(label.name), label);
@@ -80,7 +83,7 @@ export const labelsSection: Section = {
             `labels[${finalName}]: missing - declared in the settings file but not on the repo; apply will create it`,
           );
         } else {
-          await call(ctx, this.key, "POST", `/repos/${ctx.repo}/labels`, {
+          await call(ctx, this, "POST", `/repos/${ctx.repo}/labels`, {
             name: finalName,
             ...(wantColor === undefined ? {} : { color: wantColor }),
             description: wantDescription,
@@ -117,7 +120,7 @@ export const labelsSection: Section = {
         } else {
           await call(
             ctx,
-            this.key,
+            this,
             "PATCH",
             `/repos/${ctx.repo}/labels/${encodeURIComponent(existing.name)}`,
             {
@@ -142,7 +145,7 @@ export const labelsSection: Section = {
         } else {
           await call(
             ctx,
-            this.key,
+            this,
             "DELETE",
             `/repos/${ctx.repo}/labels/${encodeURIComponent(label.name)}`,
           );

@@ -8,42 +8,9 @@
 
 import type { GithubApi } from "./api.js";
 import { SECTION_KEYS, type SettingsFile } from "./schema.js";
-import { actionsSection } from "./sections/actions.js";
-import { autolinksSection } from "./sections/autolinks.js";
-import { branchesSection } from "./sections/branches.js";
-import { codeScanningDefaultSetupSection } from "./sections/code-scanning.js";
-import { collaboratorsSection } from "./sections/collaborators.js";
-import { environmentsSection } from "./sections/environments.js";
-import { labelsSection } from "./sections/labels.js";
-import { milestonesSection } from "./sections/milestones.js";
-import { pagesSection } from "./sections/pages.js";
-import { repositorySection } from "./sections/repository.js";
-import { rulesetsSection } from "./sections/rulesets.js";
-import {
-  PermissionDenied,
-  type Section,
-  type SectionContext,
-  type SectionResult,
-} from "./sections/section.js";
-import { teamsSection } from "./sections/teams.js";
-import { workflowsSection } from "./sections/workflows.js";
+import { PermissionDenied, type SectionContext, type SectionResult } from "./sections/contract.js";
+import { SECTIONS } from "./sections/registry.js";
 import { validateSectionShapes } from "./validate.js";
-
-export const SECTIONS: Section[] = [
-  repositorySection,
-  labelsSection,
-  rulesetsSection,
-  branchesSection,
-  environmentsSection,
-  autolinksSection,
-  actionsSection,
-  workflowsSection,
-  pagesSection,
-  codeScanningDefaultSetupSection,
-  collaboratorsSection,
-  teamsSection,
-  milestonesSection,
-];
 
 export interface SectionOutcome {
   key: string;

@@ -4,17 +4,26 @@
  */
 
 import { subsetDiff } from "../diff.js";
-import { call, emptyResult, type Section, type SectionResult, throwFor } from "./section.js";
+import {
+  anyRecord,
+  call,
+  emptyResult,
+  type SectionModule,
+  type SectionResult,
+  throwFor,
+} from "./contract.js";
 
-export const codeScanningDefaultSetupSection: Section = {
+export const codeScanningDefaultSetupSection: SectionModule<"code_scanning_default_setup"> = {
   key: "code_scanning_default_setup",
+  grant: `grant "Administration" or "Code scanning alerts" (read and write) under the PAT's Repository permissions; a 403 on this endpoint can also mean GitHub Advanced Security (code security) is not enabled on the repository, or the repository is archived`,
+  shape: anyRecord,
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
     const desired = desiredRaw as Record<string, unknown>;
     const path = `/repos/${ctx.repo}/code-scanning/default-setup`;
 
     if (ctx.check) {
-      const live = await call(ctx, this.key, "GET", path);
+      const live = await call(ctx, this, "GET", path);
       result.drift.push(...subsetDiff(desired, live, "code_scanning_default_setup"));
       return result;
     }
@@ -28,7 +37,7 @@ export const codeScanningDefaultSetupSection: Section = {
           `code_scanning_default_setup: PATCH ${path}: 409 ${patch.error.message}. A default-setup configuration run is already in progress on the repository; re-run the workflow after it finishes`,
         );
       }
-      throwFor(this.key, "PATCH", path, patch.error);
+      throwFor(this, "PATCH", path, patch.error);
     }
     const run = patch.data as { run_id?: number; run_url?: string } | null;
     if (run?.run_id !== undefined) {

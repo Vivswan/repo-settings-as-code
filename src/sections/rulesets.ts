@@ -4,9 +4,10 @@
  * are listed as notes so removal stays an explicit human action.
  */
 
+import { z } from "zod";
 import { subsetDiff } from "../diff.js";
 import type { RulesetConfig } from "../schema.js";
-import { call, emptyResult, listAll, type Section, type SectionResult } from "./section.js";
+import { call, emptyResult, listAll, type SectionModule, type SectionResult } from "./contract.js";
 
 /**
  * Ruleset ref includes/excludes: the file may use short names ("staging",
@@ -52,14 +53,16 @@ interface LiveRulesetSummary {
   source_type?: string;
 }
 
-export const rulesetsSection: Section = {
+export const rulesetsSection: SectionModule<"rulesets"> = {
   key: "rulesets",
+  grant: `grant "Administration" (read and write) under the PAT's Repository permissions`,
+  shape: z.array(z.looseObject({ name: z.string() })),
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
     const desired = (desiredRaw as RulesetConfig[]).map(normalizeRuleset);
     const summaries = (await listAll(
       ctx,
-      this.key,
+      this,
       `/repos/${ctx.repo}/rulesets`,
     )) as LiveRulesetSummary[];
     const repoRulesets = summaries.filter((r) => (r.source_type ?? "Repository") === "Repository");
@@ -73,16 +76,16 @@ export const rulesetsSection: Section = {
             `rulesets[${ruleset.name}]: missing - declared in the settings file but not on the repo; apply will create it`,
           );
         } else {
-          await call(ctx, this.key, "POST", `/repos/${ctx.repo}/rulesets`, ruleset);
+          await call(ctx, this, "POST", `/repos/${ctx.repo}/rulesets`, ruleset);
           result.changes.push(`created ruleset "${ruleset.name}"`);
         }
         continue;
       }
       if (ctx.check) {
-        const live = await call(ctx, this.key, "GET", `/repos/${ctx.repo}/rulesets/${id}`);
+        const live = await call(ctx, this, "GET", `/repos/${ctx.repo}/rulesets/${id}`);
         result.drift.push(...subsetDiff(ruleset, live, `rulesets[${ruleset.name}]`));
       } else {
-        await call(ctx, this.key, "PUT", `/repos/${ctx.repo}/rulesets/${id}`, ruleset);
+        await call(ctx, this, "PUT", `/repos/${ctx.repo}/rulesets/${id}`, ruleset);
         result.changes.push(`updated ruleset "${ruleset.name}" (id ${id})`);
       }
     }

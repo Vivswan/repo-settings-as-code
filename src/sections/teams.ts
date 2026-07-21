@@ -3,24 +3,27 @@
  * personal account the section no-ops with a note.
  */
 
+import { z } from "zod";
 import type { TeamConfig } from "../schema.js";
-import { roleForPermission } from "./roles.js";
 import {
   call,
   emptyResult,
   probeAbsent,
   rejectDuplicates,
-  type Section,
+  type SectionModule,
   type SectionResult,
-} from "./section.js";
+} from "./contract.js";
+import { roleForPermission } from "./roles.js";
 
-export const teamsSection: Section = {
+export const teamsSection: SectionModule<"teams"> = {
   key: "teams",
+  grant: `grant "Members" (read) under the PAT's Organization permissions and "Administration" (read and write) under its Repository permissions`,
+  shape: z.array(z.looseObject({ name: z.string() })),
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
     const desired = desiredRaw as TeamConfig[];
     rejectDuplicates(
-      this.key,
+      this,
       desired,
       (t) => t.name.toLowerCase(),
       (t) => t.name,
@@ -28,7 +31,7 @@ export const teamsSection: Section = {
     // Teams only exist on organization repos; on a personal account the org
     // endpoints 404. Probe once and no-op with a note instead of failing;
     // 403/5xx still flow through the permission policy via probeAbsent.
-    const orgProbe = await probeAbsent(ctx, this.key, `/orgs/${ctx.owner}`);
+    const orgProbe = await probeAbsent(ctx, this, `/orgs/${ctx.owner}`);
     if ("missing" in orgProbe) {
       result.notes.push(
         `teams: owner "${ctx.owner}" is a personal account, not an organization, so team access does not apply; section skipped - remove the teams section from the settings file to silence this note`,
@@ -41,7 +44,7 @@ export const teamsSection: Section = {
       if (ctx.check) {
         // The repository media type makes this endpoint return the repo
         // object (with role_name) instead of 204.
-        const probe = await probeAbsent(ctx, this.key, path, {
+        const probe = await probeAbsent(ctx, this, path, {
           accept: "application/vnd.github.v3.repository+json",
         });
         if ("missing" in probe) {
@@ -59,7 +62,7 @@ export const teamsSection: Section = {
         }
       } else {
         const { name: _n, ...body } = team;
-        await call(ctx, this.key, "PUT", path, {
+        await call(ctx, this, "PUT", path, {
           ...body, // future sibling keys pass through
           permission,
         });

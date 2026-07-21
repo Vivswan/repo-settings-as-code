@@ -3,16 +3,17 @@
  * Undeclared collaborators are REMOVED (the owner never is).
  */
 
+import { z } from "zod";
 import type { CollaboratorConfig } from "../schema.js";
-import { roleForPermission } from "./roles.js";
 import {
   call,
   emptyResult,
   listAll,
   rejectDuplicates,
-  type Section,
+  type SectionModule,
   type SectionResult,
-} from "./section.js";
+} from "./contract.js";
+import { roleForPermission } from "./roles.js";
 
 interface LiveCollaborator {
   login: string;
@@ -20,20 +21,22 @@ interface LiveCollaborator {
   role_name?: string;
 }
 
-export const collaboratorsSection: Section = {
+export const collaboratorsSection: SectionModule<"collaborators"> = {
   key: "collaborators",
+  grant: `grant "Administration" (read and write) under the PAT's Repository permissions`,
+  shape: z.array(z.looseObject({ username: z.string() })),
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
     const desired = desiredRaw as CollaboratorConfig[];
     rejectDuplicates(
-      this.key,
+      this,
       desired,
       (c) => c.username.toLowerCase(),
       (c) => c.username,
     );
     const live = (await listAll(
       ctx,
-      this.key,
+      this,
       `/repos/${ctx.repo}/collaborators?affiliation=direct`,
     )) as LiveCollaborator[];
     const liveByLogin = new Map(live.map((c) => [c.login.toLowerCase(), c]));
@@ -58,7 +61,7 @@ export const collaboratorsSection: Section = {
         const { username: _u, ...body } = collaborator;
         await call(
           ctx,
-          this.key,
+          this,
           "PUT",
           `/repos/${ctx.repo}/collaborators/${encodeURIComponent(collaborator.username)}`,
           { ...body, permission }, // future sibling keys pass through
@@ -81,7 +84,7 @@ export const collaboratorsSection: Section = {
       } else {
         await call(
           ctx,
-          this.key,
+          this,
           "DELETE",
           `/repos/${ctx.repo}/collaborators/${encodeURIComponent(collaborator.login)}`,
         );

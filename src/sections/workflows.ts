@@ -4,15 +4,16 @@
  * created (workflow files are code, not settings).
  */
 
+import { z } from "zod";
 import type { WorkflowConfig } from "../schema.js";
 import {
   call,
   emptyResult,
   listAllEnveloped,
   rejectDuplicates,
-  type Section,
+  type SectionModule,
   type SectionResult,
-} from "./section.js";
+} from "./contract.js";
 
 interface LiveWorkflow {
   id: number;
@@ -21,22 +22,24 @@ interface LiveWorkflow {
   state: string;
 }
 
-export const workflowsSection: Section = {
+export const workflowsSection: SectionModule<"workflows"> = {
   key: "workflows",
+  grant: `grant "Actions" (read and write) under the PAT's Repository permissions`,
+  shape: z.array(z.looseObject({ path: z.string(), state: z.enum(["active", "disabled"]) })),
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
     const desired = desiredRaw as WorkflowConfig[];
     // Two entries naming the same file (e.g. "ci.yml" and
     // ".github/workflows/ci.yml") would fight each other on every run.
     rejectDuplicates(
-      this.key,
+      this,
       desired,
       (w) => (w.path.includes("/") ? w.path : `.github/workflows/${w.path}`),
       (w) => w.path,
     );
     const live = (await listAllEnveloped(
       ctx,
-      this.key,
+      this,
       `/repos/${ctx.repo}/actions/workflows`,
       "workflows",
     )) as LiveWorkflow[];
@@ -71,12 +74,7 @@ export const workflowsSection: Section = {
           `workflows[${workflow.path}]: declared "${workflow.state}" != live "${liveState}"${raw}; apply will ${action} the workflow`,
         );
       } else {
-        await call(
-          ctx,
-          this.key,
-          "PUT",
-          `/repos/${ctx.repo}/actions/workflows/${match.id}/${action}`,
-        );
+        await call(ctx, this, "PUT", `/repos/${ctx.repo}/actions/workflows/${match.id}/${action}`);
         result.changes.push(`${action}d workflow "${match.path}"`);
       }
     }

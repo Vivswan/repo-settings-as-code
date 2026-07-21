@@ -5,13 +5,22 @@
 
 import { subsetDiff } from "../diff.js";
 import type { PagesConfig } from "../schema.js";
-import { call, emptyResult, probeAbsent, type Section, type SectionResult } from "./section.js";
+import {
+  anyRecord,
+  call,
+  emptyResult,
+  probeAbsent,
+  type SectionModule,
+  type SectionResult,
+} from "./contract.js";
 
-export const pagesSection: Section = {
+export const pagesSection: SectionModule<"pages"> = {
   key: "pages",
+  grant: `grant "Pages" (read and write) under the PAT's Repository permissions`,
+  shape: anyRecord.nullable(),
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
-    const probe = await probeAbsent(ctx, this.key, `/repos/${ctx.repo}/pages`);
+    const probe = await probeAbsent(ctx, this, `/repos/${ctx.repo}/pages`);
     const exists = !("missing" in probe);
     const liveSite = "data" in probe ? probe.data : undefined;
 
@@ -33,7 +42,7 @@ export const pagesSection: Section = {
         );
         return result;
       }
-      await call(ctx, this.key, "DELETE", `/repos/${ctx.repo}/pages`);
+      await call(ctx, this, "DELETE", `/repos/${ctx.repo}/pages`);
       result.changes.push("disabled GitHub Pages");
       return result;
     }
@@ -72,15 +81,15 @@ export const pagesSection: Section = {
       if (payload.source !== undefined) {
         create.source = payload.source;
       }
-      await call(ctx, this.key, "POST", `/repos/${ctx.repo}/pages`, create);
+      await call(ctx, this, "POST", `/repos/${ctx.repo}/pages`, create);
       result.changes.push("enabled GitHub Pages");
       const rest = Object.keys(payload).filter((k) => !(k in create));
       if (rest.length > 0) {
-        await call(ctx, this.key, "PUT", `/repos/${ctx.repo}/pages`, payload);
+        await call(ctx, this, "PUT", `/repos/${ctx.repo}/pages`, payload);
         result.changes.push("applied remaining Pages configuration");
       }
     } else {
-      await call(ctx, this.key, "PUT", `/repos/${ctx.repo}/pages`, payload);
+      await call(ctx, this, "PUT", `/repos/${ctx.repo}/pages`, payload);
       result.changes.push("updated GitHub Pages configuration");
     }
     return result;
