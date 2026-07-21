@@ -88,6 +88,25 @@ export async function call(
 }
 
 /**
+ * Like call(), but the statuses in `tolerate` come back as { error } for
+ * the caller to interpret (e.g. a 409 that means "drift" or "in
+ * progress", not failure); every other error classifies through throwFor.
+ */
+export async function tryCall(
+  ctx: SectionContext,
+  section: SectionMeta,
+  method: string,
+  path: string,
+  opts: { payload?: unknown; tolerate: number[] },
+): Promise<{ data: unknown } | { error: ApiError }> {
+  const result = await ctx.api.tryRequest(method, path, opts.payload);
+  if ("error" in result && !opts.tolerate.includes(result.error.status)) {
+    throwFor(section, method, path, result.error);
+  }
+  return result;
+}
+
+/**
  * GET a resource whose absence is a normal state: the statuses in
  * `tolerate` (default 404) come back as { missing: true }, every other
  * error classifies through throwFor. The shared idiom behind "does this

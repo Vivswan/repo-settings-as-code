@@ -10,7 +10,7 @@ import {
   emptyResult,
   type SectionModule,
   type SectionResult,
-  throwFor,
+  tryCall,
 } from "./contract.js";
 
 export const codeScanningDefaultSetupSection: SectionModule<"code_scanning_default_setup"> = {
@@ -28,16 +28,13 @@ export const codeScanningDefaultSetupSection: SectionModule<"code_scanning_defau
       return result;
     }
 
-    // Raw tryRequest so a 409 (a configuration run is already in progress)
+    // Tolerate a 409 (a configuration run is already in progress) so it
     // gets accurate advice instead of throwFor's generic fix-the-file text.
-    const patch = await ctx.api.tryRequest("PATCH", path, desired);
+    const patch = await tryCall(ctx, this, "PATCH", path, { payload: desired, tolerate: [409] });
     if ("error" in patch) {
-      if (patch.error.status === 409) {
-        throw new Error(
-          `code_scanning_default_setup: PATCH ${path}: 409 ${patch.error.message}. A default-setup configuration run is already in progress on the repository; re-run the workflow after it finishes`,
-        );
-      }
-      throwFor(this, "PATCH", path, patch.error);
+      throw new Error(
+        `code_scanning_default_setup: PATCH ${path}: 409 ${patch.error.message}. A default-setup configuration run is already in progress on the repository; re-run the workflow after it finishes`,
+      );
     }
     const run = patch.data as { run_id?: number; run_url?: string } | null;
     if (run?.run_id !== undefined) {

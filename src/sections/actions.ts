@@ -10,9 +10,9 @@ import {
   anyRecord,
   call,
   emptyResult,
+  probeAbsent,
   type SectionModule,
   type SectionResult,
-  throwFor,
 } from "./contract.js";
 
 export const actionsSection: SectionModule<"actions"> = {
@@ -75,23 +75,16 @@ export const actionsSection: SectionModule<"actions"> = {
       if (desired.selected_actions !== undefined) {
         // This GET errors (409) when the live allowed_actions policy is not
         // "selected"; that is drift, not a failure.
-        const probe = await ctx.api.tryRequest(
-          "GET",
+        const probe = await probeAbsent(
+          ctx,
+          this,
           `/repos/${ctx.repo}/actions/permissions/selected-actions`,
+          { tolerate: [409, 404] },
         );
-        if ("error" in probe) {
-          if (probe.error.status === 409 || probe.error.status === 404) {
-            result.drift.push(
-              'actions.selected: the live allowed_actions policy is not "selected", so no selected-actions allowlist exists; apply will set the declared policy and allowlist',
-            );
-          } else {
-            throwFor(
-              this,
-              "GET",
-              `/repos/${ctx.repo}/actions/permissions/selected-actions`,
-              probe.error,
-            );
-          }
+        if ("missing" in probe) {
+          result.drift.push(
+            'actions.selected: the live allowed_actions policy is not "selected", so no selected-actions allowlist exists; apply will set the declared policy and allowlist',
+          );
         } else {
           result.drift.push(
             ...subsetDiff(desired.selected_actions, probe.data, "actions.selected"),

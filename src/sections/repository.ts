@@ -12,7 +12,7 @@ import {
   probeAbsent,
   type SectionModule,
   type SectionResult,
-  throwFor,
+  tryCall,
 } from "./contract.js";
 
 /** Topics: accept a comma-separated string or an array; lowercase, dedupe. */
@@ -141,10 +141,7 @@ export const repositorySection: SectionModule<"repository"> = {
       } else {
         // Disabling where the feature does not apply is already the
         // declared state; anything else is a real failure.
-        const off = await ctx.api.tryRequest("DELETE", path);
-        if ("error" in off && !toggle.tolerateOnDisable.includes(off.error.status)) {
-          throwFor(this, "DELETE", path, off.error);
-        }
+        await tryCall(ctx, this, "DELETE", path, { tolerate: toggle.tolerateOnDisable });
       }
       result.changes.push(`${toggle.label}: ${desired[toggle.key] ? "enabled" : "disabled"}`);
     }

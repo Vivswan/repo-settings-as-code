@@ -12,9 +12,9 @@ import {
   anyRecord,
   call,
   emptyResult,
+  probeAbsent,
   type SectionModule,
   type SectionResult,
-  throwFor,
 } from "./contract.js";
 
 const REQUIRED_PROTECTION_KEYS = [
@@ -33,11 +33,8 @@ export const branchesSection: SectionModule<"branches"> = {
     for (const branch of desiredRaw as BranchConfig[]) {
       const path = `/repos/${ctx.repo}/branches/${encodeURIComponent(branch.name)}/protection`;
       if (branch.protection === null) {
-        const probe = await ctx.api.tryRequest("GET", path);
-        if ("error" in probe && probe.error.status !== 404) {
-          throwFor(this, "GET", path, probe.error);
-        }
-        const isProtected = !("error" in probe);
+        const probe = await probeAbsent(ctx, this, path);
+        const isProtected = !("missing" in probe);
         if (ctx.check) {
           if (isProtected) {
             result.drift.push(
@@ -58,11 +55,8 @@ export const branchesSection: SectionModule<"branches"> = {
         }
       }
       if (ctx.check) {
-        const probe = await ctx.api.tryRequest("GET", path);
-        if ("error" in probe && probe.error.status !== 404) {
-          throwFor(this, "GET", path, probe.error);
-        }
-        if ("error" in probe) {
+        const probe = await probeAbsent(ctx, this, path);
+        if ("missing" in probe) {
           // Protection 404s for a missing BRANCH too. The branch probe is
           // advisory: only a definitive 404 flips the message (other errors,
           // e.g. a token without Contents read, fall back to the plain
