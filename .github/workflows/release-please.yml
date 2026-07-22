@@ -13,7 +13,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: googleapis/release-please-action@v5
+        id: release
         with:
           token: ${{ secrets.REPO_PLATFORM_TOKEN || github.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # Move the moving major tag (v1) to the new release, so `@v1` pins
+      # pick up every release. Retag Major is the manual repair tool.
+      - uses: actions/checkout@v7
+        if: steps.release.outputs.release_created == 'true'
+        with:
+          fetch-depth: 0
+      - name: Move the major tag
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          TAG: ${{ steps.release.outputs.tag_name }}
+          MAJOR: ${{ steps.release.outputs.major }}
+        run: |
+          git config user.name "settings-as-code-release"
+          git config user.email "settings-as-code-release@users.noreply.github.com"
+          git tag -f "v$MAJOR" "refs/tags/$TAG^{}"
+          git push --force origin "refs/tags/v$MAJOR"
+          echo "moved v$MAJOR -> $TAG"
