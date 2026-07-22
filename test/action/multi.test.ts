@@ -63,6 +63,28 @@ describe("runMulti", () => {
     expect(annotations.some((a) => a.includes("o/c: skipped - the repository has no"))).toBe(true);
   });
 
+  test("engine emissions carry the slug prefix; validation warnings stay unprefixed", async () => {
+    const api = new MockApi({
+      "GET /repos/o/a": { data: { has_wiki: true } },
+      "GET /repos/o/a/contents/.github/settings.yml": {
+        data: "repository:\n  has_wiki: false\nfrobnicate: {}\n",
+      },
+      "PATCH /repos/o/a": { error: { status: 500, message: "boom", body: "" } },
+    });
+    const { io, annotations } = captureIo();
+    const { targets } = await runMulti(
+      api,
+      cfg({ reposInput: "o/a", onlySections: new Set(["repository"]) }),
+      io,
+    );
+    expect(targets[0]?.result).toBe("failed");
+    // validateSettingsDoc runs on the plain sink, before prefixedIo wraps it.
+    const validation = annotations.find((a) => a.includes("unknown top-level section"));
+    expect(validation).toStartWith("warning: ignoring unknown top-level section(s)");
+    // The section failure is emitted by the engine through the wrapped sink.
+    expect(annotations.some((a) => a.startsWith("error: o/a: repository:"))).toBe(true);
+  });
+
   test("defaults-file merges under a central per-repo file", async () => {
     const api = new MockApi({}).allowMutations("PATCH /repos/viv/api", "PATCH /repos/octo/web");
     const { io } = captureIo();

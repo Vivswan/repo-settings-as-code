@@ -2,8 +2,8 @@
  * Per-repository orchestration: the section pipeline (active-section
  * filter, preflight barrier, section loop) extracted from run() so the
  * same engine drives one repo (legacy mode) or many (multi-repo mode).
- * All output goes through the Io sink; `label` prefixes every line in
- * multi-repo mode ("" in single-repo mode keeps output byte-identical).
+ * All output goes through the Io sink; the engine emits unprefixed lines
+ * and callers decide how (or whether) to tag them per repository.
  */
 
 import type { GithubClient } from "../github/api.js";
@@ -26,8 +26,6 @@ export interface RepoRunOptions {
   onMissingPermission: "fail" | "warn";
   requiredSections: Set<string>;
   onlySections: Set<string>;
-  /** "" in single-repo mode; "owner/name: " in multi-repo mode. */
-  label: string;
 }
 
 export type RepoResult = "applied" | "partial" | "clean" | "drift" | "failed" | "skipped";
@@ -111,7 +109,6 @@ export async function runForRepo(
     owner: owner ?? "",
     check: opts.mode === "check",
   };
-  const L = opts.label;
   const settings = opts.settings;
 
   const active = SECTIONS.filter((section) => {
@@ -159,7 +156,7 @@ export async function runForRepo(
     }
     if (denied.length > 0) {
       for (const line of denied) {
-        io.annotate("error", `${L}preflight: ${line}`);
+        io.annotate("error", `preflight: ${line}`);
       }
       return {
         repo: opts.repo,
@@ -192,14 +189,14 @@ export async function runForRepo(
       if (error instanceof PermissionDenied) {
         const required = opts.requiredSections.has(section.key);
         if (opts.onMissingPermission === "warn" && !required) {
-          io.annotate("warning", `${L}${section.key}: skipped - ${error.detail}`);
+          io.annotate("warning", `${section.key}: skipped - ${error.detail}`);
           outcomes.push({ key: section.key, status: "skipped", detail: [error.detail] });
           partial = true;
           continue;
         }
         io.annotate(
           "error",
-          `${L}${section.key}: not applied${required ? " (listed in required-sections, so this fails the run)" : ""} - ${error.detail}`,
+          `${section.key}: not applied${required ? " (listed in required-sections, so this fails the run)" : ""} - ${error.detail}`,
         );
         outcomes.push({ key: section.key, status: "failed", detail: [error.detail] });
         failed = true;
@@ -211,19 +208,19 @@ export async function runForRepo(
       const annotated = message.startsWith(`${section.key}:`)
         ? message
         : `${section.key}: ${message}`;
-      io.annotate("error", `${L}${annotated}`);
+      io.annotate("error", annotated);
       outcomes.push({ key: section.key, status: "failed", detail: [annotated] });
       failed = true;
       continue;
     }
     for (const note of result.notes) {
-      io.annotate("notice", `${L}${section.key}: ${note}`);
+      io.annotate("notice", `${section.key}: ${note}`);
     }
     if (ctx.check) {
       if (result.drift.length > 0) {
         drifted = true;
         for (const line of result.drift) {
-          io.log(`${L}drift: ${line}`);
+          io.log(`drift: ${line}`);
         }
         outcomes.push({ key: section.key, status: "drift", detail: result.drift });
       } else {
@@ -231,7 +228,7 @@ export async function runForRepo(
       }
     } else {
       for (const line of result.changes) {
-        io.log(`${L}${section.key}: ${line}`);
+        io.log(`${section.key}: ${line}`);
       }
       outcomes.push({
         key: section.key,

@@ -82,7 +82,6 @@ describe("check-mode purity", () => {
         onMissingPermission: "fail",
         requiredSections: new Set(),
         onlySections: new Set(),
-        label: "",
       },
       silentIo(),
     );

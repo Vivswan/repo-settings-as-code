@@ -90,7 +90,6 @@ export async function run(overrides?: { api?: GithubClient }): Promise<number> {
       onMissingPermission: cfg.onMissingPermission,
       requiredSections: cfg.requiredSections,
       onlySections: cfg.onlySections,
-      label: "",
     },
     io,
   );

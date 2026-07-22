@@ -14,6 +14,7 @@ import { type RepoRunResult, runForRepo, validateSettingsDoc } from "../engine/o
 import { type GithubClient, isPermissionError, RERUN_ADVICE } from "../github/api.js";
 import { getRepoFile } from "../github/repo-file.js";
 import type { Io } from "../io.js";
+import { prefixedIo } from "../io.js";
 import type { SettingsFile } from "../schema.js";
 import { DEFAULT_SETTINGS_FILE, quoteList } from "./inputs.js";
 import { parseSettingsDoc, readSettingsFile } from "./settings-read.js";
@@ -213,9 +214,8 @@ export async function runMulti(
           onMissingPermission: cfg.onMissingPermission,
           requiredSections: cfg.requiredSections,
           onlySections: cfg.onlySections,
-          label: `${target.slug}: `,
         },
-        io,
+        prefixedIo(io, `${target.slug}: `),
       );
       let note: string | undefined;
       if (run.preflightDenied.length > 0) {

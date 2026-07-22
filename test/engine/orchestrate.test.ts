@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { runForRepo, validateSettingsDoc, worstOf } from "../../src/engine/orchestrate.js";
 import type { Io } from "../../src/io.js";
+import { prefixedIo } from "../../src/io.js";
 import type { SettingsFile } from "../../src/schema.js";
 import { MockApi } from "../mock-api.js";
 
@@ -26,7 +27,6 @@ function opts(overrides: Partial<Parameters<typeof runForRepo>[1]> = {}) {
     onMissingPermission: "fail" as const,
     requiredSections: new Set<string>(),
     onlySections: new Set<string>(),
-    label: "",
     ...overrides,
   };
 }
@@ -55,12 +55,12 @@ describe("runForRepo", () => {
     expect(annotations.some((a) => a.startsWith("warning: repository: skipped"))).toBe(true);
   });
 
-  test("check mode reports drift with the label prefix", async () => {
+  test("check mode reports drift, prefixed through prefixedIo", async () => {
     const api = new MockApi({
       "GET /repos/o/r": { data: { has_wiki: true } },
     });
     const { io, logs } = captureIo();
-    const result = await runForRepo(api, opts({ mode: "check", label: "o/r: " }), io);
+    const result = await runForRepo(api, opts({ mode: "check" }), prefixedIo(io, "o/r: "));
     expect(result.result).toBe("drift");
     expect(logs[0]).toStartWith("o/r: drift: repository.has_wiki");
   });
