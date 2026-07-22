@@ -19,6 +19,13 @@ export interface ApiError {
 }
 
 /**
+ * Pinned X-GitHub-Api-Version. The single source for the header default
+ * here, the action.yml `api-version` default, and the inputs fallback; the
+ * action-yml contract test asserts the three stay equal.
+ */
+export const DEFAULT_API_VERSION = "2022-11-28";
+
+/**
  * The one capability everything downstream depends on: a verbatim request
  * that surfaces errors as values. The engine, the sections, discovery,
  * pagination, and the test mock all program against this interface, not
@@ -76,7 +83,7 @@ export class GithubApi implements GithubClient {
   constructor(
     token: string,
     private readonly baseUrl = process.env.GITHUB_API_URL ?? "https://api.github.com",
-    private readonly apiVersion = "2022-11-28",
+    private readonly apiVersion = DEFAULT_API_VERSION,
     // Test knob for e2e retry scenarios: RETRY_BASE_MS scales the plugin
     // waits so backoff can run in milliseconds. Non-finite or non-positive
     // values fall back to the production default.

@@ -1,0 +1,54 @@
+{
+  "id": 161088068,
+  "node_id": "MDExOkVudmlyb25tZW50MTYxMDg4MDY4",
+  "name": "production",
+  "url": "https://api.github.com/repos/e2e-owner/e2e-repo/environments/production",
+  "html_url": "https://github.com/e2e-owner/e2e-repo/deployments/activity_log?environments_filter=production",
+  "created_at": "2024-06-01T22:00:40Z",
+  "updated_at": "2026-07-01T22:00:40Z",
+  "protection_rules": [
+    {
+      "id": 3736,
+      "node_id": "MDQ6R2F0ZTM3MzY=",
+      "type": "wait_timer",
+      "wait_timer": 15
+    },
+    {
+      "id": 3755,
+      "node_id": "MDQ6R2F0ZTM3NTU=",
+      "type": "required_reviewers",
+      "prevent_self_review": true,
+      "reviewers": [
+        {
+          "type": "User",
+          "reviewer": {
+            "login": "e2e-maintainer",
+            "id": 101,
+            "node_id": "MDQ6VXNlcjEwMQ==",
+            "type": "User",
+            "site_admin": false
+          }
+        },
+        {
+          "type": "Team",
+          "reviewer": {
+            "id": 201,
+            "node_id": "MDQ6VGVhbTIwMQ==",
+            "name": "Reviewers",
+            "slug": "reviewers",
+            "permission": "push"
+          }
+        }
+      ]
+    },
+    {
+      "id": 3756,
+      "node_id": "MDQ6R2F0ZTM3NTY=",
+      "type": "branch_policy"
+    }
+  ],
+  "deployment_branch_policy": {
+    "protected_branches": true,
+    "custom_branch_policies": false
+  }
+}

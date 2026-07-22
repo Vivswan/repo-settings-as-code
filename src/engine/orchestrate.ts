@@ -32,6 +32,26 @@ export interface RepoRunOptions {
 
 export type RepoResult = "applied" | "partial" | "clean" | "drift" | "failed" | "skipped";
 
+/**
+ * Every RepoResult value, in the worst-first ranking worstOf() applies.
+ * The single source for the aggregate ranking and for the action.yml
+ * `result` output docs (the contract test imports this). The satisfies
+ * clause and the exhaustiveness check below keep it locked to RepoResult:
+ * a new result value that is not listed here fails to compile.
+ */
+export const REPO_RESULTS = [
+  "failed",
+  "drift",
+  "partial",
+  "skipped",
+  "applied",
+  "clean",
+] as const satisfies readonly RepoResult[];
+
+/** Compile-time lockstep: a RepoResult value missing from REPO_RESULTS fails here. */
+type MustBeNever<T extends never> = T;
+type _UnlistedResult = MustBeNever<Exclude<RepoResult, (typeof REPO_RESULTS)[number]>>;
+
 export interface RepoRunResult {
   repo: string;
   result: RepoResult;
@@ -245,8 +265,7 @@ export async function runForRepo(
 
 /** Aggregate result across targets: the worst outcome wins. */
 export function worstOf(results: Array<{ result: RepoResult }>, check: boolean): RepoResult {
-  const ranks: RepoResult[] = ["failed", "drift", "partial", "skipped", "applied", "clean"];
-  for (const rank of ranks) {
+  for (const rank of REPO_RESULTS) {
     if (results.some((r) => r.result === rank)) {
       return rank;
     }

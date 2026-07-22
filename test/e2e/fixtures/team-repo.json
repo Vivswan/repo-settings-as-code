@@ -1,0 +1,30 @@
+{
+  "id": 500100200,
+  "node_id": "R_kgDOHdPQ2A",
+  "name": "e2e-repo",
+  "full_name": "e2e-owner/e2e-repo",
+  "private": false,
+  "owner": {
+    "login": "e2e-owner",
+    "id": 900800700,
+    "node_id": "O_kgDONjE1_A",
+    "type": "Organization",
+    "site_admin": false
+  },
+  "html_url": "https://github.com/e2e-owner/e2e-repo",
+  "url": "https://api.github.com/repos/e2e-owner/e2e-repo",
+  "description": "End-to-end fixture repository for settings-as-code.",
+  "fork": false,
+  "default_branch": "main",
+  "visibility": "public",
+  "archived": false,
+  "disabled": false,
+  "permissions": {
+    "admin": false,
+    "maintain": true,
+    "push": true,
+    "triage": true,
+    "pull": true
+  },
+  "role_name": "maintain"
+}

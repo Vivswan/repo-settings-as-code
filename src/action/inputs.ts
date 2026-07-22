@@ -15,20 +15,65 @@ import {
   VISIBILITY_FILTERS,
 } from "../discovery/discover.js";
 import { SLUG_RE } from "../discovery/targets.js";
+import { DEFAULT_API_VERSION } from "../github/api.js";
 import { SECTION_KEYS } from "../schema.js";
 
-export function input(name: string): string {
+/**
+ * Default settings-file path, and the sentinel the multi-repo guard
+ * compares against: an unchanged value means the user did not override it,
+ * so combining it with repos/repos-dir is rejected. Single source for the
+ * action.yml `settings-file` default, this fallback, the override check,
+ * and multi.ts's remote-path prose.
+ */
+export const DEFAULT_SETTINGS_FILE = ".github/settings.yml";
+
+/** Default `mode`, pinned against action.yml by the contract test. */
+export const DEFAULT_MODE = "apply";
+
+/** Default `on-missing-permission`, pinned against action.yml. */
+export const DEFAULT_ON_MISSING_PERMISSION = "fail";
+
+/**
+ * Every input name parseConfig() reads, and the single source the
+ * action.yml `inputs` block is pinned against (both directions). Keep this
+ * in sync when adding or removing an input; the action-yml contract test
+ * fails loudly on drift.
+ */
+export const INPUT_NAMES = [
+  "token",
+  "repository",
+  "settings-file",
+  "mode",
+  "on-missing-permission",
+  "required-sections",
+  "sections",
+  "api-version",
+  "repos",
+  "visibility",
+  "archived",
+  "forks",
+  "exclude",
+  "topics",
+  "affiliation",
+  "repos-dir",
+  "defaults-file",
+] as const;
+
+export function input(name: (typeof INPUT_NAMES)[number]): string {
   // @actions/core reads INPUT_<NAME> (uppercased, spaces to underscores -
   // dashes survive, e.g. `settings-file` -> INPUT_SETTINGS-FILE) and trims.
   return core.getInput(name);
 }
+
+/** Read a discovery filter input, whose names are a subset of INPUT_NAMES. */
+type FilterInput = "visibility" | "archived" | "forks" | "exclude" | "topics" | "affiliation";
 
 /**
  * Read an enum-valued input against the allowed list its type derives
  * from, so the type, the check, and the error message cannot drift apart.
  */
 function readEnum<T extends string>(
-  name: string,
+  name: (typeof INPUT_NAMES)[number],
   allowed: readonly T[],
   fallback: T,
   noun: string,
@@ -82,7 +127,7 @@ export function parseConfig(): { config: RunConfig } | { error: string } {
         'cannot call the GitHub API: no token was provided. Set the "token" input on the action step (or export GITHUB_TOKEN)',
     };
   }
-  const mode = input("mode") || "apply";
+  const mode = input("mode") || DEFAULT_MODE;
   if (mode !== "apply" && mode !== "check") {
     return {
       error: `the "mode" input is "${mode}", which is not a supported mode. Set it to "apply" (mutate settings) or "check" (report drift only)`,
@@ -91,7 +136,7 @@ export function parseConfig(): { config: RunConfig } | { error: string } {
   const onMissingPermission = readEnum(
     "on-missing-permission",
     ["fail", "warn"] as const,
-    "fail",
+    DEFAULT_ON_MISSING_PERMISSION,
     "policy",
   );
   if (typeof onMissingPermission !== "string") {
@@ -117,7 +162,7 @@ export function parseConfig(): { config: RunConfig } | { error: string } {
       };
     }
   }
-  const apiVersion = input("api-version") || "2022-11-28";
+  const apiVersion = input("api-version") || DEFAULT_API_VERSION;
   const common: CommonConfig = {
     token,
     mode,
@@ -127,9 +172,16 @@ export function parseConfig(): { config: RunConfig } | { error: string } {
     apiVersion,
   };
 
-  const FILTER_INPUTS = ["visibility", "archived", "forks", "exclude", "topics", "affiliation"];
+  const FILTER_INPUTS: FilterInput[] = [
+    "visibility",
+    "archived",
+    "forks",
+    "exclude",
+    "topics",
+    "affiliation",
+  ];
   const discoveryFiltersSet = FILTER_INPUTS.filter((name) => input(name) !== "");
-  const list = (name: string): string[] =>
+  const list = (name: FilterInput): string[] =>
     input(name)
       .split(/[\n,]/)
       .map((s) => s.trim())
@@ -185,7 +237,7 @@ export function parseConfig(): { config: RunConfig } | { error: string } {
   const reposInput = input("repos");
   const reposDir = input("repos-dir");
   const defaultsFile = input("defaults-file");
-  const settingsFile = input("settings-file") || ".github/settings.yml";
+  const settingsFile = input("settings-file") || DEFAULT_SETTINGS_FILE;
 
   if (reposInput || reposDir) {
     // Multi-repo mode: the single-repo inputs make no sense here.
@@ -195,7 +247,7 @@ export function parseConfig(): { config: RunConfig } | { error: string } {
           'the "repository" input cannot be combined with "repos" or "repos-dir"; multi-repo targets come from those inputs. Remove "repository", or remove the multi-repo inputs to stay in single-repo mode',
       };
     }
-    if (settingsFile !== ".github/settings.yml") {
+    if (settingsFile !== DEFAULT_SETTINGS_FILE) {
       return {
         error:
           'the "settings-file" input cannot be combined with "repos" or "repos-dir": central targets are read from repos-dir files and remote targets from each repository\'s own .github/settings.yml. Remove the settings-file override',

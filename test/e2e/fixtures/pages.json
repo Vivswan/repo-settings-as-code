@@ -1,0 +1,21 @@
+{
+  "url": "https://api.github.com/repos/e2e-owner/e2e-repo/pages",
+  "status": "built",
+  "cname": "docs.example.com",
+  "custom_404": false,
+  "html_url": "https://e2e-owner.github.io/e2e-repo/",
+  "build_type": "workflow",
+  "source": {
+    "branch": "main",
+    "path": "/"
+  },
+  "public": true,
+  "https_certificate": {
+    "state": "approved",
+    "description": "Certificate is approved",
+    "domains": ["docs.example.com"]
+  },
+  "https_enforced": true,
+  "protected_domain_state": null,
+  "pending_domain_unverified_at": null
+}

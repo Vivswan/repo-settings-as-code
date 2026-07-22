@@ -1,0 +1,6 @@
+{
+  "id": 3438996,
+  "is_alphanumeric": true,
+  "key_prefix": "TICKET-",
+  "url_template": "https://example.com/TICKET?query=<num>"
+}

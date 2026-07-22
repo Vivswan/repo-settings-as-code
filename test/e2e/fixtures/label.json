@@ -1,0 +1,9 @@
+{
+  "id": 208045946,
+  "node_id": "MDU6TGFiZWwyMDgwNDU5NDY=",
+  "url": "https://api.github.com/repos/e2e-owner/e2e-repo/labels/bug",
+  "name": "bug",
+  "color": "d73a4a",
+  "default": true,
+  "description": "Something isn't working"
+}

@@ -15,7 +15,7 @@ import { type GithubClient, isPermissionError } from "../github/api.js";
 import { getRepoFile } from "../github/repo-file.js";
 import type { Io } from "../io.js";
 import type { SettingsFile } from "../schema.js";
-import { quoteList } from "./inputs.js";
+import { DEFAULT_SETTINGS_FILE, quoteList } from "./inputs.js";
 import { parseSettingsDoc, readSettingsFile } from "./settings-read.js";
 
 export interface MultiConfig {
@@ -156,12 +156,12 @@ export async function runMulti(
           continue;
         }
       } else {
-        sourceLabel = `${target.slug}:.github/settings.yml`;
-        const file = await getRepoFile(api, target.slug, ".github/settings.yml");
+        sourceLabel = `${target.slug}:${DEFAULT_SETTINGS_FILE}`;
+        const file = await getRepoFile(api, target.slug, DEFAULT_SETTINGS_FILE);
         if ("missing" in file) {
           io.annotate(
             "notice",
-            `${target.slug}: skipped - the repository has no .github/settings.yml on its default branch. Add the file to manage it, or remove ${target.slug} from the "repos" input`,
+            `${target.slug}: skipped - the repository has no ${DEFAULT_SETTINGS_FILE} on its default branch. Add the file to manage it, or remove ${target.slug} from the "repos" input`,
           );
           results.push({
             slug: target.slug,
@@ -170,7 +170,7 @@ export async function runMulti(
             result: "skipped",
             outcomes: [],
             skippedSections: [],
-            note: "no .github/settings.yml on the default branch",
+            note: `no ${DEFAULT_SETTINGS_FILE} on the default branch`,
           });
           continue;
         }

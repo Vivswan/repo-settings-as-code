@@ -154,9 +154,11 @@ export const branchesSection: SectionModule<"branches"> = {
  * GET /protection wraps booleans as {url, enabled} and expands actor lists
  * (restrictions, dismissal_restrictions, bypass_pull_request_allowances)
  * into user/team/app OBJECTS, while the PUT shape uses login/slug strings.
- * Unwrap both so check mode compares like with like.
+ * Unwrap both so check mode compares like with like. Exported so the e2e
+ * state tests assert their protectionFromPut transformer inverts this exact
+ * function (not a lookalike copy).
  */
-function flattenProtection(live: Record<string, unknown>): Record<string, unknown> {
+export function flattenProtection(live: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(live)) {
     out[key] = flattenValue(value);

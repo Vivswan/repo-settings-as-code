@@ -1,0 +1,24 @@
+{
+  "url": "https://api.github.com/repos/e2e-owner/e2e-repo/milestones/1",
+  "html_url": "https://github.com/e2e-owner/e2e-repo/milestones/v1.0",
+  "labels_url": "https://api.github.com/repos/e2e-owner/e2e-repo/milestones/1/labels",
+  "id": 1002003,
+  "node_id": "MDk6TWlsZXN0b25lMTAwMjAwMw==",
+  "number": 1,
+  "state": "open",
+  "title": "v1.0",
+  "description": "First stable release.",
+  "creator": {
+    "login": "e2e-maintainer",
+    "id": 101,
+    "node_id": "MDQ6VXNlcjEwMQ==",
+    "type": "User",
+    "site_admin": false
+  },
+  "open_issues": 2,
+  "closed_issues": 5,
+  "created_at": "2024-06-01T09:00:00Z",
+  "updated_at": "2026-07-01T09:00:00Z",
+  "closed_at": null,
+  "due_on": "2026-12-31T08:00:00Z"
+}

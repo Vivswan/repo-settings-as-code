@@ -76,9 +76,11 @@ export const environmentsSection: SectionModule<"environments"> = {
 /**
  * GET /environments/{name} nests wait_timer / prevent_self_review / reviewers
  * inside protection_rules[]; translate back into the PUT request shape so
- * check mode compares like with like.
+ * check mode compares like with like. Exported so the e2e state tests assert
+ * their environmentFromPut transformer inverts this exact function (not a
+ * lookalike copy).
  */
-function flattenEnvironment(live: unknown): Record<string, unknown> {
+export function flattenEnvironment(live: unknown): Record<string, unknown> {
   const raw = (live ?? {}) as Record<string, unknown>;
   const out: Record<string, unknown> = { ...raw };
   const rules = (raw.protection_rules ?? []) as Array<Record<string, unknown>>;

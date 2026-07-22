@@ -1,0 +1,19 @@
+{
+  "login": "e2e-collaborator",
+  "id": 303,
+  "node_id": "MDQ6VXNlcjMwMw==",
+  "avatar_url": "https://avatars.githubusercontent.com/u/303?v=4",
+  "gravatar_id": "",
+  "url": "https://api.github.com/users/e2e-collaborator",
+  "html_url": "https://github.com/e2e-collaborator",
+  "type": "User",
+  "site_admin": false,
+  "permissions": {
+    "admin": false,
+    "maintain": false,
+    "push": true,
+    "triage": false,
+    "pull": true
+  },
+  "role_name": "write"
+}
