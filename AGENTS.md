@@ -98,3 +98,7 @@ Settings as Code: GitHub Action applying declarative repository settings: rulese
   section key (or that maps to several sections) needs a hand-written entry in
   `SPECIAL_SECTION_FILES`, and the map's unit test fails if a section key has no
   file mapped to it.
+- The `release` job in ci.yml is deliberately NOT in all-green's `needs`:
+  it runs downstream of the gate (calling release-please.yml via
+  workflow_call), so releases and release-PR refreshes only happen on a
+  green main. Do not add it to the needs list.

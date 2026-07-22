@@ -45,4 +45,6 @@ changed, and a nightly workflow runs the full fuzz and files an issue labeled
 PR titles must be [Conventional Commits](https://www.conventionalcommits.org)
 (`feat:`, `fix:`, `feat!:`, `chore:`, ...). PRs are squash-merged, so the PR
 title becomes the commit subject and drives release versioning; CI validates
-it. The single required check is `all-green`, which gates on every other job.
+it. The single required check is `all-green`, which gates on every other CI
+job; the release job runs downstream of that gate, so releases only happen
+from a green main.

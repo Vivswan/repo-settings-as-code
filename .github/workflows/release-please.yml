@@ -1,10 +1,12 @@
 name: Release Please
 
+# Called by ci.yml's release job, downstream of the all-green gate, so
+# releases and release-PR refreshes only happen on a green main.
 on:
-  push:
-    branches: [main]
   workflow_call:
 
+# The effective token comes from the calling job; declaring the needs here
+# documents them and caps a caller that grants more.
 permissions:
   contents: write
   pull-requests: write
@@ -13,21 +15,47 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
+      # A green run releases only the head it tested: if main moved on, skip
+      # and let the newer push's own run release (after its CI passes).
+      - name: Check this run tested the current head
+        id: head
+        run: |
+          head="$(git ls-remote "https://github.com/$GITHUB_REPOSITORY" refs/heads/main | cut -f1)"
+          if [ "$head" = "$GITHUB_SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::main moved to ${head:0:7} since this run started; the newer run releases"
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: googleapis/release-please-action@v5
         id: release
+        if: steps.head.outputs.current == 'true'
         with:
           token: ${{ secrets.REPO_PLATFORM_TOKEN || github.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
+      # The guard above leaves a seconds-wide window where main can advance
+      # before release-please reads the branch. If a release slipped out for
+      # a commit this run did not test, fail loudly and (below) withhold the
+      # major tag, so `@v1` consumers never receive an untested commit.
+      - name: Assert the release matches the tested commit
+        if: steps.release.outputs.release_created == 'true' && steps.release.outputs.sha != github.sha
+        env:
+          RELEASED: ${{ steps.release.outputs.sha }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+        run: |
+          echo "::error::released $TAG at $RELEASED, but this run tested $GITHUB_SHA (main moved during the release window). Verify that commit's CI, then move the major tag with the Retag Major workflow."
+          exit 1
+
       # Move the moving major tag (v1) to the new release, so `@v1` pins
       # pick up every release. Retag Major is the manual repair tool.
       - uses: actions/checkout@v7
-        if: steps.release.outputs.release_created == 'true'
+        if: steps.release.outputs.release_created == 'true' && steps.release.outputs.sha == github.sha
         with:
           fetch-depth: 0
       - name: Move the major tag
-        if: steps.release.outputs.release_created == 'true'
+        if: steps.release.outputs.release_created == 'true' && steps.release.outputs.sha == github.sha
         env:
           TAG: ${{ steps.release.outputs.tag_name }}
           MAJOR: ${{ steps.release.outputs.major }}

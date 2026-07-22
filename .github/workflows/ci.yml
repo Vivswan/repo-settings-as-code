@@ -189,3 +189,16 @@ jobs:
               exit 1
             fi
           done
+
+  # Release from a green main only: release-please (and the major-tag move)
+  # runs downstream of all-green, so a red commit can never cut a release or
+  # refresh the release PR. Deliberately NOT in all-green's needs: it depends
+  # on the gate, it is not gated by it.
+  release:
+    needs: [all-green]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: ./.github/workflows/release-please.yml
+    secrets: inherit
