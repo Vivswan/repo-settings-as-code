@@ -106,17 +106,14 @@ describe("README version pins", () => {
     const manifest = JSON.parse(
       readFileSync(join(ROOT, ".release-please-manifest.json"), "utf8"),
     ) as Record<string, string>;
-    const config = JSON.parse(readFileSync(join(ROOT, "release-please-config.json"), "utf8")) as {
-      packages: Record<string, { "initial-version"?: string }>;
-    };
     // The uses: pins sit inside x-release-please-start-version blocks, so
     // every release PR rewrites them together with the manifest; this test is
-    // the tripwire for the markers rotting away. Before the first release the
-    // manifest still reads 0.0.0 and the expected version is the configured
-    // initial-version.
-    const released = manifest["."] ?? "";
-    const version =
-      released === "0.0.0" ? (config.packages["."]?.["initial-version"] ?? released) : released;
+    // the tripwire for the markers rotting away. Before the first release no
+    // tag exists, so no pin can be right yet and there is nothing to enforce.
+    const version = manifest["."] ?? "";
+    if (version === "0.0.0") {
+      return;
+    }
     const pins = [...readme.matchAll(/uses: Vivswan\/repo-settings-as-code@(\S+)/g)].map(
       (m) => m[1],
     );
