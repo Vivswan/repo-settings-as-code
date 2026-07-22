@@ -49,7 +49,7 @@ silently.
        runs-on: ubuntu-latest
        steps:
          - uses: actions/checkout@v7
-         - uses: Vivswan/repo-settings-as-code@v0
+         - uses: Vivswan/repo-settings-as-code@v1
            with:
              token: ${{ secrets.ADMIN_TOKEN }}
    ```
@@ -264,7 +264,7 @@ token needs the same per-section permissions (see the
 ```yaml
 # One admin repo managing the fleet
 - uses: actions/checkout@v7
-- uses: Vivswan/repo-settings-as-code@v0
+- uses: Vivswan/repo-settings-as-code@v1
   with:
     token: ${{ secrets.FLEET_TOKEN }}
     repos-dir: .github/repos
