@@ -1,0 +1,57 @@
+# Multi-repo redaction under the DEFAULT policy. private-repos is left unset, so
+# this pins that redact is the default (setting it explicitly would not prove
+# that). A public and a private target run side by side: svc-public applies its
+# label in the clear, while svc-private is private (its GET /repos probe reports
+# private), so the action masks its slug, keys it as "private repository #1", and
+# replaces every detail with the safe placeholder. svc-private carries a
+# distinctive live label the run would otherwise print as drift; that private
+# LIVE STATE must stay hidden everywhere, and the placeholder + safe status show.
+#
+# svc-private is an EXPLICIT target, but its slug still stays out of every public
+# surface: it is masked (::add-mask::), kept out of the rendered summary and
+# repos-result, and even its visibility-probe debug trace redacts the slug (the
+# probe opts into sensitive tracing, since it decides redaction before the slug
+# is registered). So both the slug and the private live label are asserted absent
+# from the summary and from stdout (after the ::add-mask:: lines are stripped).
+name: multi-private-redact-default
+settings: {}
+inputs:
+  mode: apply
+repos:
+  e2e-owner/svc-public:
+    settings:
+      labels:
+        - name: managed
+          color: "00ff00"
+    expect:
+      result: applied
+  e2e-owner/svc-private:
+    settings:
+      labels:
+        - name: managed
+          color: "00ff00"
+    live_state:
+      repo:
+        private: true
+        visibility: private
+      labels:
+        - name: LEAKME-secret-label
+          color: "abcdef"
+token_permissions:
+  issues: write
+  contents: read
+expect:
+  exit_code: 0
+  result: applied
+  repos_result:
+    e2e-owner/svc-public: applied
+    "private repository #1": applied
+  summary_contains:
+    - "private repository #1"
+    - "hidden (private repository)"
+  summary_lacks:
+    - "svc-private"
+    - "LEAKME-secret-label"
+  stdout_lacks:
+    - "svc-private"
+    - "LEAKME-secret-label"

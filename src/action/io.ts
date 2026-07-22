@@ -26,4 +26,8 @@ export function setOutput(name: (typeof OUTPUT_NAMES)[number], value: string): v
 }
 
 /** The production Io sink: annotations via the runner, logs to stdout. */
-export const actionsIo: Io = { annotate, log: (line) => console.log(line) };
+export const actionsIo: Io = {
+  annotate,
+  log: (line) => console.log(line),
+  mask: (value) => core.setSecret(value),
+};

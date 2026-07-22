@@ -60,7 +60,7 @@ describe("README example settings.yml blocks", () => {
     }
     return blocks;
   }
-  const silentIo: Io = { annotate: () => {}, log: () => {} };
+  const silentIo: Io = { annotate: () => {}, log: () => {}, mask: () => {} };
 
   test("every settings.yml example validates and its repository keys are known", () => {
     // The example block parses to a settings document (other yaml blocks are

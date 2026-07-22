@@ -11,6 +11,8 @@ export class PermissionDenied extends Error {
   constructor(
     readonly section: string,
     readonly detail: string,
+    /** The HTTP status that raised the denial, for the redacted view's safe code. */
+    readonly status?: number,
   ) {
     super(`${section}: ${detail}`);
   }
@@ -516,6 +518,7 @@ export function throwFor(
     throw new PermissionDenied(
       section.key,
       `the token was denied ${cause}${alsoMissing}. To fix, ${section.grant}`,
+      error.status,
     );
   }
   if (error.status >= 500) {

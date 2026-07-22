@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
+  checkLeaks,
   forbiddenPresent,
   isSubsequence,
   parseGithubOutput,
   parseSummaryOutcomes,
+  stripDebugLines,
+  stripMaskLines,
 } from "./runner.js";
 
 describe("parseGithubOutput", () => {
@@ -101,4 +104,116 @@ describe("forbiddenPresent (never matcher)", () => {
       expect(forbiddenPresent(patterns, log)).toEqual(want);
     });
   }
+});
+
+describe("stripMaskLines", () => {
+  test("drops ::add-mask:: lines and keeps everything else", () => {
+    const stdout = [
+      "::add-mask::acme/secret-repo",
+      "::error::private repository #1: failed",
+      "result: failed",
+    ].join("\n");
+    const stripped = stripMaskLines(stdout);
+    expect(stripped).not.toContain("acme/secret-repo");
+    expect(stripped).toContain("private repository #1: failed");
+    expect(stripped).toContain("result: failed");
+  });
+
+  test("a slug outside a mask directive survives (so a real leak is caught)", () => {
+    // The mask directive is the ONLY line allowed to carry the raw slug; a slug
+    // anywhere else must remain after stripping so checkLeaks can flag it.
+    const stdout = ["::add-mask::acme/secret-repo", "::debug::acme/secret-repo leaked here"].join(
+      "\n",
+    );
+    expect(stripMaskLines(stdout)).toContain("acme/secret-repo leaked here");
+  });
+});
+
+describe("stripDebugLines (counterfactual rendered-surface guard)", () => {
+  test("a canary only in a ::debug:: trace does NOT survive - so it cannot satisfy the counterfactual", () => {
+    // The counterfactual must judge RENDERED output, not API traces. A canary
+    // that appears solely in a debug request-trace line is stripped, so it would
+    // NOT count as having surfaced under show - a rendered-detail suppression
+    // regression is therefore still caught.
+    const stdout = [
+      '::debug::POST /repos/o/r/labels payload: {"name":"CANARY-42"}',
+      "::debug::GET /repos/o/r/labels -> 200",
+    ].join("\n");
+    expect(stripDebugLines(stdout)).not.toContain("CANARY-42");
+  });
+
+  test("a canary in a rendered (non-debug) line survives", () => {
+    const stdout = [
+      '::debug::POST /repos/o/r/labels payload: {"name":"CANARY-42"}',
+      'o/r: labels: updated label "CANARY-42"',
+    ].join("\n");
+    const rendered = stripDebugLines(stdout);
+    expect(rendered).not.toContain("payload"); // the debug trace is gone
+    expect(rendered).toContain('updated label "CANARY-42"'); // the rendered line stays
+  });
+});
+
+describe("checkLeaks (redaction leak invariant)", () => {
+  test("no forbidden string anywhere is clean", () => {
+    const observed = {
+      summary: "| private repository #1 | remote | applied |",
+      stdout: "::add-mask::acme/secret\nresult: applied",
+      stderr: "",
+      outputs: { "repos-result": '{"private repository #1":{"result":"applied"}}' },
+    };
+    expect(checkLeaks(observed, ["acme/secret", "CANARY-1"])).toEqual([]);
+  });
+
+  test("a slug in the summary is a leak", () => {
+    const observed = {
+      summary: "| acme/secret | remote | applied |",
+      stdout: "",
+      stderr: "",
+      outputs: {},
+    };
+    expect(checkLeaks(observed, ["acme/secret"])).toEqual([
+      'leak: "acme/secret" present in the step summary',
+    ]);
+  });
+
+  test("a canary in stdout outside the mask directive is a leak", () => {
+    const observed = {
+      summary: "",
+      stdout: "::add-mask::acme/secret\n::debug::CANARY-1 slipped out",
+      stderr: "",
+      outputs: {},
+    };
+    expect(checkLeaks(observed, ["CANARY-1"])).toEqual([
+      'leak: "CANARY-1" present in stdout (after stripping ::add-mask:: lines)',
+    ]);
+  });
+
+  test("a slug on stderr is a leak (the run log captures stderr too)", () => {
+    const observed = {
+      summary: "",
+      stdout: "",
+      stderr: "::add-mask::acme/secret\nTrace: request to acme/secret failed",
+      outputs: {},
+    };
+    expect(checkLeaks(observed, ["acme/secret"])).toEqual([
+      'leak: "acme/secret" present in stderr (after stripping ::add-mask:: lines)',
+    ]);
+  });
+
+  test("the mask directive itself is not a leak", () => {
+    const observed = { summary: "", stdout: "::add-mask::acme/secret", stderr: "", outputs: {} };
+    expect(checkLeaks(observed, ["acme/secret"])).toEqual([]);
+  });
+
+  test("a slug in an output value is a leak", () => {
+    const observed = {
+      summary: "",
+      stdout: "",
+      stderr: "",
+      outputs: { "repos-result": '{"acme/secret":{"result":"applied"}}' },
+    };
+    expect(checkLeaks(observed, ["acme/secret"])).toEqual([
+      'leak: "acme/secret" present in the "repos-result" output',
+    ]);
+  });
 });

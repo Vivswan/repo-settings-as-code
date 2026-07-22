@@ -335,15 +335,176 @@ describe("denial barrier", () => {
   test("a denied write AFTER a denied read in the same section IS a violation (fail policy)", async () => {
     // Under fail, preflight issues the section's read first. When the read grade
     // is none the read is denied (fatal) and recorded; the apply-pass write then
-    // proves broken sequencing. Simulate preflight's read explicitly.
+    // proves broken sequencing. Simulate preflight's read explicitly. labels is
+    // used (not repository) so this stays independent of the probe exemption:
+    // only the FIRST repository.get is exempt, but labels.list always arms.
     const h = await start(
       scenario({
         inputs: { on_missing_permission: "fail" },
-        token_permissions: { administration: "none" },
+        token_permissions: { issues: "none" },
       }),
     );
-    await call(h, "GET", `/repos/${OWNER}/${REPO}`); // repository.get denied, fatal
+    await call(h, "GET", labelsPath); // labels.list denied, fatal
+    await call(h, "POST", labelsPath, { body: { name: "x" } });
+    expect(h.violations.some((v) => v.includes("should have aborted"))).toBe(true);
+  });
+
+  test("the visibility probe (expected, first repository.get) does NOT arm the barrier", async () => {
+    // In a redact multi-repo run, an EXPLICIT target's first repository.get is
+    // the visibility probe (issued before the target loop). A denied probe must
+    // NOT arm: a repository PATCH after it is the section's own legitimate
+    // write-then-403, not a sequencing bug.
+    const target = "e2e-owner/svc-probe";
+    const h = await start(
+      scenario({
+        inputs: { on_missing_permission: "fail", private_repos: "redact" },
+        repos: {
+          [target]: {
+            settings: { repository: { has_issues: true } },
+            permissions: { administration: "none" },
+          },
+        },
+      }),
+    );
+    await call(h, "GET", `/repos/${target}`); // probe (expected), exempt
+    await call(h, "PATCH", `/repos/${target}`, { body: { description: "x" } });
+    expect(h.violations).toHaveLength(0);
+  });
+
+  test("a LATER denied repository.get (the section's own read) DOES arm the barrier", async () => {
+    // The exemption is probe-only: once the probe has been served, a subsequent
+    // denied repository.get IS the repository section's check-mode read, so a
+    // write after it proves broken sequencing. First call is the probe (exempt),
+    // second is the section read (arms), and the PATCH trips it.
+    const target = "e2e-owner/svc-probe";
+    const h = await start(
+      scenario({
+        inputs: { on_missing_permission: "fail", private_repos: "redact" },
+        repos: {
+          [target]: {
+            settings: { repository: { has_issues: true } },
+            permissions: { administration: "none" },
+          },
+        },
+      }),
+    );
+    await call(h, "GET", `/repos/${target}`); // probe (expected), exempt
+    await call(h, "GET", `/repos/${target}`); // section read, arms
+    await call(h, "PATCH", `/repos/${target}`, { body: { description: "x" } });
+    expect(h.violations.some((v) => v.includes("should have aborted"))).toBe(true);
+  });
+
+  test("NO probe under private-repos: show - the first repository.get arms the barrier", async () => {
+    // show never probes, so the first repository.get IS the section's check-mode
+    // read and must arm. A blanket first-repository.get exemption would wrongly
+    // hide this denied-read-then-write regression.
+    const target = "e2e-owner/svc-show";
+    const h = await start(
+      scenario({
+        inputs: { on_missing_permission: "fail", private_repos: "show" },
+        repos: {
+          [target]: {
+            settings: { repository: { has_issues: true } },
+            permissions: { administration: "none" },
+          },
+        },
+      }),
+    );
+    await call(h, "GET", `/repos/${target}`); // section read (no probe), arms
+    await call(h, "PATCH", `/repos/${target}`, { body: { description: "x" } });
+    expect(h.violations.some((v) => v.includes("should have aborted"))).toBe(true);
+  });
+
+  test("NO probe for the admin repo (self carve-out) - the first repository.get arms", async () => {
+    // The self carve-out never probes GITHUB_REPOSITORY (e2e-owner/e2e-repo), so
+    // targeting it in a redact multi-run makes its first repository.get a section
+    // read that must arm.
+    const h = await start(
+      scenario({
+        inputs: { on_missing_permission: "fail", private_repos: "redact" },
+        repos: {
+          [`${OWNER}/${REPO}`]: {
+            settings: { repository: { has_issues: true } },
+            permissions: { administration: "none" },
+          },
+        },
+      }),
+    );
+    await call(h, "GET", `/repos/${OWNER}/${REPO}`); // section read (self, no probe), arms
     await call(h, "PATCH", `/repos/${OWNER}/${REPO}`, { body: { description: "x" } });
+    expect(h.violations.some((v) => v.includes("should have aborted"))).toBe(true);
+  });
+
+  test("NO probe for a discovery-supplied slug - the first repository.get arms", async () => {
+    // A slug whose visibility came from /user/repos discovery is never probed, so
+    // its first repository.get is the section read and must arm - even in a redact
+    // run.
+    const target = "e2e-owner/disc-x";
+    const h = await start(
+      scenario({
+        inputs: { on_missing_permission: "fail", private_repos: "redact" },
+        discovery: { pool: [{ slug: target, visibility: "private" }], inputs: {} },
+        repos: {
+          [target]: {
+            settings: { repository: { has_issues: true } },
+            permissions: { administration: "none" },
+          },
+        },
+      }),
+    );
+    await call(h, "GET", `/repos/${target}`); // section read (discovered, no probe), arms
+    await call(h, "PATCH", `/repos/${target}`, { body: { description: "x" } });
+    expect(h.violations.some((v) => v.includes("should have aborted"))).toBe(true);
+  });
+
+  test("a faulted probe retry is still the probe (exempt), not a section read", async () => {
+    // A rate-limited probe returns 403-throttle before delivering, so the slug is
+    // NOT marked seen; the retry is still the probe and stays exempt. Without the
+    // "mark seen only after the fault barrier" rule, the retry would be misread as
+    // the section read and the following PATCH would false-flag.
+    const target = "e2e-owner/svc-fault";
+    const h = await start(
+      scenario({
+        inputs: { on_missing_permission: "fail", private_repos: "redact" },
+        repos: {
+          [target]: {
+            settings: { repository: { has_issues: true } },
+            permissions: { administration: "none" },
+          },
+        },
+      }),
+      { faults: [{ key: "repository.get", kind: "rate_limit_403", times: 1 }] },
+    );
+    await call(h, "GET", `/repos/${target}`); // faulted probe (throttle), not delivered
+    await call(h, "GET", `/repos/${target}`); // probe retry, still exempt
+    await call(h, "PATCH", `/repos/${target}`, { body: { description: "x" } });
+    expect(h.violations).toHaveLength(0);
+  });
+
+  test("an ALL-faulting probe exhausts its budget; the section read then arms", async () => {
+    // If EVERY probe attempt faults, the probe never delivers and gives up after
+    // its retry budget (3 wire attempts). The exemption must expire there: the
+    // next repository.get is the section's own denied read, and a write after it
+    // MUST arm the barrier. Faulting the first 3 repository.get (the probe's whole
+    // budget) leaves the 4th - the section read - delivered and denied.
+    const target = "e2e-owner/svc-allfault";
+    const h = await start(
+      scenario({
+        inputs: { on_missing_permission: "fail", private_repos: "redact" },
+        repos: {
+          [target]: {
+            settings: { repository: { has_issues: true } },
+            permissions: { administration: "none" },
+          },
+        },
+      }),
+      { faults: [{ key: "repository.get", kind: "rate_limit_403", times: 3 }] },
+    );
+    await call(h, "GET", `/repos/${target}`); // probe attempt 1 (faulted)
+    await call(h, "GET", `/repos/${target}`); // probe attempt 2 (faulted)
+    await call(h, "GET", `/repos/${target}`); // probe attempt 3 (faulted) - budget spent
+    await call(h, "GET", `/repos/${target}`); // section read, delivered + denied, ARMS
+    await call(h, "PATCH", `/repos/${target}`, { body: { description: "x" } });
     expect(h.violations.some((v) => v.includes("should have aborted"))).toBe(true);
   });
 

@@ -124,6 +124,17 @@ inputs:
       Multi-repo mode only; fails when set without repos or repos-dir.
     required: false
     default: ""
+  private-repos:
+    description: >-
+      redact (default) or show. Under redact, private and internal targets
+      are hidden from this run's public logs, summary, and outputs: their
+      slug becomes a "private repository #N" placeholder, live values and
+      error bodies are replaced with "hidden (private repository)", and each
+      slug is registered with the runner's secret masker. A target equal to
+      GITHUB_REPOSITORY is never redacted. show reveals everything (today's
+      behavior); only use it when the run's logs are not publicly readable.
+    required: false
+    default: redact
 
 outputs:
   result:
@@ -137,7 +148,9 @@ outputs:
   repos-result:
     description: >-
       Multi-repo mode only: JSON map of owner/name to {result, source,
-      skippedSections}. Empty in single-repo mode.
+      skippedSections}. A redacted private target is keyed by its
+      "private repository #N" placeholder instead of its slug. Empty in
+      single-repo mode.
 
 runs:
   using: node24

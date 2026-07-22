@@ -17,6 +17,11 @@ export interface SectionOutcome {
   key: string;
   status: "applied" | "clean" | "drift" | "skipped" | "excluded" | "failed";
   detail: string[];
+  /**
+   * The HTTP status behind a denial, when one raised it. The redacted view
+   * surfaces this safe code (`HTTP 403`) in place of the hidden detail.
+   */
+  httpStatus?: number;
 }
 
 export interface RepoRunOptions {
@@ -190,7 +195,12 @@ export async function runForRepo(
         const required = opts.requiredSections.has(section.key);
         if (opts.onMissingPermission === "warn" && !required) {
           io.annotate("warning", `${section.key}: skipped - ${error.detail}`);
-          outcomes.push({ key: section.key, status: "skipped", detail: [error.detail] });
+          outcomes.push({
+            key: section.key,
+            status: "skipped",
+            detail: [error.detail],
+            httpStatus: error.status,
+          });
           partial = true;
           continue;
         }
@@ -198,7 +208,12 @@ export async function runForRepo(
           "error",
           `${section.key}: not applied${required ? " (listed in required-sections, so this fails the run)" : ""} - ${error.detail}`,
         );
-        outcomes.push({ key: section.key, status: "failed", detail: [error.detail] });
+        outcomes.push({
+          key: section.key,
+          status: "failed",
+          detail: [error.detail],
+          httpStatus: error.status,
+        });
         failed = true;
         continue;
       }

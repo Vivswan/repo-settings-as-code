@@ -578,6 +578,29 @@ export interface MultiRepoMeta {
   slug: string;
   /** null when this repo has no settings file (the action skips it). */
   meta: ScenarioMeta | null;
+  /** The visibility planted in this target's mock repo (drives the redaction rule). */
+  visibility: "public" | "private" | "internal";
+  /**
+   * True when this target's administration-gated visibility probe is denied
+   * (mask.administration === "none"), so the resolver reads "unknown" and
+   * redaction fails closed regardless of the planted visibility.
+   */
+  probeDenied: boolean;
+  /**
+   * True when the oracle expects this target hidden from the public view:
+   * policy is redact, the slug is not the self slug, and it is private/internal
+   * OR its probe was denied. Its repos-result key is a placeholder, and its
+   * canaries must leak into no public surface.
+   */
+  redacted: boolean;
+  /** The repos-result KEY the action emits: the placeholder when redacted, else the slug. */
+  displayKey: string;
+  /**
+   * Unique strings planted in this target's private surfaces (live label
+   * name/description, repo description, remote settings.yml). When the target
+   * is redacted, none may appear in any public surface (the leak invariant).
+   */
+  canaries: string[];
 }
 
 /** The generation facts a multi-repo scenario's oracle rollup consumes. */
@@ -585,6 +608,10 @@ export interface MultiScenarioMeta {
   repos: MultiRepoMeta[];
   mode: "apply" | "check";
   policy: "fail" | "warn";
+  /** The `private-repos` policy the run was generated under (redact or show). */
+  privateRepos: "redact" | "show";
+  /** GITHUB_REPOSITORY: a target whose slug equals it is never redacted. */
+  selfSlug: string;
   /**
    * The slug of the target that opted out of the defaults' milestones section
    * (set milestones: null), or undefined when no target opted out. Recorded so
@@ -606,6 +633,16 @@ export function genMultiScenario(rng: Rng): { scenario: Scenario; meta: MultiSce
   const mode = rng.pick(["apply", "check"] as const);
   const policy = rng.pick(["fail", "warn"] as const);
   const denialStyle: DenialStyle = rng.pick(["fine_grained", 403] as const);
+  // The private-repos policy for the run: redact (the default) or show. Under
+  // redact, private/internal targets and probe-denied targets are hidden and
+  // keyed by a placeholder; under show, nothing is redacted. Chosen randomly so
+  // the fuzzer covers both, and the oracle predicts the placeholder keys and the
+  // leak invariant from it.
+  const privateRepos = rng.pick(["redact", "show"] as const);
+  // The admin repo the runner runs as (GITHUB_REPOSITORY); a target whose slug
+  // equals it is never redacted (the self carve-out). Kept in sync with
+  // runner.ts's REPO_SLUG.
+  const selfSlug = "e2e-owner/e2e-repo";
   // The GLOBAL token mask for the run: empty here (no scenario-wide
   // token_permissions), so every resource defaults to write. The mock grades
   // teams' org-scoped endpoints against THIS mask, so each repo's oracle meta
@@ -616,12 +653,52 @@ export function genMultiScenario(rng: Rng): { scenario: Scenario; meta: MultiSce
 
   const repos: Record<string, unknown> = {};
   const repoMetas: MultiRepoMeta[] = [];
+  // Under redact, force ONE non-missing target private so the run always has a
+  // redacted target: otherwise a run where every target rolled public would give
+  // an empty forbidden set and a vacuous leak check. Pick any index != missing
+  // (count >= 2 guarantees one exists). Under show this is inert.
+  const forcedPrivateIndex =
+    privateRepos === "redact"
+      ? (missingIndex + 1 + rng.int(count - 1)) % count // any non-missing index
+      : -1;
+  // The running placeholder ordinal, incremented per redacted target in target
+  // order - the exact numbering planRedaction assigns (self and public skipped).
+  let redactedOrdinal = 0;
   for (let i = 0; i < count; i++) {
     const slug = `e2e-owner/repo-${i}`;
+    // Every target gets a random visibility; roughly half are non-public so the
+    // redaction path is exercised. One index is forced private (see above) so a
+    // redact run is never vacuous. The self slug is forced public-ish (its
+    // visibility never matters - the carve-out fires first).
+    const visibility =
+      i === forcedPrivateIndex
+        ? rng.pick(["private", "internal"] as const)
+        : rng.pick(["public", "public", "private", "internal"] as const);
     if (i === missingIndex) {
-      // No settings file: the action reads a 404 and skips the target.
-      repos[slug] = { settings: null };
-      repoMetas.push({ slug, meta: null });
+      // No settings file: the action reads a 404 and skips the target. It is
+      // still visibility-probed and can still be redacted (the placeholder key
+      // is assigned before the target loop runs).
+      const probeDenied = false;
+      const redacted =
+        privateRepos === "redact" && slug !== selfSlug && (visibility !== "public" || probeDenied);
+      if (redacted) {
+        redactedOrdinal += 1;
+      }
+      const displayKey = redacted ? `private repository #${redactedOrdinal}` : slug;
+      const repoSpec: Record<string, unknown> = { settings: null };
+      if (visibility !== "public") {
+        repoSpec.live_state = { repo: { private: true, visibility } };
+      }
+      repos[slug] = repoSpec;
+      repoMetas.push({
+        slug,
+        meta: null,
+        visibility,
+        probeDenied,
+        redacted,
+        displayKey,
+        canaries: [],
+      });
       continue;
     }
     const child = rng.fork(`repo:${i}`);
@@ -638,24 +715,91 @@ export function genMultiScenario(rng: Rng): { scenario: Scenario; meta: MultiSce
     for (const key of sections) {
       settings[key] = genSettings(child.fork(`settings:${key}`), key);
     }
-    validateAgainstPublishedSchema(settings);
     const mask: Partial<Record<MaskKey, MaskGrade>> = {};
     for (const resource of MASK_KEYS) {
       if (child.bool(0.3)) {
         mask[resource] = child.pick(["none", "read", "write"] as const);
       }
     }
+    // The forced-private target must be a REAL leak test, not sometimes-vacuous.
+    // It is fully GRANTED (every mask entry cleared to the write default): under
+    // apply + fail a single denied section read aborts the whole target at
+    // preflight and nothing - including the canary label - is ever rendered. A
+    // fully-granted target never preflight-aborts, so its canary label's name
+    // (and, in check mode, its description) always reaches the detail output that
+    // redaction must suppress. Its visibility is already private (forced above),
+    // so it stays redacted regardless. The OTHER targets keep their random masks,
+    // so denial coverage is unaffected.
+    if (i === forcedPrivateIndex) {
+      for (const resource of MASK_KEYS) {
+        delete mask[resource];
+      }
+    }
+    // A denied administration mask denies the visibility probe (GET /repos), so
+    // the resolver reads "unknown" and redaction fails closed even for a public
+    // target. Matches the redaction rule in multi.ts.
+    const probeDenied = mask.administration === "none";
+    const redacted =
+      privateRepos === "redact" && slug !== selfSlug && (visibility !== "public" || probeDenied);
+    if (redacted) {
+      redactedOrdinal += 1;
+    }
+    const displayKey = redacted ? `private repository #${redactedOrdinal}` : slug;
+
     // Seed each target's live state the same way single-repo genScenario does,
     // so a target's declared branches/workflows exist and converge instead of
     // drifting on a permanent skip note.
-    const targetLive = presenceLiveState(settings);
+    const live: LiveState = presenceLiveState(settings) ?? {};
+    if (visibility !== "public") {
+      live.repo = { ...(live.repo ?? {}), private: true, visibility };
+    }
+
+    // Plant canaries in a redacted target's private surfaces so a
+    // detail-SUPPRESSION regression (not just a slug leak) is caught. The canary
+    // is a declared label matched by a unique name; its live description DIFFERS
+    // from the declared one, so the label drifts in check mode and updates in
+    // apply mode - in both cases the label name and the differing description
+    // flow into the section's drift/change detail, which redaction must hide. A
+    // matched-by-name label keeps the outcome class the labels grade already
+    // predicts (drift/applied), so the oracle needs no special case. A third
+    // canary rides the live repo description. Under redaction none of these may
+    // reach any public surface; the leak invariant checks exactly that.
+    const canaries: string[] = [];
+    if (redacted) {
+      const nameCanary = `CANARY-${rng.seed}-${i}-name`;
+      const declaredDescCanary = `CANARY-${rng.seed}-${i}-declared`;
+      const liveDescCanary = `CANARY-${rng.seed}-${i}-live`;
+      const repoCanary = `CANARY-${rng.seed}-${i}-repo`;
+      canaries.push(nameCanary, declaredDescCanary, liveDescCanary, repoCanary);
+      const declaredLabels = Array.isArray(settings.labels) ? (settings.labels as Json[]) : [];
+      declaredLabels.push({ name: nameCanary, color: "abcdef", description: declaredDescCanary });
+      settings.labels = declaredLabels;
+      const liveLabels = Array.isArray(live.labels) ? (live.labels as Json[]) : [];
+      // Same name (so the engine matches and diffs it, not create+delete) but a
+      // DIFFERENT description, so the canary drifts into the detail line.
+      liveLabels.push({ name: nameCanary, color: "abcdef", description: liveDescCanary });
+      live.labels = liveLabels;
+      live.repo = { ...(live.repo ?? {}), description: repoCanary };
+      // The canary rides in on the labels section, so the oracle must predict it.
+      if (!sections.includes("labels")) {
+        sections.push("labels");
+      }
+    }
+    validateAgainstPublishedSchema(settings);
+
+    const hasLive = Object.keys(live).length > 0;
     repos[slug] = {
       settings,
-      ...(targetLive ? { live_state: targetLive } : {}),
+      ...(hasLive ? { live_state: live } : {}),
       ...(Object.keys(mask).length > 0 ? { permissions: mask } : {}),
     };
     repoMetas.push({
       slug,
+      visibility,
+      probeDenied,
+      redacted,
+      displayKey,
+      canaries,
       meta: {
         sections,
         mask,
@@ -721,7 +865,7 @@ export function genMultiScenario(rng: Rng): { scenario: Scenario; meta: MultiSce
     name: `fuzz-multi-${rng.seed}`,
     tiers: ["mock"],
     settings: {},
-    inputs: { mode, on_missing_permission: policy },
+    inputs: { mode, on_missing_permission: policy, private_repos: privateRepos },
     denial_style: denialStyle,
     owner_kind: "org",
     repos: repos as Scenario["repos"],
@@ -730,7 +874,14 @@ export function genMultiScenario(rng: Rng): { scenario: Scenario; meta: MultiSce
   };
   return {
     scenario,
-    meta: { repos: repoMetas, mode, policy, milestonesOptOutSlug: optedOutSlug },
+    meta: {
+      repos: repoMetas,
+      mode,
+      policy,
+      privateRepos,
+      selfSlug,
+      milestonesOptOutSlug: optedOutSlug,
+    },
   };
 }
 
@@ -750,6 +901,14 @@ export interface DiscoveryScenarioMeta {
     topics?: string;
     exclude?: string;
   };
+  /**
+   * The `private-repos` policy the discovery run uses. Discovery targets are the
+   * one surface with TRUE non-disclosure (their names come only from the private
+   * /user/repos listing, never the operator's config), so the fuzzer runs them
+   * under redact and checks that a kept private/internal repo is keyed by a
+   * placeholder and its slug leaks nowhere.
+   */
+  privateRepos: "redact" | "show";
 }
 
 /**
@@ -814,11 +973,15 @@ export function genDiscoveryScenario(rng: Rng): {
     }
   }
 
+  // Discovery runs under redact (the default and the realistic case for a
+  // fleet with private members); the iteration maps kept private/internal repos
+  // to their placeholder keys and checks their slugs leak nowhere.
+  const privateRepos = "redact" as const;
   const scenario: Scenario = {
     name: `fuzz-discovery-${rng.seed}`,
     tiers: ["mock"],
     settings: {},
-    inputs: { mode: "apply", on_missing_permission: "warn" },
+    inputs: { mode: "apply", on_missing_permission: "warn", private_repos: privateRepos },
     denial_style: "fine_grained",
     owner_kind: "org",
     discovery: { pool, inputs },
@@ -826,5 +989,5 @@ export function genDiscoveryScenario(rng: Rng): {
     token_permissions: { issues: "write", contents: "read" },
     expect: { exit_code: 0 },
   };
-  return { scenario, meta: { pool, filters } };
+  return { scenario, meta: { pool, filters, privateRepos } };
 }

@@ -17,6 +17,11 @@ import {
 import { SLUG_RE } from "../discovery/targets.js";
 import { DEFAULT_API_VERSION } from "../github/api.js";
 import { type MustBeNever, SECTION_KEYS } from "../schema.js";
+import {
+  DEFAULT_PRIVATE_REPOS,
+  PRIVATE_REPOS_POLICIES,
+  type PrivateReposPolicy,
+} from "./redact.js";
 
 /**
  * Default settings-file path, and the sentinel the multi-repo guard
@@ -57,6 +62,7 @@ export const INPUT_NAMES = [
   "affiliation",
   "repos-dir",
   "defaults-file",
+  "private-repos",
 ] as const;
 
 export function input(name: (typeof INPUT_NAMES)[number]): string {
@@ -120,6 +126,14 @@ export interface CommonConfig {
   requiredSections: Set<string>;
   onlySections: Set<string>;
   apiVersion: string;
+  /** Whether to hide private/internal targets from the public view. */
+  privateRepos: PrivateReposPolicy;
+  /**
+   * The workflow's own repository (GITHUB_REPOSITORY), read once here so the
+   * run flows stay env-free. A target equal to this slug is never redacted:
+   * a repository operating on itself leaks nothing.
+   */
+  selfSlug: string;
 }
 
 /** Everything run() needs, already validated; `kind` picks the mode. */
@@ -183,6 +197,15 @@ export function parseConfig(): { config: RunConfig } | { error: string } {
     }
   }
   const apiVersion = input("api-version") || DEFAULT_API_VERSION;
+  const privateRepos = readEnum(
+    "private-repos",
+    PRIVATE_REPOS_POLICIES,
+    DEFAULT_PRIVATE_REPOS,
+    "private-repository policy",
+  );
+  if (typeof privateRepos !== "string") {
+    return { error: privateRepos.error };
+  }
   const common: CommonConfig = {
     token,
     mode,
@@ -190,6 +213,8 @@ export function parseConfig(): { config: RunConfig } | { error: string } {
     requiredSections,
     onlySections,
     apiVersion,
+    privateRepos,
+    selfSlug: process.env.GITHUB_REPOSITORY ?? "",
   };
 
   const discoveryFiltersSet = FILTER_INPUTS.filter((name) => input(name) !== "");

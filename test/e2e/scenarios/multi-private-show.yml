@@ -1,0 +1,53 @@
+# The opt-out: private-repos: show turns redaction off entirely, so the same
+# public+private fleet renders byte-identically to the pre-redaction behavior.
+# The private target's slug and its live label appear in the summary and
+# repos-result exactly as a public target would, and no "private repository #N"
+# placeholder or redacted note is emitted. This pins that show is a true no-op:
+# the operator explicitly accepts full disclosure.
+name: multi-private-show
+settings: {}
+inputs:
+  mode: apply
+  private_repos: show
+repos:
+  e2e-owner/svc-public:
+    settings:
+      labels:
+        - name: managed
+          color: "00ff00"
+    expect:
+      result: applied
+  e2e-owner/svc-private:
+    settings:
+      labels:
+        - name: managed
+          color: "00ff00"
+    live_state:
+      repo:
+        private: true
+        visibility: private
+      labels:
+        - name: shown-secret-label
+          color: "abcdef"
+    expect:
+      result: applied
+token_permissions:
+  issues: write
+  contents: read
+expect:
+  exit_code: 0
+  result: applied
+  repos_result:
+    e2e-owner/svc-public: applied
+    e2e-owner/svc-private: applied
+  summary_contains:
+    - "e2e-owner/svc-private"
+    # Positive proof that show suppresses nothing: the private target's live
+    # label surfaces in the detail as a deleted-undeclared line, in the clear. A
+    # detail-suppression regression under show would drop this and fail here.
+    - 'DELETED undeclared label "shown-secret-label"'
+  stdout_contains:
+    - 'e2e-owner/svc-private: labels: DELETED undeclared label "shown-secret-label"'
+  summary_lacks:
+    - "private repository #"
+    - "hidden (private repository)"

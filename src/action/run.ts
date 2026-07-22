@@ -17,12 +17,14 @@
  */
 
 import { runForRepo, validateSettingsDoc, worstOf } from "../engine/orchestrate.js";
-import { GithubApi, type GithubClient } from "../github/api.js";
+import { GithubApi, type GithubClient, registerRedactedSlug } from "../github/api.js";
+import { createVisibilityResolver } from "../github/repo-visibility.js";
 import { parseConfig } from "./inputs.js";
 import { actionsIo, annotate, setOutput } from "./io.js";
-import { runMulti } from "./multi.js";
+import { runMulti, toPublicView } from "./multi.js";
+import { capturingIo, REDACTED_NOTE } from "./redact.js";
 import { readSettingsFile } from "./settings-read.js";
-import { writeMultiSummary, writeSummary } from "./summary.js";
+import { writeMultiSummary, writeRedactedSummary, writeSummary } from "./summary.js";
 
 /** Execute the action; returns the process exit code. */
 export async function run(overrides?: { api?: GithubClient }): Promise<number> {
@@ -45,30 +47,34 @@ export async function run(overrides?: { api?: GithubClient }): Promise<number> {
     if (fatal) {
       return fail(fatal);
     }
-    writeMultiSummary(targets, cfg.mode);
+    // The public view strips private detail and keys by the display label,
+    // so nothing written past this point can carry a redacted slug.
+    const views = targets.map(toPublicView);
+    writeMultiSummary(views, cfg.mode);
     setOutput(
       "repos-result",
       JSON.stringify(
         Object.fromEntries(
-          targets.map((t) => [
-            t.slug,
-            { result: t.result, source: t.source, skippedSections: t.skippedSections },
+          views.map((v) => [
+            v.display,
+            { result: v.result, source: v.source, skippedSections: v.skippedSections },
           ]),
         ),
       ),
     );
-    setOutput(
-      "skipped-sections",
-      [...new Set(targets.flatMap((t) => t.skippedSections))].join(","),
-    );
-    const overall = worstOf(targets, cfg.mode === "check");
+    setOutput("skipped-sections", [...new Set(views.flatMap((v) => v.skippedSections))].join(","));
+    const overall = worstOf(views, cfg.mode === "check");
     setOutput("result", overall);
     console.log(`result: ${overall}`);
     // The exit code follows the same worst-of ranking the output reports.
     return overall === "failed" || (cfg.mode === "check" && overall === "drift") ? 1 : 0;
   }
 
-  // Single-repo mode (unchanged legacy behavior).
+  // Single-repo mode. The settings file is local and operator-authored, so
+  // read/parse/validate errors name only the local path and never redact.
+  // Only the engine's live-value output and the fail/preflight annotations
+  // can carry the private target's state, so those are redacted when the
+  // target is a different, non-public repository.
   const read = readSettingsFile(cfg.settingsFile);
   if ("error" in read) {
     return fail(
@@ -81,6 +87,17 @@ export async function run(overrides?: { api?: GithubClient }): Promise<number> {
     return fail(invalid);
   }
 
+  const isSelf = cfg.repo.toLowerCase() === cfg.selfSlug.toLowerCase();
+  let redacted = false;
+  if (cfg.privateRepos === "redact" && !isSelf) {
+    const visibility = await createVisibilityResolver(api)(cfg.repo);
+    redacted = visibility !== "public";
+    if (redacted) {
+      io.mask(cfg.repo);
+      registerRedactedSlug(cfg.repo);
+    }
+  }
+
   const result = await runForRepo(
     api,
     {
@@ -91,18 +108,27 @@ export async function run(overrides?: { api?: GithubClient }): Promise<number> {
       requiredSections: cfg.requiredSections,
       onlySections: cfg.onlySections,
     },
-    io,
+    redacted ? capturingIo(io).io : io,
   );
   if (result.preflightDenied.length > 0) {
     return fail(
-      `preflight failed: the token cannot access ${result.preflightDenied.length} section(s), so nothing was applied. Grant the permissions named above, or set on-missing-permission: warn to skip those sections`,
+      redacted
+        ? `preflight failed. ${REDACTED_NOTE}`
+        : `preflight failed: the token cannot access ${result.preflightDenied.length} section(s), so nothing was applied. Grant the permissions named above, or set on-missing-permission: warn to skip those sections`,
     );
   }
 
-  writeSummary(result.outcomes, cfg.mode);
+  if (redacted) {
+    writeRedactedSummary(result.outcomes, cfg.mode, result.result);
+  } else {
+    writeSummary(result.outcomes, cfg.mode);
+  }
   setOutput("skipped-sections", result.skippedSections.join(","));
 
   if (result.result === "failed") {
+    if (redacted) {
+      annotate("error", `failed. ${REDACTED_NOTE}`);
+    }
     setOutput("result", "failed");
     return 1;
   }

@@ -7,11 +7,19 @@
 export interface Io {
   annotate(level: "notice" | "warning" | "error", message: string): void;
   log(line: string): void;
+  /**
+   * Register a value the runner must mask (`***`) wherever it appears in
+   * later log output. Redaction registers every private slug here as defense
+   * in depth. Required, not optional, so a missing implementation cannot
+   * silently no-op in production.
+   */
+  mask(value: string): void;
 }
 
 /**
  * Wrap an Io so every annotation and log line is prefixed with `prefix`.
- * An empty prefix returns the sink unchanged.
+ * An empty prefix returns the sink unchanged. `mask` passes through
+ * unprefixed: it registers a raw value, not a rendered line.
  */
 export function prefixedIo(io: Io, prefix: string): Io {
   if (prefix === "") {
@@ -20,5 +28,6 @@ export function prefixedIo(io: Io, prefix: string): Io {
   return {
     annotate: (level, message) => io.annotate(level, `${prefix}${message}`),
     log: (line) => io.log(`${prefix}${line}`),
+    mask: (value) => io.mask(value),
   };
 }

@@ -68,6 +68,7 @@ describe("run in multi-repo mode (env glue)", () => {
     "GITHUB_OUTPUT",
     "GITHUB_STEP_SUMMARY",
     "GITHUB_REPOSITORY",
+    "INPUT_PRIVATE-REPOS",
   ];
   const saved = new Map(ENV_KEYS.map((k) => [k, process.env[k]]));
 
@@ -91,7 +92,7 @@ describe("run in multi-repo mode (env glue)", () => {
     await Bun.write(outputFile, "");
     process.env.GITHUB_OUTPUT = outputFile;
     const api = new MockApi({
-      "GET /repos/o/a": { data: { has_wiki: false } },
+      "GET /repos/o/a": { data: { has_wiki: false, private: false } },
       "GET /repos/o/a/contents/.github/settings.yml": {
         data: "repository:\n  has_wiki: false\n",
       },
@@ -171,9 +172,12 @@ describe("run in multi-repo mode (env glue)", () => {
     process.env.INPUT_FORKS = "exclude";
     const api = new MockApi({
       "GET /user/repos?affiliation=owner&per_page=100&page=1": {
-        data: [{ full_name: "o/x" }, { full_name: "o/y", fork: true }],
+        data: [
+          { full_name: "o/x", private: false },
+          { full_name: "o/y", fork: true, private: false },
+        ],
       },
-      "GET /repos/o/x": { data: { has_wiki: false } },
+      "GET /repos/o/x": { data: { has_wiki: false, private: false } },
       "GET /repos/o/x/contents/.github/settings.yml": {
         data: "repository:\n  has_wiki: false\n",
       },
@@ -186,7 +190,7 @@ describe("run in multi-repo mode (env glue)", () => {
     setDiscoveryEnv();
     process.env.INPUT_REPOS = "o/a";
     const drifted = new MockApi({
-      "GET /repos/o/a": { data: { has_wiki: true } },
+      "GET /repos/o/a": { data: { has_wiki: true, private: false } },
       "GET /repos/o/a/contents/.github/settings.yml": {
         data: "repository:\n  has_wiki: false\n",
       },
@@ -218,7 +222,7 @@ describe("run in multi-repo mode (env glue)", () => {
     await Bun.write(summaryFile, "");
     process.env.GITHUB_STEP_SUMMARY = summaryFile;
     const api = new MockApi({
-      "GET /repos/o/a": { data: { description: "live | desc" } },
+      "GET /repos/o/a": { data: { description: "live | desc", private: false } },
       "GET /repos/o/a/contents/.github/settings.yml": {
         data: 'repository:\n  description: "want | desc"\n',
       },
@@ -227,5 +231,89 @@ describe("run in multi-repo mode (env glue)", () => {
     const summary = await Bun.file(summaryFile).text();
     expect(summary).toContain(":warning: drift");
     expect(summary).toContain("want \\| desc");
+  });
+
+  test("redact default: repos-result and summary key a private target by its placeholder", async () => {
+    setDiscoveryEnv();
+    process.env.INPUT_REPOS = "o/priv";
+    process.env["INPUT_PRIVATE-REPOS"] = "redact";
+    process.env.INPUT_MODE = "check";
+    const outputFile = `${process.env.TMPDIR ?? "/tmp"}/sac-test-redact-out-${process.pid}.txt`;
+    const summaryFile = `${process.env.TMPDIR ?? "/tmp"}/sac-test-redact-sum-${process.pid}.md`;
+    await Bun.write(outputFile, "");
+    await Bun.write(summaryFile, "");
+    process.env.GITHUB_OUTPUT = outputFile;
+    process.env.GITHUB_STEP_SUMMARY = summaryFile;
+    const api = new MockApi({
+      "GET /repos/o/priv": { data: { description: "SECRET-live", private: true } },
+      "GET /repos/o/priv/contents/.github/settings.yml": {
+        data: 'repository:\n  description: "SECRET-want"\n',
+      },
+    });
+    expect(await run({ api: api })).toBe(1);
+    const output = await Bun.file(outputFile).text();
+    const summary = await Bun.file(summaryFile).text();
+    // neither the output nor the summary carries the private slug or values
+    for (const text of [output, summary]) {
+      expect(text).not.toContain("o/priv");
+      expect(text).not.toContain("SECRET-live");
+      expect(text).not.toContain("SECRET-want");
+    }
+    expect(output).toContain('"private repository #1":{"result":"drift"');
+    expect(summary).toContain("private repository #1");
+    expect(summary).toContain("hidden (private repository)");
+  });
+
+  test("redact single-repo cross-repo target: generic summary, no slug or live values", async () => {
+    setDiscoveryEnv();
+    delete process.env.INPUT_REPOS;
+    process.env.INPUT_REPOSITORY = "o/priv";
+    process.env.GITHUB_REPOSITORY = "admin/repo";
+    process.env["INPUT_SETTINGS-FILE"] = "test/fixtures/single.yml";
+    process.env["INPUT_PRIVATE-REPOS"] = "redact";
+    process.env.INPUT_MODE = "check";
+    const summaryFile = `${process.env.TMPDIR ?? "/tmp"}/sac-test-single-redact-${process.pid}.md`;
+    await Bun.write(summaryFile, "");
+    process.env.GITHUB_STEP_SUMMARY = summaryFile;
+    // has_wiki drifts; the live value is a boolean but the slug must not leak.
+    const api = new MockApi({
+      "GET /repos/o/priv": { data: { has_wiki: true, private: true } },
+    });
+    expect(await run({ api: api })).toBe(1);
+    const summary = await Bun.file(summaryFile).text();
+    expect(summary).not.toContain("o/priv");
+    expect(summary).toContain("details hidden");
+    // Finding F: the redacted single-repo summary renders the SAME per-section
+    // table the multi path does - the section key and its status are visible
+    // (the policy keeps statuses everywhere), the detail cell is hidden, and
+    // the live drift value never appears.
+    expect(summary).toContain("| Section | Status | Detail |");
+    expect(summary).toContain("repository");
+    expect(summary).toContain(":warning: drift");
+    expect(summary).toContain("hidden (private repository)");
+    // the live value that drifted must not leak
+    expect(summary).not.toContain("has_wiki");
+  });
+
+  test("self-target single-repo run is never redacted (carve-out)", async () => {
+    setDiscoveryEnv();
+    delete process.env.INPUT_REPOS;
+    process.env.INPUT_REPOSITORY = "o/self";
+    process.env.GITHUB_REPOSITORY = "o/self";
+    process.env["INPUT_SETTINGS-FILE"] = "test/fixtures/single.yml";
+    process.env["INPUT_PRIVATE-REPOS"] = "redact";
+    process.env.INPUT_MODE = "check";
+    const summaryFile = `${process.env.TMPDIR ?? "/tmp"}/sac-test-self-${process.pid}.md`;
+    await Bun.write(summaryFile, "");
+    process.env.GITHUB_STEP_SUMMARY = summaryFile;
+    const api = new MockApi({ "GET /repos/o/self": { data: { has_wiki: false, private: true } } });
+    expect(await run({ api: api })).toBe(0);
+    const summary = await Bun.file(summaryFile).text();
+    // full detail: the section table renders normally, no redaction note
+    expect(summary).not.toContain("details hidden");
+    expect(summary).toContain("repository");
+    // and no visibility probe: the self carve-out skips it (only the engine GET)
+    const gets = api.calls.filter((c) => c.method === "GET" && c.path === "/repos/o/self");
+    expect(gets).toHaveLength(1);
   });
 });

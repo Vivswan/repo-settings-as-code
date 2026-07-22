@@ -1,0 +1,45 @@
+# Redaction hides private DRIFT content in check mode. svc-drift is private and
+# runs in check mode. It declares one label that already matches live, plus its
+# live state carries an UNDECLARED label named with a sentinel. The labels
+# section deletes undeclared labels, so check mode reports drift (it would remove
+# the sentinel label). Redaction hides the sentinel everywhere: the drift detail
+# renders as "hidden (private repository)", the run still reports drift for the
+# placeholder, and check-mode drift exits 1 - but the sentinel string leaks into
+# no public surface.
+name: multi-private-drift-redacted
+settings: {}
+inputs:
+  mode: check
+  private_repos: redact
+repos:
+  e2e-owner/svc-drift:
+    settings:
+      labels:
+        - name: declared
+          color: "00ff00"
+    live_state:
+      repo:
+        private: true
+        visibility: private
+      labels:
+        - name: declared
+          color: "00ff00"
+        - name: DRIFTCANARY-undeclared-label
+          color: "abcdef"
+token_permissions:
+  issues: write
+  contents: read
+expect:
+  exit_code: 1
+  result: drift
+  repos_result:
+    "private repository #1": drift
+  summary_contains:
+    - "private repository #1"
+    - "hidden (private repository)"
+  summary_lacks:
+    - "svc-drift"
+    - "DRIFTCANARY-undeclared-label"
+  stdout_lacks:
+    - "svc-drift"
+    - "DRIFTCANARY-undeclared-label"

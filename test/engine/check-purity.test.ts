@@ -67,7 +67,7 @@ const ROUTES = {
 };
 
 function silentIo(): Io {
-  return { annotate: () => {}, log: () => {} };
+  return { annotate: () => {}, log: () => {}, mask: () => {} };
 }
 
 describe("check-mode purity", () => {

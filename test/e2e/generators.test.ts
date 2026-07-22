@@ -15,7 +15,7 @@ import { Rng } from "./prng.js";
 import { parseScenario } from "./schema.js";
 
 /** A no-op Io so validateSettingsDoc can run without @actions/core. */
-const silentIo: Io = { annotate() {}, log() {} };
+const silentIo: Io = { annotate() {}, log() {}, mask() {} };
 
 describe("three-way drift detection", () => {
   test("every generated section doc passes schema, validateSettingsDoc, and its zod shape", () => {
@@ -218,5 +218,115 @@ describe("genMultiScenario", () => {
       }
     }
     expect(targetOptOut).toBeGreaterThan(0);
+  });
+
+  test("the redaction flag follows the mechanical rule per target", () => {
+    // redacted iff policy=redact AND slug != selfSlug AND (private/internal OR
+    // probe-denied). Re-derive it independently from the recorded facts and
+    // require it matches what the generator stamped on each target.
+    let sawRedacted = false;
+    let sawShown = false;
+    for (let i = 0; i < 200; i++) {
+      const { scenario, meta } = genMultiScenario(new Rng(i));
+      const redact = meta.privateRepos === "redact";
+      if (redact) {
+        sawRedacted = true;
+      } else {
+        sawShown = true;
+      }
+      for (const repo of meta.repos) {
+        const expected =
+          redact &&
+          repo.slug !== meta.selfSlug &&
+          (repo.visibility !== "public" || repo.probeDenied);
+        expect(repo.redacted).toBe(expected);
+      }
+      // The action input echoes the policy the meta records.
+      expect(scenario.inputs?.private_repos).toBe(meta.privateRepos);
+    }
+    // Both policies are exercised across the seed range.
+    expect(sawRedacted).toBe(true);
+    expect(sawShown).toBe(true);
+  });
+
+  test("a redact run always has at least one redacted target (non-vacuous leak check)", () => {
+    // The generator forces one non-missing target private under redact, so the
+    // forbidden set is never empty and the leak invariant is never vacuous.
+    for (let i = 0; i < 300; i++) {
+      const { meta } = genMultiScenario(new Rng(i));
+      if (meta.privateRepos !== "redact") {
+        continue;
+      }
+      expect(meta.repos.some((r) => r.redacted)).toBe(true);
+    }
+  });
+
+  test("the forced-private target is fully granted so its canary provably flows", () => {
+    // Under apply + fail a single denied section read preflight-aborts the whole
+    // target and renders nothing, so the forced-private leak target clears its
+    // mask (every resource back to the write default). This guarantees the canary
+    // label's name reaches the detail output the counterfactual relies on. Other
+    // private targets keep random masks, so at LEAST one redacted target must be
+    // fully granted (the forced one).
+    for (let i = 0; i < 300; i++) {
+      const { scenario, meta } = genMultiScenario(new Rng(i));
+      if (meta.privateRepos !== "redact") {
+        continue;
+      }
+      const fullyGrantedRedacted = meta.repos.some((r) => {
+        if (!r.redacted || r.canaries.length === 0) {
+          return false;
+        }
+        const spec = scenario.repos?.[r.slug] as { permissions?: Record<string, string> };
+        return Object.keys(spec.permissions ?? {}).length === 0;
+      });
+      expect(fullyGrantedRedacted).toBe(true);
+    }
+  });
+
+  test("redacted targets carry unique canaries planted into their settings and live state", () => {
+    let sawCanary = false;
+    for (let i = 0; i < 200; i++) {
+      const { scenario, meta } = genMultiScenario(new Rng(i));
+      for (const repo of meta.repos) {
+        if (!repo.redacted) {
+          // A shown target plants no canaries.
+          expect(repo.canaries).toEqual([]);
+          continue;
+        }
+        if (repo.canaries.length === 0) {
+          // A redacted missing-settings target has no surfaces to plant into.
+          expect(repo.meta).toBeNull();
+          continue;
+        }
+        sawCanary = true;
+        const spec = scenario.repos?.[repo.slug] as {
+          settings: Record<string, unknown> | null;
+          live_state?: {
+            labels?: Array<{ name?: string; description?: string }>;
+            repo?: { description?: string };
+          };
+        };
+        const nameCanary = repo.canaries.find((c) => c.endsWith("-name"));
+        const declaredDescCanary = repo.canaries.find((c) => c.endsWith("-declared"));
+        const liveDescCanary = repo.canaries.find((c) => c.endsWith("-live"));
+        const repoCanary = repo.canaries.find((c) => c.endsWith("-repo"));
+        // The canary label is declared and mirrored in live by NAME, but with a
+        // DIFFERENT description, so it drifts (check) / updates (apply) - the name
+        // and description flow into the detail a suppression regression would leak.
+        const declared = spec.settings?.labels as
+          | Array<{ name?: string; description?: string }>
+          | undefined;
+        const declaredCanary = declared?.find((l) => l.name === nameCanary);
+        const liveCanary = spec.live_state?.labels?.find((l) => l.name === nameCanary);
+        expect(declaredCanary?.description).toBe(declaredDescCanary);
+        expect(liveCanary?.description).toBe(liveDescCanary);
+        expect(declaredDescCanary).not.toBe(liveDescCanary); // guarantees drift
+        expect(spec.live_state?.repo?.description).toBe(repoCanary);
+        // The labels section must be predicted so the oracle expects the canary.
+        expect(repo.meta?.sections).toContain("labels");
+      }
+    }
+    expect(sawCanary).toBe(true);
   });
 });

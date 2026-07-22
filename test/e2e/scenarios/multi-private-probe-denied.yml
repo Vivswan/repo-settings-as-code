@@ -1,0 +1,42 @@
+# Fail-closed redaction when the visibility probe is denied. svc-probe-denied is
+# actually a public repo in the fixture, but its token is denied the
+# administration permission, so the GET /repos probe answers a denial and
+# visibility resolves to "unknown". Redaction fails closed: an unknown-visibility
+# target is treated as private and hidden. The target still applies its label
+# (contents: read + issues: write are granted), so it reports applied under the
+# "private repository #1" placeholder, and its slug never reaches the rendered
+# public surfaces.
+name: multi-private-probe-denied
+settings: {}
+inputs:
+  mode: apply
+  private_repos: redact
+  on_missing_permission: warn
+repos:
+  e2e-owner/svc-probe-denied:
+    settings:
+      labels:
+        - name: managed
+          color: "00ff00"
+    permissions:
+      administration: none
+      contents: read
+      issues: write
+    live_state:
+      labels:
+        - name: PROBEDENIED-secret-label
+          color: "abcdef"
+expect:
+  exit_code: 0
+  result: applied
+  repos_result:
+    "private repository #1": applied
+  summary_contains:
+    - "private repository #1"
+    - "hidden (private repository)"
+  summary_lacks:
+    - "svc-probe-denied"
+    - "PROBEDENIED-secret-label"
+  stdout_lacks:
+    - "svc-probe-denied"
+    - "PROBEDENIED-secret-label"

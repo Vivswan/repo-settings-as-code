@@ -845,8 +845,61 @@ export interface FaultOption {
   times?: number;
 }
 
+/**
+ * The mutable per-run state the pipeline threads through every request: the
+ * chaos/fault fire counts and the two denial-barrier bookkeeping structures.
+ * Grouped into one type with a single factory (`newPipelineRunState`) so a new
+ * field cannot be forgotten at the construction site - adding one here without
+ * adding it to the factory fails to compile, and the server spreads the factory
+ * result wholesale rather than listing fields by hand.
+ */
+export interface PipelineRunState {
+  /** Per-endpoint chaos-corruption counts, mutated in place so `times` is honored. */
+  corruptCounts: Map<string, number>;
+  /** Per-endpoint fault fire counts, mutated in place so `times` is honored. */
+  faultCounts: Map<string, number>;
+  /**
+   * Target+section keys (`${slug}:${section}`, empty slug in single-repo mode)
+   * whose READ was permission-denied (fatally, not tolerated) earlier this run;
+   * mutated in place. The engine aborts a section at its first fatal denied
+   * read, so a write arriving for the same target+section afterwards proves
+   * broken sequencing (see the denial barrier). Keyed per target so one repo's
+   * denied read never arms the barrier for another repo's legitimate write.
+   */
+  deniedReadSections: Set<string>;
+  /**
+   * The redaction visibility probe's window, per slug, so its denial never arms
+   * the repository-section barrier while a LATER repository.get still does. The
+   * probe is a `repository.get` issued during visibility resolution, before the
+   * target loop. Two facts bound its window (both mutated in place):
+   *   - `probeGetFaults`: how many of a slug's repository.get attempts FAULTED at
+   *     the transport barrier. The probe retries a fault up to the client's
+   *     budget (1 + MAX_RETRIES); once that many faults have fired, the probe has
+   *     given up, so the next repository.get is a section read, not a retry.
+   *   - `probeGetDelivered`: whether a repository.get for the slug has already
+   *     DELIVERED a real response (granted or denied). The probe delivers at most
+   *     once; any repository.get after that is the section's own check-mode read.
+   * A repository.get is the probe iff a probe is expected for the slug, none has
+   * delivered yet, and the fault budget is not spent - so an all-faulting probe
+   * cannot keep the exemption open past its retries.
+   */
+  probeGetFaults: Map<string, number>;
+  probeGetDelivered: Set<string>;
+}
+
+/** Fresh per-run state with every field initialized - the single construction point. */
+export function newPipelineRunState(): PipelineRunState {
+  return {
+    corruptCounts: new Map(),
+    faultCounts: new Map(),
+    deniedReadSections: new Set(),
+    probeGetFaults: new Map(),
+    probeGetDelivered: new Set(),
+  };
+}
+
 /** Options the server passes into the pipeline for each request. */
-export interface PipelineOptions {
+export interface PipelineOptions extends PipelineRunState {
   scenario: Scenario;
   /** Single-repo working state; absent in multi-repo mode (see `multi`). */
   state?: MockState;
@@ -860,21 +913,8 @@ export interface PipelineOptions {
   multi?: MultiMockState;
   basePrefix?: string;
   corrupt?: CorruptOption;
-  /** Per-endpoint chaos-corruption counts, mutated in place so `times` is honored. */
-  corruptCounts: Map<string, number>;
   /** Transport-level faults to inject on matching requests (see fault barrier). */
   faults?: FaultOption[];
-  /** Per-endpoint fault fire counts, mutated in place so `times` is honored. */
-  faultCounts: Map<string, number>;
-  /**
-   * Target+section keys (`${slug}:${section}`, empty slug in single-repo mode)
-   * whose READ was permission-denied (fatally, not tolerated) earlier this run;
-   * mutated in place. The engine aborts a section at its first fatal denied
-   * read, so a write arriving for the same target+section afterwards proves
-   * broken sequencing (see the denial barrier). Keyed per target so one repo's
-   * denied read never arms the barrier for another repo's legitimate write.
-   */
-  deniedReadSections: Set<string>;
   /**
    * Whether the write barrier is armed for THIS request. The server passes the
    * scenario's declared mode ORed with its one-way enterCheckMode() override,
@@ -1021,6 +1061,56 @@ function contentsResponse(multi: MultiMockState, slug: string): MockResponse {
 function contentsSlug(pathname: string): string | null {
   const match = pathname.match(/^\/repos\/([^/]+\/[^/]+)\/contents\//);
   return match ? decodeURIComponent(match[1] ?? "") : null;
+}
+
+/**
+ * The admin repo the e2e runner runs as (its GITHUB_REPOSITORY). Kept in sync
+ * with runner.ts's REPO_SLUG. The redaction self carve-out never probes this
+ * slug, so a repository.get for it is always a section read, never the probe.
+ */
+const ADMIN_SLUG = "e2e-owner/e2e-repo";
+
+/**
+ * How many wire attempts the visibility probe can make: one plus the client's
+ * retry budget (MAX_RETRIES = 2 in src/github/api.ts). Once a slug's
+ * repository.get has faulted this many times the probe has exhausted its
+ * retries and given up, so the next repository.get is a section read - not a
+ * probe retry - and the exemption expires.
+ */
+const PROBE_RETRY_BUDGET = 3;
+
+/**
+ * Whether the redaction visibility probe is EXPECTED to issue a
+ * `GET /repos/{slug}` for this target, so its denial may be exempted from the
+ * denial barrier. The action probes a slug's visibility (one repository.get,
+ * outside the section loop) only when ALL hold:
+ *   - the run is multi-repo (the single-repo harness path always targets the
+ *     admin repo itself, which the self carve-out never probes);
+ *   - the effective policy is redact (the default; `show` never probes);
+ *   - the slug is not the admin repo (the self carve-out skips the probe);
+ *   - the slug's visibility did not already come from a `/user/repos` discovery
+ *     response this run (a discovered slug's visibility is known, so no probe).
+ * When a probe is NOT expected, the first (and only) repository.get is the
+ * repository section's own check-mode read and MUST arm the barrier.
+ */
+function probeExpected(
+  slug: string,
+  scenario: Scenario,
+  multi: MultiMockState | undefined,
+): boolean {
+  if (!multi) {
+    return false;
+  }
+  if ((scenario.inputs?.private_repos ?? "redact") !== "redact") {
+    return false;
+  }
+  if (slug.toLowerCase() === ADMIN_SLUG) {
+    return false;
+  }
+  const discovered = multi.discoveryPool.some(
+    (repo) => String(repo.full_name).toLowerCase() === slug.toLowerCase(),
+  );
+  return !discovered;
 }
 
 /**
@@ -1272,6 +1362,14 @@ export function runPipeline(
     };
   }
 
+  // Identify the redaction visibility probe so its denial never arms the
+  // repository-section barrier. The exemption is bounded to the probe's window
+  // (see probeGetFaults/probeGetDelivered): a repository.get is the probe iff a
+  // probe is EXPECTED for the slug, no repository.get has DELIVERED yet, and the
+  // probe's fault-retry budget is not spent. This is computed after the fault
+  // barrier (below) against the pre-delivery state, so an all-faulting probe
+  // cannot keep the exemption open past its retries.
+
   // Fault barrier: transport-level failures fire before the permission gate and
   // handler (a rate limit / drop happens at the wire regardless of permissions),
   // but AFTER target/state resolution so a fault can never mask the
@@ -1283,8 +1381,26 @@ export function runPipeline(
     const fired = options.faultCounts.get(key) ?? 0;
     if (fired < (fault.times ?? 1)) {
       options.faultCounts.set(key, fired + 1);
+      // A faulted probe attempt counts toward its retry budget so the exemption
+      // cannot outlast the probe's own retries (an all-faulting probe gives up,
+      // and the next repository.get is a section read that must arm).
+      if (key === "repository.get") {
+        options.probeGetFaults.set(targetSlug, (options.probeGetFaults.get(targetSlug) ?? 0) + 1);
+      }
       return applyFault(fault.kind, { ...baseLog });
     }
+  }
+
+  // Past the fault barrier a real response WILL be delivered. Decide whether this
+  // repository.get is the probe (against the pre-delivery state), THEN record the
+  // delivery so any later repository.get for the slug is a section read.
+  const isVisibilityProbe =
+    key === "repository.get" &&
+    probeExpected(targetSlug, scenario, options.multi) &&
+    !options.probeGetDelivered.has(targetSlug) &&
+    (options.probeGetFaults.get(targetSlug) ?? 0) < PROBE_RETRY_BUDGET;
+  if (key === "repository.get") {
+    options.probeGetDelivered.add(targetSlug);
   }
 
   // 4. Permission gate.
@@ -1317,7 +1433,15 @@ export function runPipeline(
       // a denial status the endpoint tolerates (a fine_grained 404 on a
       // probeAbsent-tolerant endpoint) reads as "resource absent" and the
       // section legitimately proceeds, so it must not arm the barrier.
-      if (!toleratedStatuses(endpoint).includes(response.status)) {
+      //
+      // The redaction visibility probe is EXEMPT (isVisibilityProbe): it is the
+      // FIRST repository.get for the repo, issued before the target loop to
+      // decide redaction, not a section read. Arming on it would false-flag the
+      // repository section's own legitimate write-then-403 under warn. A LATER
+      // repository.get (the section's check-mode read) is not the probe and arms
+      // like any other section read, so genuine denied-read-then-write coverage
+      // is preserved.
+      if (!isVisibilityProbe && !toleratedStatuses(endpoint).includes(response.status)) {
         options.deniedReadSections.add(barrierKey);
       }
     }

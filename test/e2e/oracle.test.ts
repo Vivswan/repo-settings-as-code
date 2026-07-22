@@ -286,9 +286,19 @@ describe("predictOutcomes run level", () => {
 describe("predictMulti rollup", () => {
   function multiMeta(repoMetas: Array<ScenarioMeta | null>): MultiScenarioMeta {
     return {
-      repos: repoMetas.map((m, i) => ({ slug: `e2e-owner/repo-${i}`, meta: m })),
+      repos: repoMetas.map((m, i) => ({
+        slug: `e2e-owner/repo-${i}`,
+        meta: m,
+        visibility: "public" as const,
+        probeDenied: false,
+        redacted: false,
+        displayKey: `e2e-owner/repo-${i}`,
+        canaries: [],
+      })),
       mode: "apply",
       policy: "fail",
+      privateRepos: "show",
+      selfSlug: "e2e-owner/e2e-repo",
     };
   }
 
@@ -318,9 +328,21 @@ describe("predictMulti rollup", () => {
       policy: "warn",
     });
     const p = predictMulti({
-      repos: [{ slug: "e2e-owner/repo-0", meta: mixed }],
+      repos: [
+        {
+          slug: "e2e-owner/repo-0",
+          meta: mixed,
+          visibility: "public",
+          probeDenied: false,
+          redacted: false,
+          displayKey: "e2e-owner/repo-0",
+          canaries: [],
+        },
+      ],
       mode: "apply",
       policy: "warn",
+      privateRepos: "show",
+      selfSlug: "e2e-owner/e2e-repo",
     });
     expect(p.repos[0]?.allowedResults.has("partial")).toBe(true);
     expect(p.repos[0]?.allowedResults.has("skipped")).toBe(false);
@@ -394,6 +416,40 @@ describe("predictMulti rollup", () => {
     });
     const p = predictMulti(multiMeta([granted, denied]));
     expect(p.allowedExitCodes.has(1)).toBe(true);
+  });
+
+  test("a redacted target keys its result by the placeholder, not the slug", () => {
+    const granted = meta({ sections: ["labels"], mode: "apply", mask: {} });
+    const p = predictMulti({
+      repos: [
+        {
+          slug: "e2e-owner/repo-0",
+          meta: granted,
+          visibility: "private",
+          probeDenied: false,
+          redacted: true,
+          displayKey: "private repository #1",
+          canaries: ["CANARY-1-0-name"],
+        },
+      ],
+      mode: "apply",
+      policy: "fail",
+      privateRepos: "redact",
+      selfSlug: "e2e-owner/e2e-repo",
+    });
+    // The result prediction keys on the placeholder; the real slug never appears.
+    expect(p.repos[0]?.displayKey).toBe("private repository #1");
+    expect(p.repos[0]?.redacted).toBe(true);
+    // The forbidden set folds the redacted target's real slug plus its canaries.
+    expect(p.forbidden).toContain("e2e-owner/repo-0");
+    expect(p.forbidden).toContain("CANARY-1-0-name");
+  });
+
+  test("under show nothing is redacted, so the forbidden set is empty", () => {
+    const granted = meta({ sections: ["labels"], mode: "apply", mask: {} });
+    const p = predictMulti(multiMeta([granted]));
+    expect(p.forbidden).toEqual([]);
+    expect(p.repos[0]?.displayKey).toBe("e2e-owner/repo-0");
   });
 });
 

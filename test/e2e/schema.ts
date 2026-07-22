@@ -67,6 +67,7 @@ export const InputsSchema = z
     on_missing_permission: z.enum(["fail", "warn"]).optional(),
     required_sections: z.string().optional(),
     sections: z.string().optional(),
+    private_repos: z.enum(["redact", "show"]).optional(),
   })
   .strict();
 
@@ -94,8 +95,22 @@ export const ExpectSchema = z
     never: z.array(z.string()).optional(),
     /** Substrings the step summary must contain. */
     summary_contains: z.array(z.string()).optional(),
+    /**
+     * Substrings the step summary must NOT contain: the redaction leak guard.
+     * A redacted target's slug and its private live values must never reach the
+     * publicly-readable summary, so a private scenario lists them here.
+     */
+    summary_lacks: z.array(z.string()).optional(),
     /** Substrings stdout must contain. */
     stdout_contains: z.array(z.string()).optional(),
+    /**
+     * Substrings stdout must NOT contain, matched AFTER the runner strips the
+     * `::add-mask::` lines core.setSecret emits (those lines legitimately carry
+     * the raw slug so the real runner can mask it; nothing else may). The
+     * redaction leak guard for logs and workflow-command annotations, which
+     * both land on stdout.
+     */
+    stdout_lacks: z.array(z.string()).optional(),
     /**
      * Requests (any method) the log must contain, e.g. a `page=2` read that
      * proves pagination was exercised. Matched as substrings of "METHOD path".

@@ -210,6 +210,9 @@ function childEnv(scenario: Scenario, dir: string, apiUrl: string): NodeJS.Proce
   if (inputs.sections) {
     env.INPUT_SECTIONS = inputs.sections;
   }
+  if (inputs.private_repos) {
+    env["INPUT_PRIVATE-REPOS"] = inputs.private_repos;
+  }
 
   // Multi-repo mode: the presence of `repos` or `discovery` switches the action
   // into its multi-repo path. GITHUB_REPOSITORY stays the admin repo; INPUT_REPOS
@@ -267,6 +270,72 @@ async function invoke(scenario: Scenario, dir: string, apiUrl: string): Promise<
 /** Expand the {repo} placeholder a scenario uses in mutation/never patterns. */
 function expandRepo(pattern: string): string {
   return pattern.replaceAll("{repo}", REPO_SLUG);
+}
+
+/**
+ * Strip the `::add-mask::<value>` workflow-command lines core.setSecret emits.
+ * Those lines legitimately carry the raw slug so the real GitHub runner can
+ * mask it in every later line; the runner consumes and never echoes them, so
+ * the harness must drop them before checking that a redacted slug leaked
+ * NOWHERE else on stdout. Every other line is matched as-is.
+ */
+export function stripMaskLines(stdout: string): string {
+  return stdout
+    .split("\n")
+    .filter((line) => !line.startsWith("::add-mask::"))
+    .join("\n");
+}
+
+/**
+ * Drop `::debug::` workflow-command lines. These carry API request TRACES (path,
+ * status, and under RUNNER_DEBUG the octokit request log), NOT the run's rendered
+ * output. The unredacted counterfactual must judge whether a canary reached a
+ * RENDERED public surface - the summary, annotations, or a plain log line -
+ * because that is what detail-suppression regressions affect; a canary appearing
+ * only in a debug trace does not prove the rendered detail was ever produced.
+ */
+export function stripDebugLines(text: string): string {
+  return text
+    .split("\n")
+    .filter((line) => !line.startsWith("::debug::"))
+    .join("\n");
+}
+
+/**
+ * The redaction LEAK INVARIANT, shared by curated scenarios and the fuzzer: no
+ * forbidden string (a redacted slug or a planted canary) may appear in any
+ * publicly-readable surface - the step summary, stdout and stderr (both with the
+ * `::add-mask::` lines stripped, since those carry the raw slug for the real
+ * runner by design), or any action output value. stderr is included because a
+ * GitHub Actions run log captures it too, so a slug printed there leaks just as
+ * a stdout one would. Returns one failure line per surface a forbidden string
+ * reached; an empty array means no leak. Implemented once here so a scenario and
+ * a fuzz iteration prove the exact same property.
+ */
+export function checkLeaks(
+  observed: { summary: string; stdout: string; stderr: string; outputs: Record<string, string> },
+  forbidden: string[],
+): string[] {
+  const failures: string[] = [];
+  const maskedStdout = stripMaskLines(observed.stdout);
+  const maskedStderr = stripMaskLines(observed.stderr);
+  for (const needle of forbidden) {
+    if (observed.summary.includes(needle)) {
+      failures.push(`leak: "${needle}" present in the step summary`);
+    }
+    if (maskedStdout.includes(needle)) {
+      failures.push(`leak: "${needle}" present in stdout (after stripping ::add-mask:: lines)`);
+    }
+    if (maskedStderr.includes(needle)) {
+      failures.push(`leak: "${needle}" present in stderr (after stripping ::add-mask:: lines)`);
+    }
+    for (const [name, value] of Object.entries(observed.outputs)) {
+      if (value.includes(needle)) {
+        failures.push(`leak: "${needle}" present in the "${name}" output`);
+      }
+    }
+  }
+  return failures;
 }
 
 /**
@@ -414,6 +483,20 @@ export async function runScenario(
     for (const needle of exp.stdout_contains ?? []) {
       if (!first.stdout.includes(needle)) {
         failures.push(`stdout missing: ${needle}`);
+      }
+    }
+    // 7b. Negative substring checks (the redaction leak guard). stdout_lacks
+    // matches AFTER stripping the ::add-mask:: lines, which carry the raw slug
+    // for the real runner by design; summary_lacks matches the summary as-is.
+    const maskedStdout = stripMaskLines(first.stdout);
+    for (const needle of exp.summary_lacks ?? []) {
+      if (first.summary.includes(needle)) {
+        failures.push(`summary must not contain: ${needle}`);
+      }
+    }
+    for (const needle of exp.stdout_lacks ?? []) {
+      if (maskedStdout.includes(needle)) {
+        failures.push(`stdout must not contain: ${needle}`);
       }
     }
     // requests_contain may assert on a query string, so match the full form.

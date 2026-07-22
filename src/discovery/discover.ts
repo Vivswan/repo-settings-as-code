@@ -10,8 +10,38 @@ import { paginate } from "../github/paginate.js";
 
 type DiscoveredRepo = Pick<
   components["schemas"]["repository"],
-  "full_name" | "archived" | "fork" | "topics" | "visibility"
+  "full_name" | "archived" | "fork" | "topics" | "visibility" | "private"
 >;
+
+/** One discovered repository: its slug plus the visibility the listing reported. */
+export interface DiscoveredRepoRef {
+  slug: string;
+  visibility: "public" | "private" | "internal";
+}
+
+/**
+ * Narrow the listing's visibility for the REDACTION decision, failing closed.
+ * `visibility` is a plain string in the API schema and optional on GHES; the
+ * always-present `private` flag is the authority. A repo is treated as private
+ * whenever `private === true` (even if a stale/forged `visibility` says
+ * "public"), and when BOTH fields are missing (an unknown repo is hidden, never
+ * exposed). Only `private === false` (or a trustworthy non-public visibility)
+ * yields a non-private classification. `internal` survives when `visibility`
+ * names it and `private` does not contradict it.
+ */
+function normalizeVisibility(repo: DiscoveredRepo): DiscoveredRepoRef["visibility"] {
+  // private === true always wins: it is the field the API guarantees, and a
+  // repo the token can see as private must never be classed public.
+  if (repo.private === true) {
+    return "internal" === repo.visibility ? "internal" : "private";
+  }
+  const visibility = repo.visibility;
+  if (visibility === "public" || visibility === "private" || visibility === "internal") {
+    return visibility;
+  }
+  // visibility absent: trust an explicit private === false, else fail closed.
+  return repo.private === false ? "public" : "private";
+}
 
 /** Allowed values per discovery-filter input; the single source the input validation and types derive from. */
 export const VISIBILITY_FILTERS = ["all", "public", "private", "internal"] as const;
@@ -63,9 +93,9 @@ export function excludeMatches(pattern: string, slug: string): boolean {
 }
 
 export interface DiscoveryResult {
-  slugs: string[];
+  repos: DiscoveredRepoRef[];
   /** Repositories dropped by a filter, grouped by the first reason that hit. */
-  filtered: Array<{ reason: string; slugs: string[] }>;
+  filtered: Array<{ reason: string; repos: DiscoveredRepoRef[] }>;
 }
 
 /** Discover the repositories the token's user can see, applying the filters. */
@@ -157,8 +187,8 @@ export async function discoverRepos(
       return hit ? `exclude pattern "${hit}"` : null;
     },
   ];
-  const slugs: string[] = [];
-  const filtered = new Map<string, string[]>();
+  const kept: DiscoveredRepoRef[] = [];
+  const filtered = new Map<string, DiscoveredRepoRef[]>();
   for (const repo of repos) {
     let reason: string | null = null;
     for (const rule of rules) {
@@ -167,33 +197,56 @@ export async function discoverRepos(
         break;
       }
     }
+    const ref: DiscoveredRepoRef = {
+      slug: repo.full_name,
+      visibility: normalizeVisibility(repo),
+    };
     if (!reason) {
-      slugs.push(repo.full_name);
+      kept.push(ref);
       continue;
     }
     const group = filtered.get(reason);
     if (group) {
-      group.push(repo.full_name);
+      group.push(ref);
     } else {
-      filtered.set(reason, [repo.full_name]);
+      filtered.set(reason, [ref]);
     }
   }
   return {
-    slugs,
-    filtered: [...filtered.entries()].map(([reason, group]) => ({ reason, slugs: group })),
+    repos: kept,
+    filtered: [...filtered.entries()].map(([reason, group]) => ({ reason, repos: group })),
   };
 }
 
 /**
  * One aggregate notice per filter reason: with "*" fleets, per-repo notices
  * would flood the annotations UI (GitHub caps annotations per step).
+ * `redactPrivate` keeps private and internal repository names out of the
+ * notice: only public slugs are listed, hidden ones become a count, and a
+ * group with no public repos renders as a count with no names at all.
  */
-export function formatSkipNotice(group: { reason: string; slugs: string[] }): string {
-  const shown = group.slugs.slice(0, 20).join(", ");
-  const more = group.slugs.length > 20 ? `, and ${group.slugs.length - 20} more` : "";
-  const count = `${group.slugs.length} ${group.slugs.length === 1 ? "repository" : "repositories"}`;
+export function formatSkipNotice(
+  group: { reason: string; repos: DiscoveredRepoRef[] },
+  redactPrivate: boolean,
+): string {
+  const named = redactPrivate
+    ? group.repos.filter((repo) => repo.visibility === "public")
+    : group.repos;
+  const hidden = group.repos.length - named.length;
+  const hiddenCount = `${hidden} private or internal ${hidden === 1 ? "repository" : "repositories"}`;
+  const shown = named
+    .slice(0, 20)
+    .map((repo) => repo.slug)
+    .join(", ");
+  const more = named.length > 20 ? `, and ${named.length - 20} more` : "";
+  const hiddenTail = hidden > 0 ? `, and ${hiddenCount}` : "";
+  const names = named.length > 0 ? `: ${shown}${more}${hiddenTail}` : "";
+  const count =
+    named.length === 0 && hidden > 0
+      ? hiddenCount
+      : `${group.repos.length} ${group.repos.length === 1 ? "repository" : "repositories"}`;
   if (group.reason === ARCHIVED_REASON) {
-    return `repos: "*" discovery skipped ${count} because settings writes fail on archived repositories; unarchive them to manage them: ${shown}${more}`;
+    return `repos: "*" discovery skipped ${count} because settings writes fail on archived repositories; unarchive them to manage them${names}`;
   }
-  return `repos: "*" discovery skipped ${count} by ${group.reason}: ${shown}${more}`;
+  return `repos: "*" discovery skipped ${count} by ${group.reason}${names}`;
 }

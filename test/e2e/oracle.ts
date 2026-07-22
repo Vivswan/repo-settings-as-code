@@ -246,6 +246,15 @@ function worstOutcomes(sections: SectionPrediction[]): Outcome[] {
 export interface RepoPrediction {
   slug: string;
   /**
+   * The repos-result KEY the action emits for this target: the
+   * "private repository #N" placeholder when redacted, else the slug. The fuzz
+   * comparison keys on this, since a redacted target never appears under its
+   * real slug.
+   */
+  displayKey: string;
+  /** True when this target is hidden from the public view (drives the leak check). */
+  redacted: boolean;
+  /**
    * null when this target produces no per-section run: either it has no settings
    * file, or its settings file is unreadable because `contents` is denied. In
    * both cases `allowedResults` carries the repo-level outcome the action reports.
@@ -265,6 +274,12 @@ export interface MultiPrediction {
   repos: RepoPrediction[];
   /** Exit codes the multi run may produce (worst-of over the targets). */
   allowedExitCodes: Set<number>;
+  /**
+   * Every string that must appear in NO public surface when redaction is active:
+   * each redacted target's real slug plus its planted canaries. The leak
+   * invariant asserts their absence from stdout/summary/outputs.
+   */
+  forbidden: string[];
 }
 
 /**
@@ -365,9 +380,10 @@ function settingsGateResult(denialStyle: DenialStyle, adminGrade: MaskGrade): Se
  */
 export function predictMulti(meta: MultiScenarioMeta): MultiPrediction {
   const repos: RepoPrediction[] = meta.repos.map((repo) => {
+    const common = { slug: repo.slug, displayKey: repo.displayKey, redacted: repo.redacted };
     if (!repo.meta) {
       // No settings file: the contents read 404s and the target is skipped.
-      return { slug: repo.slug, run: null, allowedResults: new Set(["skipped"]) };
+      return { ...common, run: null, allowedResults: new Set(["skipped"]) };
     }
     // The settings file read itself needs contents; a denied contents read
     // gates the whole target before any section runs.
@@ -375,13 +391,13 @@ export function predictMulti(meta: MultiScenarioMeta): MultiPrediction {
     if (contentsGrade === "none") {
       const adminGrade = repo.meta.mask.administration ?? "write";
       return {
-        slug: repo.slug,
+        ...common,
         run: null,
         allowedResults: settingsGateResult(repo.meta.denialStyle, adminGrade),
       };
     }
     const run = predictOutcomes(repo.meta);
-    return { slug: repo.slug, run, allowedResults: runResultClass(run) };
+    return { ...common, run, allowedResults: runResultClass(run) };
   });
 
   const exitCodes = new Set<number>();
@@ -400,7 +416,15 @@ export function predictMulti(meta: MultiScenarioMeta): MultiPrediction {
   if (anyCanFail) {
     exitCodes.add(1);
   }
-  return { repos, allowedExitCodes: exitCodes };
+  // The leak invariant's forbidden set: every redacted target's real slug plus
+  // its planted canaries. Under `show` nothing is redacted, so the set is empty.
+  const forbidden: string[] = [];
+  for (const repo of meta.repos) {
+    if (repo.redacted) {
+      forbidden.push(repo.slug, ...repo.canaries);
+    }
+  }
+  return { repos, allowedExitCodes: exitCodes, forbidden };
 }
 
 /** One repo the discovery pool enumerates, as the mock and oracle both see it. */

@@ -5,7 +5,8 @@
 
 import { appendFileSync } from "node:fs";
 import type { RepoResult, SectionOutcome } from "../engine/orchestrate.js";
-import type { TargetOutcome } from "./multi.js";
+import { type PublicTargetView, redactOutcomes } from "./multi.js";
+import { REDACTED_NOTE } from "./redact.js";
 
 // Typed over every status both summary writers can meet, so a new status
 // value fails compilation here instead of rendering ":undefined:".
@@ -24,7 +25,10 @@ function summaryCell(text: string): string {
   return text.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 }
 
-function outcomeRows(outcomes: SectionOutcome[]): string[] {
+/** The fields the section table renders; both SectionOutcome and the public view meet it. */
+type OutcomeRow = Pick<SectionOutcome, "key" | "status" | "detail">;
+
+function outcomeRows(outcomes: OutcomeRow[]): string[] {
   const rows = ["| Section | Status | Detail |", "|---|---|---|"];
   for (const outcome of outcomes) {
     const detail = outcome.detail.map(summaryCell).join("<br>") || "-";
@@ -44,29 +48,56 @@ export function writeSummary(outcomes: SectionOutcome[], mode: string): void {
   appendFileSync(file, `${lines.join("\n")}\n`);
 }
 
-export function writeMultiSummary(targets: TargetOutcome[], mode: string): void {
+/**
+ * The single-repo summary for a redacted cross-repo target. The redaction
+ * policy keeps per-section STATUSES visible everywhere, so this renders the
+ * same section table the multi path renders - statuses in the clear, detail
+ * cells hidden - via the shared redactOutcomes() projection, not a second
+ * rendering. Used when the single-repo `repository` input names a different,
+ * non-public repo.
+ */
+export function writeRedactedSummary(
+  outcomes: SectionOutcome[],
+  mode: string,
+  result: RepoResult,
+): void {
   const file = process.env.GITHUB_STEP_SUMMARY;
   if (!file) {
     return;
   }
   const lines = [
-    `## repo-settings-as-code (${mode}, ${targets.length} repositories)`,
+    `## repo-settings-as-code (${mode})`,
+    "",
+    `:${STATUS_ICON[result]}: ${result} - ${REDACTED_NOTE}`,
+    "",
+    ...outcomeRows(redactOutcomes(outcomes)),
+  ];
+  appendFileSync(file, `${lines.join("\n")}\n`);
+}
+
+export function writeMultiSummary(views: PublicTargetView[], mode: string): void {
+  const file = process.env.GITHUB_STEP_SUMMARY;
+  if (!file) {
+    return;
+  }
+  const lines = [
+    `## repo-settings-as-code (${mode}, ${views.length} repositories)`,
     "",
     "| Repository | Source | Result |",
     "|---|---|---|",
   ];
-  for (const target of targets) {
+  for (const view of views) {
     lines.push(
-      `| ${target.slug} | ${target.source} | :${STATUS_ICON[target.result]}: ${target.result} |`,
+      `| ${summaryCell(view.display)} | ${view.source} | :${STATUS_ICON[view.result]}: ${view.result} |`,
     );
   }
-  for (const target of targets) {
-    lines.push("", `### ${target.slug} (${target.result})`, "");
-    if (target.note) {
-      lines.push(summaryCell(target.note), "");
+  for (const view of views) {
+    lines.push("", `### ${summaryCell(view.display)} (${view.result})`, "");
+    if (view.note) {
+      lines.push(summaryCell(view.note), "");
     }
-    if (target.outcomes.length > 0) {
-      lines.push(...outcomeRows(target.outcomes));
+    if (view.outcomes.length > 0) {
+      lines.push(...outcomeRows(view.outcomes));
     }
   }
   appendFileSync(file, `${lines.join("\n")}\n`);

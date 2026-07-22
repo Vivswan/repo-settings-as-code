@@ -13,6 +13,7 @@ function captureIo(): { io: Io; annotations: string[]; logs: string[] } {
     io: {
       annotate: (level, message) => annotations.push(`${level}: ${message}`),
       log: (line) => logs.push(line),
+      mask: () => {},
     },
     annotations,
     logs,

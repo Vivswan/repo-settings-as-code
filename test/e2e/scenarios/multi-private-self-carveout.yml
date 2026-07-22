@@ -1,0 +1,47 @@
+# The self carve-out. The workflow repo (GITHUB_REPOSITORY = e2e-owner/e2e-repo)
+# is listed as a target and is itself private, but a repository operating on
+# itself leaks nothing to anyone who cannot already read it - so it is NEVER
+# redacted, even under private-repos: redact. Its slug and live state render in
+# the clear; no "private repository #N" placeholder appears for it. svc-private
+# (a different private repo) IS redacted in the same run, proving the carve-out
+# is scoped to the self slug alone.
+name: multi-private-self-carveout
+settings: {}
+inputs:
+  mode: apply
+  private_repos: redact
+repos:
+  e2e-owner/e2e-repo:
+    settings:
+      labels:
+        - name: managed
+          color: "00ff00"
+    live_state:
+      repo:
+        private: true
+        visibility: private
+    expect:
+      result: applied
+  e2e-owner/svc-private:
+    settings:
+      labels:
+        - name: managed
+          color: "00ff00"
+    live_state:
+      repo:
+        private: true
+        visibility: private
+token_permissions:
+  issues: write
+  contents: read
+expect:
+  exit_code: 0
+  result: applied
+  repos_result:
+    e2e-owner/e2e-repo: applied
+    "private repository #1": applied
+  summary_contains:
+    - "e2e-owner/e2e-repo"
+    - "private repository #1"
+  summary_lacks:
+    - "svc-private"

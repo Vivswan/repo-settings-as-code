@@ -1,0 +1,39 @@
+# Discovery skip-notice redaction. repos: "*" enumerates a pool that includes a
+# PRIVATE fork; forks: exclude filters it out. The skip notice for the
+# forks=exclude group must not name the private fork - a filtered private repo is
+# masked (its name kept out of the notice) but gets no placeholder, because it is
+# not a target. The notice renders the hidden repo as a count ("and 1 private or
+# internal repositories") instead. disc-keep (public) is the sole surviving
+# target and applies its label. The private fork's slug must appear nowhere.
+name: discovery-private-skip-notice
+settings: {}
+discovery:
+  inputs:
+    forks: exclude
+  pool:
+    - { slug: e2e-owner/disc-keep, visibility: public }
+    - { slug: e2e-owner/disc-private-fork, visibility: private, fork: true }
+repos:
+  e2e-owner/disc-keep:
+    settings:
+      labels:
+        - name: managed
+          color: "00ff00"
+    expect:
+      result: applied
+token_permissions:
+  issues: write
+  contents: read
+expect:
+  exit_code: 0
+  result: applied
+  repos_result:
+    e2e-owner/disc-keep: applied
+  summary_lacks:
+    - "disc-private-fork"
+  stdout_lacks:
+    - "disc-private-fork"
+  stdout_contains:
+    - "1 private or internal repository by forks=exclude"
+  never:
+    - "GET /repos/e2e-owner/disc-private-fork"

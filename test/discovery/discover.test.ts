@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_DISCOVERY_FILTERS,
+  type DiscoveredRepoRef,
   type DiscoveryFilters,
   discoverRepos,
   excludeMatches,
+  formatSkipNotice,
 } from "../../src/discovery/discover.js";
 import { MockApi } from "../mock-api.js";
 
@@ -46,33 +48,66 @@ describe("discoverRepos", () => {
     }
     return discovered;
   };
+  const slugs = (repos: DiscoveredRepoRef[]) => repos.map((repo) => repo.slug);
+  const filteredSlugs = (filtered: Array<{ reason: string; repos: DiscoveredRepoRef[] }>) =>
+    filtered.map((group) => ({ reason: group.reason, slugs: slugs(group.repos) }));
   const OWNED = "GET /user/repos?affiliation=owner&per_page=100&page=1";
 
   test("default filters list owned repos, skipping archived ones", async () => {
     const discovered = await discover({
       [OWNED]: { data: [{ full_name: "o/x" }, { full_name: "o/y", archived: true }] },
     });
-    expect(discovered.slugs).toEqual(["o/x"]);
-    expect(discovered.filtered).toEqual([{ reason: "archived", slugs: ["o/y"] }]);
+    expect(slugs(discovered.repos)).toEqual(["o/x"]);
+    expect(filteredSlugs(discovered.filtered)).toEqual([{ reason: "archived", slugs: ["o/y"] }]);
+  });
+
+  test("visibility normalization fails closed: private wins, both-missing is private", async () => {
+    const discovered = await discover({
+      [OWNED]: {
+        data: [
+          { full_name: "o/int", visibility: "internal" },
+          { full_name: "o/priv", private: true },
+          // explicit public: private === false with no visibility -> public
+          { full_name: "o/pub", private: false },
+          // BOTH fields missing: an unknown repo is hidden, never exposed
+          { full_name: "o/unknown" },
+          // forged visibility: private === true overrides a bogus "public"
+          { full_name: "o/liar", visibility: "public", private: true },
+          { full_name: "o/old", visibility: "private", archived: true },
+        ],
+      },
+    });
+    expect(discovered.repos).toEqual([
+      { slug: "o/int", visibility: "internal" },
+      { slug: "o/priv", visibility: "private" },
+      { slug: "o/pub", visibility: "public" },
+      { slug: "o/unknown", visibility: "private" },
+      { slug: "o/liar", visibility: "private" },
+    ]);
+    expect(discovered.filtered).toEqual([
+      { reason: "archived", repos: [{ slug: "o/old", visibility: "private" }] },
+    ]);
   });
 
   test("archived: include keeps them; only inverts the skip", async () => {
     const data = [{ full_name: "o/x" }, { full_name: "o/y", archived: true }];
     const both = await discover({ [OWNED]: { data } }, { archived: "include" });
-    expect(both.slugs).toEqual(["o/x", "o/y"]);
+    expect(slugs(both.repos)).toEqual(["o/x", "o/y"]);
     expect(both.filtered).toEqual([]);
     const only = await discover({ [OWNED]: { data } }, { archived: "only" });
-    expect(only.slugs).toEqual(["o/y"]);
-    expect(only.filtered).toEqual([{ reason: "archived=only", slugs: ["o/x"] }]);
+    expect(slugs(only.repos)).toEqual(["o/y"]);
+    expect(filteredSlugs(only.filtered)).toEqual([{ reason: "archived=only", slugs: ["o/x"] }]);
   });
 
   test("forks: exclude and only split on the fork field", async () => {
     const data = [{ full_name: "o/src" }, { full_name: "o/copy", fork: true }];
     const noForks = await discover({ [OWNED]: { data } }, { forks: "exclude" });
-    expect(noForks.slugs).toEqual(["o/src"]);
-    expect(noForks.filtered).toEqual([{ reason: "forks=exclude", slugs: ["o/copy"] }]);
+    expect(slugs(noForks.repos)).toEqual(["o/src"]);
+    expect(filteredSlugs(noForks.filtered)).toEqual([
+      { reason: "forks=exclude", slugs: ["o/copy"] },
+    ]);
     const onlyForks = await discover({ [OWNED]: { data } }, { forks: "only" });
-    expect(onlyForks.slugs).toEqual(["o/copy"]);
+    expect(slugs(onlyForks.repos)).toEqual(["o/copy"]);
   });
 
   test("visibility: public and private go into the query string", async () => {
@@ -84,7 +119,7 @@ describe("discoverRepos", () => {
       },
       { visibility: "public" },
     );
-    expect(discovered.slugs).toEqual(["o/pub"]);
+    expect(slugs(discovered.repos)).toEqual(["o/pub"]);
   });
 
   test("visibility: private drops internal repos client-side", async () => {
@@ -96,8 +131,10 @@ describe("discoverRepos", () => {
       },
       { visibility: "private" },
     );
-    expect(discovered.slugs).toEqual(["o/priv"]);
-    expect(discovered.filtered).toEqual([{ reason: "visibility=private", slugs: ["o/int"] }]);
+    expect(slugs(discovered.repos)).toEqual(["o/priv"]);
+    expect(filteredSlugs(discovered.filtered)).toEqual([
+      { reason: "visibility=private", slugs: ["o/int"] },
+    ]);
   });
 
   test("visibility: internal filters client-side with no server param", async () => {
@@ -109,8 +146,10 @@ describe("discoverRepos", () => {
       },
       { visibility: "internal" },
     );
-    expect(discovered.slugs).toEqual(["o/int"]);
-    expect(discovered.filtered).toEqual([{ reason: "visibility=internal", slugs: ["o/pub"] }]);
+    expect(slugs(discovered.repos)).toEqual(["o/int"]);
+    expect(filteredSlugs(discovered.filtered)).toEqual([
+      { reason: "visibility=internal", slugs: ["o/pub"] },
+    ]);
   });
 
   test("topics keep repos carrying at least one listed topic, case-insensitively", async () => {
@@ -126,8 +165,8 @@ describe("discoverRepos", () => {
       },
       { topics: ["team-a", "team-b"] },
     );
-    expect(discovered.slugs).toEqual(["o/a"]);
-    expect(discovered.filtered).toEqual([
+    expect(slugs(discovered.repos)).toEqual(["o/a"]);
+    expect(filteredSlugs(discovered.filtered)).toEqual([
       { reason: "topics (has none of: team-a, team-b)", slugs: ["o/b", "o/c"] },
     ]);
   });
@@ -141,8 +180,8 @@ describe("discoverRepos", () => {
       },
       { exclude: ["tmp-*", "octo/*"] },
     );
-    expect(discovered.slugs).toEqual(["o/keep"]);
-    expect(discovered.filtered).toEqual([
+    expect(slugs(discovered.repos)).toEqual(["o/keep"]);
+    expect(filteredSlugs(discovered.filtered)).toEqual([
       { reason: 'exclude pattern "tmp-*"', slugs: ["o/tmp-1"] },
       { reason: 'exclude pattern "octo/*"', slugs: ["octo/keep"] },
     ]);
@@ -155,8 +194,10 @@ describe("discoverRepos", () => {
       },
       { forks: "exclude", exclude: ["tmp-*"] },
     );
-    expect(discovered.slugs).toEqual([]);
-    expect(discovered.filtered).toEqual([{ reason: "archived", slugs: ["o/tmp-fork"] }]);
+    expect(discovered.repos).toEqual([]);
+    expect(filteredSlugs(discovered.filtered)).toEqual([
+      { reason: "archived", slugs: ["o/tmp-fork"] },
+    ]);
   });
 
   test("affiliation list lands in the query string", async () => {
@@ -168,7 +209,7 @@ describe("discoverRepos", () => {
       },
       { affiliation: ["owner", "collaborator"] },
     );
-    expect(discovered.slugs).toEqual(["o/x"]);
+    expect(slugs(discovered.repos)).toEqual(["o/x"]);
   });
 
   test("a denied listing explains the PAT requirement", async () => {
@@ -214,5 +255,85 @@ describe("discoverRepos", () => {
     const discovered = await discoverRepos(api, DEFAULT_DISCOVERY_FILTERS);
     expect("error" in discovered && discovered.error).toContain("re-run the workflow");
     expect("error" in discovered && discovered.error).not.toContain("Discovery needs a user PAT");
+  });
+});
+
+describe("formatSkipNotice", () => {
+  const ref = (
+    slug: string,
+    visibility: DiscoveredRepoRef["visibility"] = "public",
+  ): DiscoveredRepoRef => ({ slug, visibility });
+
+  test("without redaction, every slug is listed regardless of visibility", () => {
+    const group = {
+      reason: "forks=exclude",
+      repos: [ref("o/a"), ref("o/b", "private"), ref("o/c", "internal")],
+    };
+    expect(formatSkipNotice(group, false)).toBe(
+      'repos: "*" discovery skipped 3 repositories by forks=exclude: o/a, o/b, o/c',
+    );
+  });
+
+  test("without redaction, only the first 20 slugs are listed", () => {
+    const repos = Array.from({ length: 23 }, (_, i) => ref(`o/r${i}`));
+    const notice = formatSkipNotice({ reason: "forks=exclude", repos }, false);
+    expect(notice).toContain("o/r19, and 3 more");
+    expect(notice).not.toContain("o/r20");
+  });
+
+  test("redaction lists public slugs and counts the rest", () => {
+    const group = {
+      reason: "forks=exclude",
+      repos: [ref("o/a"), ref("o/b", "private"), ref("o/c"), ref("o/d", "internal")],
+    };
+    expect(formatSkipNotice(group, true)).toBe(
+      'repos: "*" discovery skipped 4 repositories by forks=exclude: o/a, o/c, and 2 private or internal repositories',
+    );
+  });
+
+  test("a single hidden repo gets the singular count", () => {
+    const group = { reason: "forks=exclude", repos: [ref("o/a"), ref("o/b", "private")] };
+    expect(formatSkipNotice(group, true)).toBe(
+      'repos: "*" discovery skipped 2 repositories by forks=exclude: o/a, and 1 private or internal repository',
+    );
+  });
+
+  test("an all-private group renders the count only, with no names", () => {
+    const group = {
+      reason: "forks=exclude",
+      repos: [ref("o/a", "private"), ref("o/b", "internal")],
+    };
+    expect(formatSkipNotice(group, true)).toBe(
+      'repos: "*" discovery skipped 2 private or internal repositories by forks=exclude',
+    );
+  });
+
+  test("the archived prose survives every redaction form", () => {
+    const mixed = { reason: "archived", repos: [ref("o/a"), ref("o/b", "private")] };
+    expect(formatSkipNotice(mixed, false)).toBe(
+      'repos: "*" discovery skipped 2 repositories because settings writes fail on archived repositories; unarchive them to manage them: o/a, o/b',
+    );
+    expect(formatSkipNotice(mixed, true)).toBe(
+      'repos: "*" discovery skipped 2 repositories because settings writes fail on archived repositories; unarchive them to manage them: o/a, and 1 private or internal repository',
+    );
+    const allPrivate = { reason: "archived", repos: [ref("o/b", "private")] };
+    expect(formatSkipNotice(allPrivate, true)).toBe(
+      'repos: "*" discovery skipped 1 private or internal repository because settings writes fail on archived repositories; unarchive them to manage them',
+    );
+  });
+
+  test("redaction caps the public list at 20 before counting the hidden", () => {
+    const repos = [
+      ...Array.from({ length: 22 }, (_, i) => ref(`o/pub${i}`)),
+      ref("o/secret", "private"),
+    ];
+    const notice = formatSkipNotice({ reason: "forks=exclude", repos }, true);
+    expect(notice).toBe(
+      `repos: "*" discovery skipped 23 repositories by forks=exclude: ${Array.from(
+        { length: 20 },
+        (_, i) => `o/pub${i}`,
+      ).join(", ")}, and 2 more, and 1 private or internal repository`,
+    );
+    expect(notice).not.toContain("o/secret");
   });
 });

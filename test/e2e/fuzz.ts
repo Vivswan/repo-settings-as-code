@@ -22,7 +22,14 @@ import type { SectionKey } from "../../src/schema.js";
 import { genDiscoveryScenario, genMultiScenario, genScenario } from "./generators.js";
 import { predictDiscovery, predictMulti, predictOutcomes } from "./oracle.js";
 import { Rng } from "./prng.js";
-import { parseReposResult, parseSummaryOutcomes, runScenario } from "./runner.js";
+import {
+  checkLeaks,
+  parseReposResult,
+  parseSummaryOutcomes,
+  runScenario,
+  stripDebugLines,
+  stripMaskLines,
+} from "./runner.js";
 import type { Scenario } from "./schema.js";
 
 const FAILURE_CAP = 5;
@@ -324,6 +331,13 @@ async function multiRepoFuzzIteration(seed: number): Promise<IterationResult> {
 
   const report = await runScenario(scenario);
   const problems: string[] = [];
+  // Non-vacuity guard: a redact run must always exercise a non-empty forbidden
+  // set (the generator forces one private target), so the leak check below is
+  // never trivially satisfied. A regression that lets a redact run go all-public
+  // fails here instead of passing vacuously.
+  if (meta.privateRepos === "redact" && prediction.forbidden.length === 0) {
+    problems.push("redact run produced an empty forbidden set - the leak check would be vacuous");
+  }
   for (const failure of report.failures) {
     if (!failure.startsWith("exit code ")) {
       problems.push(failure);
@@ -334,27 +348,65 @@ async function multiRepoFuzzIteration(seed: number): Promise<IterationResult> {
       `exit code ${report.exitCode} not in predicted {${[...prediction.allowedExitCodes].join(",")}}`,
     );
   }
+  // Redaction keys a private/probe-denied target by its "private repository #N"
+  // placeholder, so the results and predictions are compared on displayKey, not
+  // the real slug.
   const results = parseReposResult(report.outputs["repos-result"]);
   for (const repo of prediction.repos) {
-    const got = results[repo.slug];
+    const got = results[repo.displayKey];
     if (got === undefined) {
       problems.push(
-        `${repo.slug}: predicted {${[...repo.allowedResults].join(",")}} but the repo is absent from repos-result`,
+        `${repo.displayKey}: predicted {${[...repo.allowedResults].join(",")}} but the repo is absent from repos-result`,
       );
       continue;
     }
     if (!repo.allowedResults.has(got)) {
       problems.push(
-        `${repo.slug}: result "${got}" not in predicted {${[...repo.allowedResults].join(",")}}`,
+        `${repo.displayKey}: result "${got}" not in predicted {${[...repo.allowedResults].join(",")}}`,
       );
     }
   }
-  // No unexpected repos in the output either: every reported slug must be one
-  // the oracle predicted (a stray target is as much a bug as a missing one).
-  const predictedSlugs = new Set(prediction.repos.map((r) => r.slug));
-  for (const slug of Object.keys(results)) {
-    if (!predictedSlugs.has(slug)) {
-      problems.push(`${slug}: reported in repos-result but not predicted`);
+  // No unexpected keys in the output either: every reported key must be one the
+  // oracle predicted (a stray target - or a leaked real slug where a placeholder
+  // was expected - is as much a bug as a missing one).
+  const predictedKeys = new Set(prediction.repos.map((r) => r.displayKey));
+  for (const key of Object.keys(results)) {
+    if (!predictedKeys.has(key)) {
+      problems.push(`${key}: reported in repos-result but not predicted`);
+    }
+  }
+  // The shared LEAK INVARIANT: with redaction active, no redacted slug and no
+  // planted canary may appear in any public surface (stdout with ::add-mask::
+  // lines stripped, the summary, or any output). Empty forbidden set under show.
+  problems.push(...checkLeaks(report, prediction.forbidden));
+
+  // UNREDACTED COUNTERFACTUAL: prove this iteration is a REAL leak test, not a
+  // vacuous one. Re-run the SAME scenario under private-repos: show and require
+  // that at least one canary provably surfaces in a RENDERED public surface -
+  // the summary, an annotation, a plain log line, or an output - NOT merely a
+  // ::debug:: API trace. Detail-suppression regressions affect rendered output,
+  // so a canary that only ever appears in a debug trace would not catch them.
+  // The generator pins the forced-private target fully granted, so its canary
+  // label's name always reaches the rendered detail under show. Only canaries
+  // are checked (not slugs), since it is DETAIL suppression this guards.
+  if (meta.privateRepos === "redact") {
+    const canaries = meta.repos.flatMap((r) => r.canaries);
+    if (canaries.length > 0) {
+      const shown = await runScenario({
+        ...scenario,
+        inputs: { ...scenario.inputs, private_repos: "show" },
+      });
+      const rendered = [
+        stripDebugLines(stripMaskLines(shown.stdout)),
+        stripDebugLines(stripMaskLines(shown.stderr)),
+        shown.summary,
+        ...Object.values(shown.outputs),
+      ].join("\n");
+      if (!canaries.some((c) => rendered.includes(c))) {
+        problems.push(
+          "counterfactual: no canary surfaced in a rendered surface under private-repos: show, so the redacted leak check is vacuous",
+        );
+      }
     }
   }
 
@@ -376,25 +428,53 @@ async function multiRepoFuzzIteration(seed: number): Promise<IterationResult> {
  */
 async function discoveryFuzzIteration(seed: number): Promise<IterationResult> {
   const { scenario, meta } = genDiscoveryScenario(new Rng(seed));
-  const kept = new Set(predictDiscovery(meta.pool, meta.filters));
+  const kept = predictDiscovery(meta.pool, meta.filters);
   // Zero surviving repos is a fatal configuration error for the action (there
   // is nothing to apply against), so the exit prediction follows the kept set.
   // The runner's own exit-code check enforces it; no failure is filtered here.
-  scenario.expect = { exit_code: kept.size === 0 ? 1 : 0 };
+  scenario.expect = { exit_code: kept.length === 0 ? 1 : 0 };
 
   const report = await runScenario(scenario);
   const problems: string[] = [...report.failures];
   const results = parseReposResult(report.outputs["repos-result"]);
   const got = new Set(Object.keys(results));
+
+  const redact = meta.privateRepos === "redact";
+  const visibilityOf = new Map(meta.pool.map((r) => [r.slug, r.visibility ?? "public"]));
+  // The display KEY the action emits per kept repo: under redact, a
+  // private/internal kept repo is keyed by "private repository #N" numbered over
+  // the kept repos in kept order (matching planRedaction); a public one keeps its
+  // slug. Discovery has no per-repo probe (visibility comes from /user/repos), so
+  // only the planted visibility matters.
+  const expectedKeys = new Set<string>();
+  let ordinal = 0;
   for (const slug of kept) {
-    if (!got.has(slug)) {
-      problems.push(`discovery kept ${slug} but it is absent from repos-result`);
+    const isPrivate = redact && visibilityOf.get(slug) !== "public";
+    if (isPrivate) {
+      ordinal += 1;
+      expectedKeys.add(`private repository #${ordinal}`);
+    } else {
+      expectedKeys.add(slug);
     }
   }
-  for (const slug of got) {
-    if (!kept.has(slug)) {
-      problems.push(`discovery processed ${slug} but it was filtered out by the oracle`);
+  for (const key of expectedKeys) {
+    if (!got.has(key)) {
+      problems.push(`discovery expected key ${key} but it is absent from repos-result`);
     }
+  }
+  for (const key of got) {
+    if (!expectedKeys.has(key)) {
+      problems.push(`discovery processed ${key} but it was not an expected key`);
+    }
+  }
+  // The leak invariant: under redact, EVERY private/internal pool repo - kept
+  // (redacted) or filtered out - must have its slug absent from every public
+  // surface. Public kept slugs render normally and are not forbidden.
+  if (redact) {
+    const forbidden = meta.pool
+      .filter((r) => (r.visibility ?? "public") !== "public")
+      .map((r) => r.slug);
+    problems.push(...checkLeaks(report, forbidden));
   }
   return {
     ok: problems.length === 0,

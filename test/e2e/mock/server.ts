@@ -17,6 +17,7 @@ import {
   type CorruptOption,
   type FaultOption,
   type LoggedRequest,
+  newPipelineRunState,
   runPipeline,
 } from "./routes.js";
 import {
@@ -107,9 +108,9 @@ export async function startMockServer(
   const state = multi ? undefined : buildState(scenario.live_state, scenario.owner_kind);
   const requests: LoggedRequest[] = [];
   const violations: string[] = [];
-  const corruptCounts = new Map<string, number>();
-  const deniedReadSections = new Set<string>();
-  const faultCounts = new Map<string, number>();
+  // All mutable per-run pipeline state (chaos/fault counts + barrier bookkeeping)
+  // from one factory, so a new field cannot be omitted at the call site below.
+  const runState = newPipelineRunState();
   // One-way override flipped by enterCheckMode(); ORed with the scenario mode.
   let checkModeOverride = false;
 
@@ -138,10 +139,8 @@ export async function startMockServer(
           multi,
           basePrefix: options.basePrefix,
           corrupt: options.corrupt,
-          corruptCounts,
           faults: options.faults,
-          faultCounts,
-          deniedReadSections,
+          ...runState,
           checkMode: scenario.inputs?.mode === "check" || checkModeOverride,
         },
       );
