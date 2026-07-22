@@ -1,0 +1,25 @@
+name: policy-matrix-apply-fail
+description: >
+  Apply mode with on-missing-permission fail. Preflight runs every section as a
+  read pass first; the denied labels section trips it, so the run fails before
+  any write and applies nothing at all, not even repository. Zero mutations.
+settings:
+  repository:
+    has_issues: false
+  labels:
+    - name: bug
+      color: d73a4a
+denial_style: 403
+token_permissions:
+  issues: none
+inputs:
+  mode: apply
+  on_missing_permission: fail
+expect:
+  exit_code: 1
+  result: failed
+  mutations: []
+  never:
+    - PATCH /repos/{repo}
+    - PUT /repos/{repo}/topics
+    - POST /repos/{repo}/labels

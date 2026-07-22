@@ -1,0 +1,19 @@
+name: teams-user-account-skip
+description: >-
+  On a personal account the org probe 404s, so the teams section notes and
+  skips with zero team writes even though the token holds every permission.
+settings:
+  teams:
+    - name: platform
+      permission: push
+owner_kind: user
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    teams: applied
+  never:
+    - "PUT /orgs/e2e-owner/teams/platform/repos/{repo}"
+    - "GET /orgs/e2e-owner/teams/platform/repos/{repo}"
+  stdout_contains:
+    - "personal account"

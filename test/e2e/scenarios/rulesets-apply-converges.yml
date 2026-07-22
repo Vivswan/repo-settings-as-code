@@ -1,0 +1,37 @@
+# Apply creates a declared repository ruleset that is missing live, and leaves
+# an organization-sourced ruleset (source_type Organization) untouched - the
+# section only manages Repository-sourced rulesets. Re-running in check mode
+# against the mutated server must report clean with no further writes.
+name: rulesets-apply-converges
+settings:
+  rulesets:
+    - name: main-protection
+      target: branch
+      enforcement: active
+      conditions:
+        ref_name:
+          include: ["~DEFAULT_BRANCH"]
+          exclude: []
+      rules:
+        - type: deletion
+        - type: non_fast_forward
+live_state:
+  rulesets:
+    - id: 900
+      name: org-baseline
+      source_type: Organization
+      target: branch
+      enforcement: active
+token_permissions:
+  administration: write
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    rulesets: applied
+  mutations:
+    - "POST /repos/{repo}/rulesets"
+  never:
+    - "PUT /repos/{repo}/rulesets/900"
+    - "DELETE /repos/{repo}/rulesets/900"
+  converges: true

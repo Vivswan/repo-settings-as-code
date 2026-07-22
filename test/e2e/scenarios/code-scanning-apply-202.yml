@@ -1,0 +1,28 @@
+name: code-scanning-apply-202
+description: >-
+  The settings file changes the default-setup languages. The PATCH answers
+  202 with a run_id (GitHub starts an async configuration run), and the
+  change line names that run. A check rerun converges over the mutated state.
+settings:
+  code_scanning_default_setup:
+    state: configured
+    languages:
+      - javascript-typescript
+      - python
+    query_suite: default
+live_state:
+  code_scanning:
+    state: configured
+    languages:
+      - javascript-typescript
+    query_suite: default
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    code_scanning_default_setup: applied
+  mutations:
+    - "PATCH /repos/{repo}/code-scanning/default-setup"
+  stdout_contains:
+    - "GitHub started configuration run"
+  converges: true

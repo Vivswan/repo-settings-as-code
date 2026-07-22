@@ -1,0 +1,22 @@
+name: fine-grained-absent-pages
+description: >
+  Pages is an absent-semantics section: its read is a probe that tolerates 404.
+  Under a fine-grained token denied Pages, the read answers 404, which the
+  handler reads as "no Pages site" rather than a permission error. So check mode
+  reports drift (declared but not enabled) instead of skipping the section.
+settings:
+  pages:
+    source:
+      branch: main
+      path: /
+token_permissions:
+  pages: none
+inputs:
+  mode: check
+expect:
+  exit_code: 1
+  result: drift
+  outcomes:
+    pages: drift
+  summary_contains:
+    - pages

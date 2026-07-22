@@ -1,0 +1,24 @@
+name: teams-check-drift
+description: >-
+  Check mode on an organization repo reports a team whose live role diverges
+  from the settings file, exits 1, and writes nothing.
+settings:
+  teams:
+    - name: platform
+      permission: push
+inputs:
+  mode: check
+owner_kind: org
+live_state:
+  teams:
+    platform:
+      role_name: read
+expect:
+  exit_code: 1
+  result: drift
+  outcomes:
+    teams: drift
+  never:
+    - "PUT /orgs/e2e-owner/teams/platform/repos/{repo}"
+  summary_contains:
+    - "teams[platform]"

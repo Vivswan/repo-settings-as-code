@@ -1,0 +1,27 @@
+name: milestones-check-drift
+description: >-
+  Check mode reports a missing declared milestone (apply would create it) and
+  keeps an undeclared live milestone as a note, exits 1, and writes nothing.
+settings:
+  milestones:
+    - title: v2.0
+      description: Next major.
+inputs:
+  mode: check
+live_state:
+  milestones:
+    - id: 900003
+      number: 3
+      state: open
+      title: v1.0
+      description: First stable release.
+expect:
+  exit_code: 1
+  result: drift
+  outcomes:
+    milestones: drift
+  never:
+    - "POST /repos/{repo}/milestones"
+    - "PATCH /repos/{repo}/milestones/3"
+  summary_contains:
+    - "milestones[v2.0]"

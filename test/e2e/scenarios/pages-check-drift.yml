@@ -1,0 +1,28 @@
+name: pages-check-drift
+description: >-
+  Check mode over a live Pages site whose cname diverges from the settings
+  file reports drift and exits 1, writing nothing.
+settings:
+  pages:
+    cname: new.example.com
+inputs:
+  mode: check
+live_state:
+  pages:
+    url: https://api.github.com/repos/e2e-owner/e2e-repo/pages
+    build_type: workflow
+    cname: old.example.com
+    source:
+      branch: main
+      path: /
+expect:
+  exit_code: 1
+  result: drift
+  outcomes:
+    pages: drift
+  never:
+    - "PUT /repos/{repo}/pages"
+    - "POST /repos/{repo}/pages"
+    - "DELETE /repos/{repo}/pages"
+  summary_contains:
+    - "pages.cname"

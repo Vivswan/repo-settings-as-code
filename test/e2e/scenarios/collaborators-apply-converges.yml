@@ -1,0 +1,27 @@
+name: collaborators-apply-converges
+description: >-
+  One declared collaborator is missing (apply invites) and one is live at the
+  wrong role (apply updates). Both go through PUT; a check rerun over the
+  mutated state converges.
+settings:
+  collaborators:
+    - username: e2e-new
+      permission: push
+    - username: e2e-existing
+      permission: admin
+live_state:
+  collaborators:
+    - login: e2e-existing
+      role_name: write
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    collaborators: applied
+  mutations:
+    - "PUT /repos/{repo}/collaborators/e2e-new"
+    - "PUT /repos/{repo}/collaborators/e2e-existing"
+  stdout_contains:
+    - "invited collaborator \"e2e-new\""
+    - "updated collaborator \"e2e-existing\""
+  converges: true

@@ -1,0 +1,26 @@
+name: pages-create-then-update
+description: >-
+  No live Pages site and the settings file declares a source plus an
+  update-only field (cname). Apply POSTs to create (build_type/source), then
+  PUTs the remainder, in that order. A check rerun converges.
+settings:
+  pages:
+    build_type: workflow
+    source:
+      branch: main
+      path: /
+    cname: docs.example.com
+live_state:
+  pages: null
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    pages: applied
+  mutations:
+    - "POST /repos/{repo}/pages"
+    - "PUT /repos/{repo}/pages"
+  stdout_contains:
+    - "enabled GitHub Pages"
+    - "applied remaining Pages configuration"
+  converges: true

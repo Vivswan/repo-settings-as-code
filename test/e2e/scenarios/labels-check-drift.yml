@@ -1,0 +1,33 @@
+name: labels-check-drift
+description: >
+  Check mode surfaces three kinds of label drift at once: a rename (new_name),
+  a color change, and a live label the settings file does not declare (which
+  apply would delete). The run reports drift, exits 1, and writes nothing.
+settings:
+  labels:
+    - name: bug
+      new_name: defect
+      color: ff0000
+      description: Something isn't working
+live_state:
+  labels:
+    - name: bug
+      color: d73a4a
+      description: Something isn't working
+    - name: wontfix
+      color: ffffff
+      description: This will not be worked on
+inputs:
+  mode: check
+expect:
+  exit_code: 1
+  result: drift
+  outcomes:
+    labels: drift
+  never:
+    - POST /repos/{repo}/labels
+    - PATCH /repos/{repo}/labels
+    - DELETE /repos/{repo}/labels
+  summary_contains:
+    - should be named
+    - undeclared

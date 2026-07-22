@@ -1,0 +1,25 @@
+name: code-scanning-check-drift
+description: >-
+  Check mode over a default-setup whose query_suite diverges from the
+  settings file reports drift and exits 1, writing nothing.
+settings:
+  code_scanning_default_setup:
+    state: configured
+    query_suite: extended
+inputs:
+  mode: check
+live_state:
+  code_scanning:
+    state: configured
+    languages:
+      - javascript-typescript
+    query_suite: default
+expect:
+  exit_code: 1
+  result: drift
+  outcomes:
+    code_scanning_default_setup: drift
+  never:
+    - "PATCH /repos/{repo}/code-scanning/default-setup"
+  summary_contains:
+    - "code_scanning_default_setup.query_suite"

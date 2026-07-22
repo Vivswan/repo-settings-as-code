@@ -1,0 +1,19 @@
+name: teams-apply-converges
+description: >-
+  An organization repo grants a declared team access it does not yet have.
+  Apply PUTs the grant, and a check rerun over the mutated state converges.
+settings:
+  teams:
+    - name: platform
+      permission: push
+owner_kind: org
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    teams: applied
+  mutations:
+    - "PUT /orgs/e2e-owner/teams/platform/repos/{repo}"
+  stdout_contains:
+    - "granted team \"platform\" push"
+  converges: true

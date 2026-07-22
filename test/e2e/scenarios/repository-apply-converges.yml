@@ -1,0 +1,25 @@
+name: repository-apply-converges
+description: >
+  Apply divergent repository fields, a new topic set, and one security toggle
+  in a single run. The handler patches the plain fields, replaces the topics,
+  then enables vulnerability alerts. A second check pass makes no writes.
+settings:
+  repository:
+    has_issues: false
+    allow_merge_commit: true
+    topics:
+      - automation
+      - governance
+    enable_vulnerability_alerts: true
+inputs:
+  mode: apply
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    repository: applied
+  mutations:
+    - PATCH /repos/{repo}
+    - PUT /repos/{repo}/topics
+    - PUT /repos/{repo}/vulnerability-alerts
+  converges: true

@@ -1,0 +1,28 @@
+name: milestones-apply-converges
+description: >-
+  A live milestone diverges from the settings file in its description. Apply
+  PATCHes it by milestone number, and a check rerun over the mutated state
+  converges.
+settings:
+  milestones:
+    - title: v1.0
+      description: First stable release.
+live_state:
+  milestones:
+    - id: 900002
+      number: 7
+      state: open
+      title: v1.0
+      description: Outdated description.
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    milestones: applied
+  mutations:
+    - "PATCH /repos/{repo}/milestones/7"
+  never:
+    - "POST /repos/{repo}/milestones"
+  stdout_contains:
+    - "updated milestone \"v1.0\""
+  converges: true

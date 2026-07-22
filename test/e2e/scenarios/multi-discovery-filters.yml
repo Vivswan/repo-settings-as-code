@@ -1,0 +1,48 @@
+# Multi-repo repos: "*" discovery. The /user/repos pool carries archived, fork,
+# and off-topic repositories alongside two managed services; the discovery
+# filters (archived skip default, forks exclude, topics platform) keep only
+# svc-a and svc-b. The action must issue zero requests to the filtered repos and
+# roll the per-target results up worst-of. Both kept repos apply one label, so
+# the aggregate result is "applied".
+name: multi-discovery-filters
+settings: {}
+discovery:
+  inputs:
+    forks: exclude
+    topics: platform
+  pool:
+    - { slug: e2e-owner/svc-a, topics: [platform] }
+    - { slug: e2e-owner/svc-b, topics: [platform] }
+    - { slug: e2e-owner/archived-x, topics: [platform], archived: true }
+    - { slug: e2e-owner/forked-y, topics: [platform], fork: true }
+    - { slug: e2e-owner/other-z, topics: [misc] }
+repos:
+  e2e-owner/svc-a:
+    settings:
+      labels:
+        - name: managed
+          color: "00ff00"
+    expect:
+      result: applied
+  e2e-owner/svc-b:
+    settings:
+      labels:
+        - name: managed
+          color: "00ff00"
+    expect:
+      result: applied
+token_permissions:
+  issues: write
+  contents: read
+expect:
+  exit_code: 0
+  result: applied
+  repos_result:
+    e2e-owner/svc-a: applied
+    e2e-owner/svc-b: applied
+  never:
+    - "GET /repos/e2e-owner/archived-x"
+    - "GET /repos/e2e-owner/forked-y"
+    - "GET /repos/e2e-owner/other-z"
+  requests_contain:
+    - "GET /user/repos"

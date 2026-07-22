@@ -1,0 +1,34 @@
+# Check mode reports two drift lines: the declared TICKET- autolink differs
+# from live (cannot be edited, so apply would delete and recreate it), and the
+# undeclared JIRA- autolink would be DELETEd. No write is attempted.
+name: autolinks-check-drift
+settings:
+  autolinks:
+    - key_prefix: "TICKET-"
+      url_template: "https://example.com/TICKET?q=<num>"
+      is_alphanumeric: true
+inputs:
+  mode: check
+live_state:
+  autolinks:
+    - id: 10
+      key_prefix: "TICKET-"
+      url_template: "https://old.example.com/<num>"
+      is_alphanumeric: true
+    - id: 20
+      key_prefix: "JIRA-"
+      url_template: "https://jira.example.com/<num>"
+      is_alphanumeric: true
+token_permissions:
+  administration: read
+expect:
+  exit_code: 1
+  result: drift
+  outcomes:
+    autolinks: drift
+  summary_contains:
+    - "autolinks[TICKET-]: live settings differ"
+    - "autolinks[JIRA-]: undeclared"
+  never:
+    - "DELETE /repos/{repo}/autolinks/10"
+    - "DELETE /repos/{repo}/autolinks/20"

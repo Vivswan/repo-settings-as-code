@@ -1,0 +1,23 @@
+name: policy-matrix-check-fail
+description: >
+  Check mode with on-missing-permission fail. The token lacks Issues, so the
+  denied labels section makes the whole run fail and exit 1, even though
+  repository is clean.
+settings:
+  repository:
+    has_issues: true
+  labels:
+    - name: bug
+      color: d73a4a
+denial_style: 403
+token_permissions:
+  issues: none
+inputs:
+  mode: check
+  on_missing_permission: fail
+expect:
+  exit_code: 1
+  result: failed
+  never:
+    - POST /repos/{repo}/labels
+    - PATCH /repos/{repo}/labels

@@ -1,0 +1,25 @@
+name: policy-matrix-apply-warn
+description: >
+  Apply mode with on-missing-permission warn. The token lacks Issues, so labels
+  is skipped while repository is applied, a partial success that stays green.
+settings:
+  repository:
+    has_issues: false
+  labels:
+    - name: bug
+      color: d73a4a
+denial_style: 403
+token_permissions:
+  issues: none
+inputs:
+  mode: apply
+  on_missing_permission: warn
+expect:
+  exit_code: 0
+  outcomes:
+    repository: applied
+    labels: skipped
+  mutations:
+    - PATCH /repos/{repo}
+  never:
+    - POST /repos/{repo}/labels

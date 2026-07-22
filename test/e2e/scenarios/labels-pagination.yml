@@ -1,0 +1,29 @@
+name: labels-pagination
+description: >
+  The repo has 150 labels, so listing them spans two pages (100 per page). The
+  settings file declares a color change to gen-140, which only appears on the
+  second page, so the run must fetch page 2 to see it. Check mode reports the
+  drift and the request log proves the page=2 read happened.
+settings:
+  labels:
+    - name: gen-140
+      color: 00ff00
+live_state:
+  labels:
+    generate:
+      count: 150
+      prefix: gen
+      color: ededed
+inputs:
+  mode: check
+expect:
+  exit_code: 1
+  result: drift
+  outcomes:
+    labels: drift
+  requests_contain:
+    - page=2
+  never:
+    - POST /repos/{repo}/labels
+    - PATCH /repos/{repo}/labels
+    - DELETE /repos/{repo}/labels

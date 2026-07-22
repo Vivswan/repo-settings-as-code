@@ -1,0 +1,20 @@
+name: unknown-top-level-key
+description: >
+  A settings file with an unrecognized top-level key is a hard validation error:
+  the run exits 1 and names the offending key. It should also make zero API
+  calls (validation precedes contact), but expect.never cannot assert the
+  absence of GETs by prefix, so the zero-calls proof is left to the fuzz phase;
+  here we pin the exit code and the error message naming the key.
+settings:
+  labels:
+    - name: bug
+      color: d73a4a
+  not_a_real_section:
+    anything: here
+inputs:
+  mode: apply
+expect:
+  exit_code: 1
+  result: failed
+  stdout_contains:
+    - not_a_real_section

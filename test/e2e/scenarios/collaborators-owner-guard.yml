@@ -1,0 +1,31 @@
+name: collaborators-owner-guard
+description: >-
+  Live collaborators include the repo owner and an undeclared collaborator;
+  the settings file declares only a third user (already at the right role).
+  Apply REMOVES the undeclared collaborator but never the owner, and a check
+  rerun converges.
+settings:
+  collaborators:
+    - username: e2e-keeper
+      permission: push
+live_state:
+  collaborators:
+    - login: e2e-owner
+      role_name: admin
+    - login: e2e-keeper
+      role_name: write
+    - login: e2e-stale
+      role_name: write
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    collaborators: applied
+  mutations:
+    - "DELETE /repos/{repo}/collaborators/e2e-stale"
+  never:
+    - "DELETE /repos/{repo}/collaborators/e2e-owner"
+    - "PUT /repos/{repo}/collaborators/e2e-keeper"
+  stdout_contains:
+    - "REMOVED undeclared collaborator \"e2e-stale\""
+  converges: true

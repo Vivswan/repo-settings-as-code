@@ -1,0 +1,30 @@
+# Same missing-branch check, but the token lacks Contents, so the advisory
+# branch-existence probe is denied (403 under this denial style) rather than a
+# definitive 404. The section degrades gracefully: it cannot confirm the branch
+# is absent, so it falls back to the plain "unprotected, apply will protect it"
+# drift line instead of the "does not exist" wording - and the section does NOT
+# fail (the probe is advisory, issued outside the permission-classified path).
+name: branches-missing-branch-no-contents
+settings:
+  branches:
+    - name: release
+      protection:
+        enforce_admins: true
+inputs:
+  mode: check
+denial_style: 403
+live_state:
+  branches: ["main"]
+  branch_protection: {}
+token_permissions:
+  administration: read
+  contents: none
+expect:
+  exit_code: 1
+  result: drift
+  outcomes:
+    branches: drift
+  summary_contains:
+    - "unprotected live but the settings file declares protection"
+  never:
+    - "PUT /repos/{repo}/branches/release/protection"

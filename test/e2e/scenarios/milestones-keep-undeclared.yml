@@ -1,0 +1,31 @@
+name: milestones-keep-undeclared
+description: >-
+  A live milestone the settings file does not declare is KEPT (milestones are
+  never deleted), surfaced as a note; the one declared milestone is created.
+  No PATCH or DELETE ever touches the undeclared milestone. A check rerun
+  converges.
+settings:
+  milestones:
+    - title: v1.0
+      description: First stable release.
+live_state:
+  milestones:
+    - id: 900001
+      number: 1
+      state: open
+      title: v0.9
+      description: Old preview.
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    milestones: applied
+  mutations:
+    - "POST /repos/{repo}/milestones"
+  never:
+    - "PATCH /repos/{repo}/milestones/1"
+    - "DELETE /repos/{repo}/milestones/1"
+  stdout_contains:
+    - "created milestone \"v1.0\""
+    - "v0.9"
+  converges: true

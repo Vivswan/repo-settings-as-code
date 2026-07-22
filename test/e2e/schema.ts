@@ -7,10 +7,11 @@
  * file and the offending field) rather than producing a confusing run.
  */
 
-import { readdirSync, readFileSync } from "node:fs";
+import { type Dirent, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import { FILTER_INPUTS } from "../../src/action/inputs.js";
 import type { PatResource } from "../../src/sections/contract.js";
 import type { LiveState } from "./mock/state.js";
 
@@ -105,6 +106,12 @@ export const ExpectSchema = z
      * mutated mock and expects exit 0 with zero writes (the convergence proof).
      */
     converges: z.boolean().optional(),
+    /**
+     * Multi-repo: the expected per-target rollup, parsed from the action's
+     * `repos-result` JSON output, keyed by "owner/name" slug -> result string
+     * ("applied" | "clean" | "drift" | "skipped" | "failed" | ...).
+     */
+    repos_result: z.record(z.string(), z.string()).optional(),
   })
   .strict();
 
@@ -119,6 +126,55 @@ const LiveStateSchema = z.record(z.string(), z.unknown()).transform((v) => v as 
 /** A settings file body: any YAML mapping (validated for real by the action). */
 const SettingsSchema = z.record(z.string(), z.unknown());
 
+/** The token permission mask shape, reused for the global and per-repo masks. */
+const TokenPermissionsSchema = z.partialRecord(MaskKeySchema, MaskGradeSchema);
+
+/**
+ * One target repo in a multi-repo scenario. `settings` is that repo's
+ * settings.yml body, or null when the repo has NO settings file (the
+ * contents-404 -> skipped path). `live_state` and `permissions` scope the
+ * mock's per-slug state and denial mask to this target; `expect.result` pins
+ * this repo's individual rollup (also assertable via the top-level
+ * repos_result map).
+ */
+const MultiRepoSchema = z
+  .object({
+    settings: SettingsSchema.nullable().optional(),
+    live_state: LiveStateSchema.optional(),
+    permissions: TokenPermissionsSchema.optional(),
+    expect: z.object({ result: z.string().optional() }).strict().optional(),
+  })
+  .strict();
+
+/**
+ * One discovery-pool repo `/user/repos` enumerates for a repos: "*" scenario.
+ * The four attributes are the client-side-filterable fields the discovery
+ * engine reads; the mock serves them verbatim and never pre-filters.
+ */
+const DiscoveryRepoSchema = z
+  .object({
+    slug: z.string(),
+    archived: z.boolean().optional(),
+    fork: z.boolean().optional(),
+    visibility: z.string().optional(),
+    topics: z.array(z.string()).optional(),
+  })
+  .strict();
+
+/**
+ * The discovery configuration for a repos: "*" scenario: the pool the mock
+ * enumerates, and the discovery-filter action inputs the runner forwards as
+ * INPUT_* vars. Keys are constrained to the real filter input names
+ * (FILTER_INPUTS from the action), so a typoed filter fails at load time rather
+ * than being silently forwarded and ignored.
+ */
+const DiscoverySchema = z
+  .object({
+    pool: z.array(DiscoveryRepoSchema),
+    inputs: z.partialRecord(z.enum(FILTER_INPUTS), z.string()).default({}),
+  })
+  .strict();
+
 export const ScenarioSchema = z
   .object({
     name: z.string(),
@@ -127,10 +183,26 @@ export const ScenarioSchema = z
     settings: SettingsSchema,
     inputs: InputsSchema.optional(),
     /** Resource -> granted access; unspecified resources default to "write". */
-    token_permissions: z.partialRecord(MaskKeySchema, MaskGradeSchema).optional(),
+    token_permissions: TokenPermissionsSchema.optional(),
     denial_style: DenialStyleSchema.default("fine_grained"),
     live_state: LiveStateSchema.optional(),
     owner_kind: OwnerKindSchema.default("org"),
+    /**
+     * A GHES-style path prefix (e.g. "/api/v3") the mock bakes into its base
+     * URL and requires on every request, to prove the client joins the base
+     * URL correctly without dropping or doubling the prefix.
+     */
+    base_prefix: z.string().optional(),
+    /**
+     * Multi-repo mode: the target repos keyed by "owner/name" slug. Setting
+     * this (or `discovery`) makes the runner drive the action's multi-repo
+     * path (INPUT_REPOS) against the admin repo e2e-owner/e2e-repo.
+     */
+    repos: z.record(z.string(), MultiRepoSchema).optional(),
+    /** Multi-repo repos: "*" discovery: the pool plus the filter inputs. */
+    discovery: DiscoverySchema.optional(),
+    /** The defaults-file body merged under every target (INPUT_DEFAULTS-FILE). */
+    defaults_file: SettingsSchema.optional(),
     expect: ExpectSchema,
   })
   .strict();
@@ -142,6 +214,9 @@ export type DenialStyle = z.infer<typeof DenialStyleSchema>;
 export type OwnerKind = z.infer<typeof OwnerKindSchema>;
 export type Inputs = z.infer<typeof InputsSchema>;
 export type Expect = z.infer<typeof ExpectSchema>;
+export type MultiRepo = z.infer<typeof MultiRepoSchema>;
+export type DiscoveryRepo = z.infer<typeof DiscoveryRepoSchema>;
+export type Discovery = z.infer<typeof DiscoverySchema>;
 export type Scenario = z.infer<typeof ScenarioSchema>;
 
 /**
@@ -160,10 +235,16 @@ export function parseScenario(raw: unknown, sourcePath: string): Scenario {
   return result.data;
 }
 
-/** Recursively collect every .yml file under a directory. */
+/** Recursively collect every .yml file under a directory (empty if absent). */
 function collectYmlFiles(dir: string): string[] {
   const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const entry of entries) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
       out.push(...collectYmlFiles(full));

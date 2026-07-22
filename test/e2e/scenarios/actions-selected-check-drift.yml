@@ -1,0 +1,28 @@
+# Check mode: the settings declare a selected_actions allowlist, but live
+# allowed_actions is "all". The selected-actions GET answers 409 (allowlist does
+# not apply), which the section reads as "no allowlist exists" and reports as
+# drift. No write is attempted in check mode.
+name: actions-selected-check-drift
+settings:
+  actions:
+    selected_actions:
+      github_owned_allowed: true
+      patterns_allowed: ["docker/*"]
+inputs:
+  mode: check
+live_state:
+  actions_permissions:
+    enabled: true
+    allowed_actions: all
+token_permissions:
+  administration: read
+expect:
+  exit_code: 1
+  result: drift
+  outcomes:
+    actions: drift
+  summary_contains:
+    - 'the live allowed_actions policy is not "selected"'
+  never:
+    - "PUT /repos/{repo}/actions/permissions"
+    - "PUT /repos/{repo}/actions/permissions/selected-actions"

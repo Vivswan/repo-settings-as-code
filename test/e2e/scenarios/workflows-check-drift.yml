@@ -1,0 +1,30 @@
+# Check mode drift: ci.yml is active live but declared disabled (a state
+# mismatch), and old.yml exists only in the "deleted" state, which the section
+# treats as absent - so a declared active old.yml reports as "no workflow with
+# that path exists". No write is attempted in check mode.
+name: workflows-check-drift
+settings:
+  workflows:
+    - path: .github/workflows/ci.yml
+      state: disabled
+    - path: .github/workflows/old.yml
+      state: active
+inputs:
+  mode: check
+live_state:
+  workflows:
+    - { id: 1, name: CI, path: .github/workflows/ci.yml, state: active }
+    - { id: 3, name: Old, path: .github/workflows/old.yml, state: deleted }
+token_permissions:
+  actions: read
+expect:
+  exit_code: 1
+  result: drift
+  outcomes:
+    workflows: drift
+  summary_contains:
+    - 'workflows[.github/workflows/ci.yml]: declared "disabled"'
+    - "no workflow with that path exists on the repo"
+  never:
+    - "PUT /repos/{repo}/actions/workflows/1/disable"
+    - "PUT /repos/{repo}/actions/workflows/3/enable"

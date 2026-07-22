@@ -1,0 +1,20 @@
+name: ghes-prefix
+description: >
+  A GitHub Enterprise Server base URL carries an /api/v3 path prefix. The mock
+  bakes it into its URL and rejects any request missing it, so this proves the
+  client joins the base URL correctly without dropping or doubling the prefix on
+  a plain labels apply.
+base_prefix: /api/v3
+settings:
+  labels:
+    - name: bug
+      color: d73a4a
+inputs:
+  mode: apply
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    labels: applied
+  mutations:
+    - POST /repos/{repo}/labels

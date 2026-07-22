@@ -1,0 +1,30 @@
+# Apply creates an environment whose wait_timer and reviewers nest into
+# protection_rules through the mock's environmentFromPut transformer (the
+# inverse of the engine's flattenEnvironment). A check rerun flattens the
+# stored shape back and sees the declared settings satisfied, so it converges.
+name: environments-apply-converges
+settings:
+  environments:
+    - name: production
+      wait_timer: 30
+      prevent_self_review: true
+      reviewers:
+        - type: User
+          id: 101
+        - type: Team
+          id: 201
+      deployment_branch_policy:
+        protected_branches: true
+        custom_branch_policies: false
+live_state:
+  environments: {}
+token_permissions:
+  environments: write
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    environments: applied
+  mutations:
+    - "PUT /repos/{repo}/environments/production"
+  converges: true

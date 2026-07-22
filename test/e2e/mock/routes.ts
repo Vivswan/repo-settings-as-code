@@ -19,6 +19,7 @@ import {
   endpointPermission,
   matchesTemplate,
   type SectionPermission,
+  toleratedStatuses,
 } from "../../../src/sections/contract.js";
 import { allEndpoints, SECTIONS, type TaggedEndpoint } from "../../../src/sections/registry.js";
 import { DENIAL_SEMANTICS } from "../denial-semantics.js";
@@ -27,6 +28,7 @@ import {
   collaboratorFromPut,
   environmentFromPut,
   type MockState,
+  type MultiMockState,
   protectionFromPut,
   teamRepoFromPut,
 } from "./state.js";
@@ -103,13 +105,21 @@ function endpointRequirement(endpoint: TaggedEndpoint): Requirement {
 
 const GRADE_RANK: Record<MaskGrade, number> = { none: 0, read: 1, write: 2 };
 
+/**
+ * A token permission mask: resource -> grade. Unlisted resources default to
+ * write. In single-repo mode this is the scenario's token_permissions; in
+ * multi-repo mode it is the target slug's per-repo mask (so a denial can be
+ * scoped to one repository).
+ */
+export type PermissionMask = Partial<Record<MaskKey, MaskGrade>>;
+
 /** The grade the token holds for a mask resource; unlisted resources are write. */
-function maskGrade(scenario: Scenario, resource: MaskKey): MaskGrade {
-  return scenario.token_permissions?.[resource] ?? "write";
+function maskGrade(mask: PermissionMask, resource: MaskKey): MaskGrade {
+  return mask[resource] ?? "write";
 }
 
-function grantsAtLeast(scenario: Scenario, resource: MaskKey, needed: "read" | "write"): boolean {
-  return GRADE_RANK[maskGrade(scenario, resource)] >= GRADE_RANK[needed];
+function grantsAtLeast(mask: PermissionMask, resource: MaskKey, needed: "read" | "write"): boolean {
+  return GRADE_RANK[maskGrade(mask, resource)] >= GRADE_RANK[needed];
 }
 
 /**
@@ -121,19 +131,47 @@ function grantsAtLeast(scenario: Scenario, resource: MaskKey, needed: "read" | "
  */
 type Grading = { allowed: true } | { allowed: false; deniedBy: MaskKey };
 
-function gradeRequirement(scenario: Scenario, req: Requirement): Grading {
+function gradeRequirement(mask: PermissionMask, req: Requirement): Grading {
   if (req.permission === "none") {
     return { allowed: true };
   }
   const permission = req.permission;
-  const repoOk = permission.repo.some((resource) => grantsAtLeast(scenario, resource, req.kind));
+  const repoOk = permission.repo.some((resource) => grantsAtLeast(mask, resource, req.kind));
   if (!repoOk) {
     return { allowed: false, deniedBy: permission.repo[0] };
   }
-  if (permission.org === "members" && !grantsAtLeast(scenario, "org_members", "read")) {
+  if (permission.org === "members" && !grantsAtLeast(mask, "org_members", "read")) {
     return { allowed: false, deniedBy: "org_members" };
   }
   return { allowed: true };
+}
+
+/**
+ * Grade a bare resource+level against a mask (for non-section paths like the
+ * contents fetch, which has no SectionPermission). Returns the resource as
+ * deniedBy on failure, matching the section-gate's shape.
+ */
+function gradeResource(mask: PermissionMask, resource: MaskKey, level: "read" | "write"): Grading {
+  return grantsAtLeast(mask, resource, level)
+    ? { allowed: true }
+    : { allowed: false, deniedBy: resource };
+}
+
+/**
+ * The effective permission mask for a request: the global scenario mask
+ * overlaid by the per-slug mask, per resource (per-slug wins). In single-repo
+ * mode `perSlug` is undefined and the global mask stands alone; in multi-repo
+ * mode a repo that names only `issues` still inherits the global grades for
+ * every other resource, so the global mask is never a silent no-op.
+ */
+function effectiveMask(
+  global: PermissionMask,
+  perSlug: Record<string, string> | undefined,
+): PermissionMask {
+  if (!perSlug) {
+    return global;
+  }
+  return { ...global, ...(perSlug as PermissionMask) };
 }
 
 // --- Denial responses -----------------------------------------------------
@@ -642,15 +680,25 @@ export function assertHandlerCompleteness(
 }
 
 /**
- * Every status a handler can return MUST be one the endpoint declares (or a
- * pipeline-level status the handler never chooses: the permission-denial
- * statuses and the mock-violation 400). Answering a status the endpoint does
- * not declare is a design error the runner cannot see, so pin it here. This
- * cannot enumerate every branch of every handler statically, so it is enforced
- * as a test-time invariant: server.test.ts exercises each handler and asserts
- * its observed status against the declaration. This function exposes the
- * declared set for that test.
+ * The status-realism rule a handler must obey, and the reason it is not simply
+ * "declared statuses only": a handler may answer any status the endpoint
+ * DECLARES, plus any UNdeclared error status (>= 400). GitHub itself returns
+ * error statuses an endpoint's happy-path docs never enumerate (a 404 for a
+ * missing label on update/remove, a 409 for a conflicting create), and every
+ * such error classifies through the engine's generic throwFor path, so the
+ * mock modeling them is realism, not a contract break. What a handler must
+ * NEVER invent is an undeclared SUCCESS/redirect (2xx/3xx): those drive the
+ * section's success branches, so an undeclared one would exercise a code path
+ * the endpoint declaration says cannot happen. Declaring the error status
+ * instead is deliberately avoided - a declared >= 400 status feeds
+ * toleratedStatuses(), so declaring e.g. 404 on labels.update would silently
+ * make that error tolerated if the call site ever moved to tryCall.
  */
+export function statusAllowed(key: string, status: number): boolean {
+  return declaredStatuses(key).has(status) || status >= 400;
+}
+
+/** The declared status set for an endpoint (drives statusAllowed and tests). */
 export function declaredStatuses(key: string): Set<number> {
   const endpoint = allEndpoints()[key];
   if (!endpoint) {
@@ -670,11 +718,34 @@ export interface CorruptOption {
 /** Options the server passes into the pipeline for each request. */
 export interface PipelineOptions {
   scenario: Scenario;
-  state: MockState;
+  /** Single-repo working state; absent in multi-repo mode (see `multi`). */
+  state?: MockState;
+  /**
+   * Multi-repo working state (per-slug repos + discovery pool). When set, the
+   * pipeline resolves the target slug from the request path, dispatches into
+   * that slug's MockState, and grades against that slug's permission mask; the
+   * `/user/repos` and `/repos/{slug}/contents/{path}` endpoints are served from
+   * here. Absent in single-repo mode.
+   */
+  multi?: MultiMockState;
   basePrefix?: string;
   corrupt?: CorruptOption;
   /** Endpoint keys already corrupted (chaos fires once); mutated in place. */
   corruptedKeys: Set<string>;
+  /**
+   * Sections whose READ was permission-denied earlier in this run; mutated in
+   * place. The engine aborts a section at its first denied read, so a write
+   * arriving for one of these sections afterwards proves broken sequencing
+   * regardless of policy or denial style (see the denial barrier).
+   */
+  deniedReadSections: Set<string>;
+  /**
+   * Whether the write barrier is armed for THIS request. The server passes the
+   * scenario's declared mode ORed with its one-way enterCheckMode() override,
+   * so the convergence re-run (same server, check-mode child) arms the barrier
+   * even though the scenario the server was built with is still apply-mode.
+   */
+  checkMode: boolean;
 }
 
 /** The pipeline's decision for one request: a response, a log entry, a note. */
@@ -713,28 +784,108 @@ function matchEndpoint(
 }
 
 /**
- * The core-path handlers: the non-section calls the action makes. The repo
- * probe serves the repo fixture from state; contents and discovery are not
- * modeled until the multi-repo phase, so they answer a loud violation now.
+ * Handle GET /user/repos - multi-repo discovery. In single-repo mode this path
+ * is never called, so it answers a loud violation; in multi-repo mode it
+ * enumerates the discovery pool, applying the SERVER-SIDE query params the
+ * action sends (affiliation always, visibility only for public/private) and
+ * paginating, but NOT the client-side filters (archived/fork/topics/exclude),
+ * which the action settles itself. The repository probe GET /repos/{o}/{r} is a
+ * section endpoint (repository.get), matched before this is consulted.
  */
-function handleCorePath(
+function handleUserRepos(
   method: string,
   pathname: string,
-  state: MockState,
+  query: Record<string, string>,
+  multi: MultiMockState | undefined,
 ): { response: MockResponse; violation?: string } | null {
-  if (method === "GET" && matchesTemplate("/repos/{owner}/{repo}", pathname)) {
-    return { response: ok(state.repo) };
+  if (!matchesTemplate("/user/repos", pathname)) {
+    return null;
   }
-  // The contents {path} param spans the remaining path (e.g. a file under
-  // .github/), so match by prefix rather than the one-segment template.
-  const contentsPrefix = pathname.match(/^\/repos\/[^/]+\/[^/]+\/contents\//);
-  if (contentsPrefix) {
-    const message = "settings-file fetch (contents) is not implemented in this phase";
+  if (!multi) {
+    const message = "multi-repo discovery (/user/repos) is not implemented in single-repo mode";
     return { response: violationResponse(message), violation: message };
   }
-  if (matchesTemplate("/user/repos", pathname)) {
-    const message = "multi-repo discovery (/user/repos) is not implemented in this phase";
+  if (method !== "GET") {
+    const message = `unexpected ${method} on /user/repos`;
     return { response: violationResponse(message), violation: message };
+  }
+  const filtered = applyServerSideDiscovery(multi.discoveryPool, query);
+  return { response: ok(slicePage(filtered, query)) };
+}
+
+/**
+ * The discovery params GitHub filters SERVER-SIDE, mirrored from
+ * src/discovery/discover.ts and its test. `visibility` is the only one the
+ * fixtures model: the server-side query narrows only coarsely, and the action
+ * settles the rest client-side, so the mock must match that split exactly:
+ *   - visibility=public  -> the API returns only public repos.
+ *   - visibility=private -> the API returns private AND internal repos (there
+ *     is no server-side "internal" value); the action drops the internal ones
+ *     client-side (discover.test.ts "visibility: private drops internal repos
+ *     client-side"). So the mock must NOT drop internal on the private query.
+ *   - visibility=internal / all / absent -> no server-side narrowing; the
+ *     action filters, so the mock passes the pool through.
+ * `affiliation` has no per-repo fixture attribute (every pool repo is treated
+ * as owned), so it is a pass-through here. archived/fork/topics/exclude are
+ * client-side and must NEVER be pre-filtered.
+ */
+function applyServerSideDiscovery(pool: Json[], query: Record<string, string>): Json[] {
+  const visibility = query.visibility;
+  if (visibility === "public") {
+    return pool.filter((repo) => (repo.visibility ?? "public") === "public");
+  }
+  if (visibility === "private") {
+    // Private AND internal survive the server-side query; the action narrows.
+    return pool.filter((repo) => (repo.visibility ?? "public") !== "public");
+  }
+  return pool;
+}
+
+/**
+ * The Accept header value the settings-file fetch sends: getRepoFile requests
+ * the raw media type so the body comes back as the file text, not a JSON
+ * content object. The mock requires this exact value on the contents route.
+ */
+const RAW_CONTENTS_ACCEPT = "application/vnd.github.raw+json";
+
+/**
+ * Serve a target slug's settings.yml over the contents endpoint, AFTER the
+ * caller has graded the `contents` read permission. A configured slug returns
+ * its raw YAML body (the client sent the raw accept header, so the body is the
+ * file text verbatim); a slug whose settings are null - or one the multi-state
+ * does not know - returns 404, which the action reads as "no settings file" and
+ * disambiguates via the repo probe.
+ */
+function contentsResponse(multi: MultiMockState, slug: string): MockResponse {
+  const yaml = multi.settings.get(slug);
+  if (yaml === null || yaml === undefined) {
+    return { status: 404, body: { message: "Not Found" } };
+  }
+  return { status: 200, body: yaml };
+}
+
+/** The target slug of a contents request, or null when the path is not one. */
+function contentsSlug(pathname: string): string | null {
+  const match = pathname.match(/^\/repos\/([^/]+\/[^/]+)\/contents\//);
+  return match ? decodeURIComponent(match[1] ?? "") : null;
+}
+
+/**
+ * The target slug a request addresses, parsed from the path. Section endpoints
+ * spell it `/repos/{owner}/{repo}/...`; the team endpoints spell it as the
+ * trailing `.../repos/{owner}/{repo}`; the disambiguation probe is exactly
+ * `/repos/{owner}/{repo}`. Returns null when no slug is present (e.g.
+ * `/orgs/{org}` alone), so the caller falls back to the admin repo's state.
+ */
+function slugFromPath(pathname: string): string | null {
+  const segments = pathname.split("/").filter((s) => s.length > 0);
+  const reposIndex = segments.lastIndexOf("repos");
+  if (reposIndex >= 0 && segments.length >= reposIndex + 3) {
+    const owner = segments[reposIndex + 1];
+    const name = segments[reposIndex + 2];
+    if (owner && name) {
+      return `${decodeURIComponent(owner)}/${decodeURIComponent(name)}`;
+    }
   }
   return null;
 }
@@ -757,7 +908,7 @@ export function runPipeline(
   },
   options: PipelineOptions,
 ): PipelineResult {
-  const { scenario, state } = options;
+  const { scenario } = options;
   // The logged pathname has the GHES prefix stripped when the scenario opts
   // in; when the prefix is required but missing, there is nothing to strip, so
   // the raw path is logged with the resulting violation.
@@ -805,17 +956,65 @@ export function runPipeline(
     pathname = pathname.slice(options.basePrefix.length) || "/";
   }
 
-  // 3. Match route (section endpoint first, then a core path).
-  const matched = matchEndpoint(request.method, pathname);
-  if (!matched) {
-    const core = handleCorePath(request.method, pathname, state);
-    if (core) {
+  // 3a. Multi-repo discovery: /user/repos is not a section endpoint and is not
+  // per-slug permission-gated (it is a user-level call), so it is served before
+  // route matching.
+  const userRepos = handleUserRepos(request.method, pathname, request.query, options.multi);
+  if (userRepos) {
+    return {
+      response: userRepos.response,
+      log: { ...baseLog, status: userRepos.response.status },
+      violation: userRepos.violation,
+    };
+  }
+
+  // 3b. The settings-file fetch (contents). Not a section endpoint, but it IS
+  // permission-gated (Contents: read) and method/Accept-constrained, so it runs
+  // through the same gate as a section read: GET only, the raw Accept header
+  // required, and a Contents-denied slug gets the read-denial response (which
+  // drives the action's 404 disambiguation + "grant Contents: read" advice).
+  const cSlug = contentsSlug(pathname);
+  if (cSlug !== null) {
+    if (!options.multi) {
+      const message = "settings-file fetch (contents) is not implemented in single-repo mode";
       return {
-        response: core.response,
-        log: { ...baseLog, status: core.response.status },
-        violation: core.violation,
+        response: violationResponse(message),
+        log: { ...baseLog, status: 400 },
+        violation: message,
       };
     }
+    if (request.method !== "GET") {
+      const message = `contents fetch must be GET, got ${request.method}`;
+      return {
+        response: violationResponse(message),
+        log: { ...baseLog, status: 400 },
+        violation: message,
+      };
+    }
+    if (request.headers.get("accept") !== RAW_CONTENTS_ACCEPT) {
+      const message = `contents fetch must send Accept: ${RAW_CONTENTS_ACCEPT}, got "${request.headers.get("accept") ?? ""}"`;
+      return {
+        response: violationResponse(message),
+        log: { ...baseLog, status: 400 },
+        violation: message,
+      };
+    }
+    const mask = effectiveMask(
+      scenario.token_permissions ?? {},
+      options.multi.permissions.get(cSlug),
+    );
+    const grading = gradeResource(mask, "contents", "read");
+    if (!grading.allowed) {
+      const response = denialResponse(scenario.denial_style, "read");
+      return { response, log: { ...baseLog, status: response.status, deniedBy: grading.deniedBy } };
+    }
+    const response = contentsResponse(options.multi, cSlug);
+    return { response, log: { ...baseLog, status: response.status } };
+  }
+
+  // 3c. Section endpoints.
+  const matched = matchEndpoint(request.method, pathname);
+  if (!matched) {
     const message = `no route in routes.ts for ${request.method} ${pathname}`;
     return {
       response: violationResponse(message),
@@ -825,28 +1024,86 @@ export function runPipeline(
   }
   const { key, endpoint } = matched;
 
+  // Resolve the working state and permission mask for this request. In
+  // single-repo mode both come from the one MockState and the scenario mask; in
+  // multi-repo mode the target slug in the path selects a per-slug MockState and
+  // its per-slug mask overlaid on the global mask (so a denial can be scoped to
+  // one repository while the global grades still apply). A path with no
+  // resolvable slug under multi-repo mode is a design error - every section
+  // endpoint carries owner/repo.
+  let state = options.state;
+  let mask: PermissionMask = scenario.token_permissions ?? {};
+  if (options.multi) {
+    const slug = slugFromPath(pathname);
+    const repoState = slug ? options.multi.repos.get(slug) : undefined;
+    if (!slug || !repoState) {
+      const message = `multi-repo request ${request.method} ${pathname} names no known target slug`;
+      return {
+        response: violationResponse(message),
+        log: { ...baseLog, status: 400 },
+        violation: message,
+      };
+    }
+    state = repoState;
+    mask = effectiveMask(scenario.token_permissions ?? {}, options.multi.permissions.get(slug));
+  }
+  if (!state) {
+    const message = `no working state for ${request.method} ${pathname}`;
+    return {
+      response: violationResponse(message),
+      log: { ...baseLog, status: 400 },
+      violation: message,
+    };
+  }
+
   // 4. Permission gate.
   const requirement = endpointRequirement(endpoint);
-  const grading = gradeRequirement(scenario, requirement);
+  const grading = gradeRequirement(mask, requirement);
   if (!grading.allowed) {
     const response = denialResponse(scenario.denial_style, requirement.kind);
     const log: LoggedRequest = { ...baseLog, status: response.status, deniedBy: grading.deniedBy };
-    // 5. Denial barrier: a denied WRITE that should have been stopped by
-    // preflight (section has "denied" semantics) or under a uniform-403 style
-    // is a violation. An "absent"-semantics write under fine_grained is the
-    // expected probe-then-write path, so deny it with no violation.
+    // 5. Denial barrier: a denied WRITE that reached the server despite a
+    // guarantee it should not have is a violation; otherwise it is deny-only.
+    // The guarantee comes from one of two places:
+    //   - a "denied"-semantics section UNDER the fail policy: its primary read
+    //     goes through the classifier, and preflight (which runs only when
+    //     on-missing-permission is "fail", orchestrate.ts) reads it first and
+    //     refuses every write.
+    //   - a READ in this section was already denied earlier in the run: the
+    //     engine aborts a section at its denied read (any policy, any style),
+    //     so a later write for the same section proves broken sequencing.
+    // Under the WARN policy there is no preflight, so a "denied"-semantics
+    // section whose FIRST apply operation is a write (a repository/actions/
+    // code_scanning PATCH/PUT with no preceding read) legitimately sends that
+    // write and takes the denial, in BOTH denial styles - deny it with NO
+    // violation, exactly like an "absent"-semantics section. The
+    // deny-and-never-mutate invariant holds in every case; only the violation
+    // flag is conditional.
     let violation: string | undefined;
+    if (requirement.kind === "read") {
+      // Track the denied read ONLY when the engine perceives it as a failure:
+      // a denial status the endpoint tolerates (a fine_grained 404 on a
+      // probeAbsent-tolerant endpoint) reads as "resource absent" and the
+      // section legitimately proceeds, so it must not arm the barrier.
+      if (!toleratedStatuses(endpoint).includes(response.status)) {
+        options.deniedReadSections.add(endpoint.section);
+      }
+    }
     if (requirement.kind === "write") {
       const semantics = DENIAL_SEMANTICS[endpoint.section];
-      if (semantics === "denied" || scenario.denial_style === 403) {
-        violation = `write to ${request.method} ${pathname} reached the server despite being permission-denied; preflight should have stopped it (section "${endpoint.section}" has "${semantics}" denial semantics, style ${String(scenario.denial_style)})`;
+      const policy = scenario.inputs?.on_missing_permission ?? "fail";
+      const preflightGuaranteed = semantics === "denied" && policy === "fail";
+      if (preflightGuaranteed || options.deniedReadSections.has(endpoint.section)) {
+        violation = `write to ${request.method} ${pathname} reached the server despite being permission-denied; it should have been stopped first (section "${endpoint.section}" has "${semantics}" denial semantics, on-missing-permission "${policy}", style ${String(scenario.denial_style)})`;
       }
     }
     return { response, log, violation };
   }
 
-  // 6. Check-mode barrier: no writes may leave the client in check mode.
-  if (scenario.inputs?.mode === "check" && request.method !== "GET") {
+  // 6. Check-mode barrier: no writes may leave the client in check mode. The
+  // flag is the scenario's mode ORed with the server's one-way override, so a
+  // convergence re-run against the same server arms the barrier too.
+  if (options.checkMode && request.method !== "GET") {
     const message = "write in check mode";
     return {
       response: violationResponse(message),

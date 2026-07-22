@@ -1,0 +1,23 @@
+name: sections-allowlist
+description: >
+  The sections input restricts the run to labels only, so repository is left
+  entirely untouched even though it is declared. The repository write endpoints
+  are never called, and the outcome table lists only labels.
+settings:
+  repository:
+    has_issues: false
+  labels:
+    - name: bug
+      color: d73a4a
+inputs:
+  mode: apply
+  sections: labels
+expect:
+  exit_code: 0
+  outcomes:
+    labels: applied
+  mutations:
+    - POST /repos/{repo}/labels
+  never:
+    - PATCH /repos/{repo}
+    - PUT /repos/{repo}/topics

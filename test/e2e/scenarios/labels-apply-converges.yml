@@ -1,0 +1,35 @@
+name: labels-apply-converges
+description: >
+  Apply exercises all three label operations at once: update an existing label
+  whose color drifted, create a new one, and delete a live label the settings
+  file does not declare. A second check pass then makes no writes.
+settings:
+  labels:
+    - name: bug
+      color: d73a4a
+      description: Something isn't working
+    - name: enhancement
+      color: a2eeef
+      description: New feature or request
+live_state:
+  labels:
+    - name: bug
+      color: ff0000
+      description: Something isn't working
+    - name: wontfix
+      color: ffffff
+      description: This will not be worked on
+inputs:
+  mode: apply
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    labels: applied
+  mutations:
+    - PATCH /repos/{repo}/labels/bug
+    - POST /repos/{repo}/labels
+    - DELETE /repos/{repo}/labels/wontfix
+  requests_contain:
+    - GET /repos/e2e-owner/e2e-repo/labels
+  converges: true

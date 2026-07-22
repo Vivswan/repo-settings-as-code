@@ -9,6 +9,7 @@
  * and violation logs the runner checks after the run.
  */
 
+import { stringify as stringifyYaml } from "yaml";
 import type { Scenario } from "../schema.js";
 import {
   assertHandlerCompleteness,
@@ -16,7 +17,13 @@ import {
   type LoggedRequest,
   runPipeline,
 } from "./routes.js";
-import { buildState, type MockState } from "./state.js";
+import {
+  buildMultiState,
+  buildState,
+  type MockState,
+  type MultiMockState,
+  type MultiRepoSpec,
+} from "./state.js";
 
 /** Extra knobs beyond the scenario: the GHES prefix and the chaos directive. */
 export interface ServerOptions {
@@ -29,10 +36,46 @@ export interface ServerOptions {
 /** The live server: where to reach it, its state, its logs, and how to stop. */
 export interface MockHandle {
   url: string;
-  state: MockState;
+  /**
+   * Single-repo working state; undefined in multi-repo mode (see `multi`).
+   * Tests seed or assert against it directly.
+   */
+  state?: MockState;
+  /** Multi-repo working state (per-slug repos + discovery pool), when set. */
+  multi?: MultiMockState;
   requests: LoggedRequest[];
   violations: string[];
+  /**
+   * Arm the check-mode write barrier for all SUBSEQUENT requests. One-way (no
+   * exit): the convergence re-run spawns a check-mode child against this same
+   * already-running server, whose scenario is still apply-mode, so the runner
+   * calls this before the re-run to make an unexpected write a violation.
+   */
+  enterCheckMode(): void;
   stop(): Promise<void>;
+}
+
+/**
+ * Convert a scenario's multi-repo declaration into the buildMultiState inputs:
+ * each target's settings object is serialized to the raw YAML the contents
+ * endpoint serves (null settings -> null, the no-file case). Discovery-pool
+ * slugs and per-repo specs are unioned by buildMultiState. Returns undefined
+ * for a single-repo scenario.
+ */
+function multiStateFor(scenario: Scenario): MultiMockState | undefined {
+  if (!scenario.repos && !scenario.discovery) {
+    return undefined;
+  }
+  const repos: Record<string, MultiRepoSpec> = {};
+  for (const [slug, spec] of Object.entries(scenario.repos ?? {})) {
+    repos[slug] = {
+      settingsYaml:
+        spec.settings === null || spec.settings === undefined ? null : stringifyYaml(spec.settings),
+      liveState: spec.live_state,
+      permissions: spec.permissions,
+    };
+  }
+  return buildMultiState(repos, scenario.discovery?.pool, scenario.owner_kind);
 }
 
 /**
@@ -52,10 +95,16 @@ export async function startMockServer(
   // section endpoint dictionary, before any request is served.
   assertHandlerCompleteness();
 
-  const state = buildState(scenario.live_state, scenario.owner_kind);
+  // Multi-repo scenarios run per-slug state; single-repo scenarios keep the one
+  // MockState. Exactly one is populated, and the pipeline dispatches on which.
+  const multi = multiStateFor(scenario);
+  const state = multi ? undefined : buildState(scenario.live_state, scenario.owner_kind);
   const requests: LoggedRequest[] = [];
   const violations: string[] = [];
   const corruptedKeys = new Set<string>();
+  const deniedReadSections = new Set<string>();
+  // One-way override flipped by enterCheckMode(); ORed with the scenario mode.
+  let checkModeOverride = false;
 
   const server = Bun.serve({
     port: 0,
@@ -79,9 +128,12 @@ export async function startMockServer(
         {
           scenario,
           state,
+          multi,
           basePrefix: options.basePrefix,
           corrupt: options.corrupt,
           corruptedKeys,
+          deniedReadSections,
+          checkMode: scenario.inputs?.mode === "check" || checkModeOverride,
         },
       );
 
@@ -112,8 +164,12 @@ export async function startMockServer(
   return {
     url: options.basePrefix ? `${base}${options.basePrefix}` : base,
     state,
+    multi,
     requests,
     violations,
+    enterCheckMode() {
+      checkModeOverride = true;
+    },
     async stop() {
       await server.stop(true);
     },

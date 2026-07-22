@@ -1,0 +1,26 @@
+name: pages-apply-update
+description: >-
+  A live Pages site exists but its cname diverges from the settings file.
+  Apply PUTs the new configuration, and a check rerun over the mutated state
+  converges with no further writes.
+settings:
+  pages:
+    cname: new.example.com
+    https_enforced: true
+live_state:
+  pages:
+    url: https://api.github.com/repos/e2e-owner/e2e-repo/pages
+    build_type: workflow
+    cname: old.example.com
+    https_enforced: true
+    source:
+      branch: main
+      path: /
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    pages: applied
+  mutations:
+    - "PUT /repos/{repo}/pages"
+  converges: true

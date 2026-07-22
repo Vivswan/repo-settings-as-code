@@ -1,0 +1,32 @@
+# Autolinks cannot be edited, so a changed one is replaced (DELETE then POST),
+# and an undeclared autolink is DELETEd. Live TICKET- has a stale url_template
+# (replaced), and JIRA- is undeclared (removed). After apply the declared
+# autolink matches and nothing is undeclared, so a check rerun converges.
+name: autolinks-replace-and-delete-converges
+settings:
+  autolinks:
+    - key_prefix: "TICKET-"
+      url_template: "https://example.com/TICKET?q=<num>"
+      is_alphanumeric: true
+live_state:
+  autolinks:
+    - id: 10
+      key_prefix: "TICKET-"
+      url_template: "https://old.example.com/<num>"
+      is_alphanumeric: true
+    - id: 20
+      key_prefix: "JIRA-"
+      url_template: "https://jira.example.com/<num>"
+      is_alphanumeric: true
+token_permissions:
+  administration: write
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    autolinks: applied
+  mutations:
+    - "DELETE /repos/{repo}/autolinks/10"
+    - "POST /repos/{repo}/autolinks"
+    - "DELETE /repos/{repo}/autolinks/20"
+  converges: true

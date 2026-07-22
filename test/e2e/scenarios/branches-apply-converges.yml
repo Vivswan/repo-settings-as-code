@@ -1,0 +1,28 @@
+# Apply protects a branch that is unprotected live. The PUT body is stored
+# through the mock's protectionFromPut transformer (the inverse of the engine's
+# flattenProtection), so a check rerun against the mutated server sees the
+# declared keys already satisfied and reports clean with no further writes.
+name: branches-apply-converges
+settings:
+  branches:
+    - name: main
+      protection:
+        required_pull_request_reviews:
+          required_approving_review_count: 1
+          dismiss_stale_reviews: true
+        enforce_admins: true
+        required_linear_history: true
+live_state:
+  branches: ["main"]
+  branch_protection: {}
+token_permissions:
+  administration: write
+  contents: read
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    branches: applied
+  mutations:
+    - "PUT /repos/{repo}/branches/main/protection"
+  converges: true

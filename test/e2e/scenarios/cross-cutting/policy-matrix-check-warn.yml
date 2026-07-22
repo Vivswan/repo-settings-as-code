@@ -1,0 +1,25 @@
+name: policy-matrix-check-warn
+description: >
+  Check mode with on-missing-permission warn. The token lacks Issues, so labels
+  is skipped with a warning; repository matches live and stays clean. A skipped
+  section keeps the run green, so it exits 0.
+settings:
+  repository:
+    has_issues: true
+  labels:
+    - name: bug
+      color: d73a4a
+denial_style: 403
+token_permissions:
+  issues: none
+inputs:
+  mode: check
+  on_missing_permission: warn
+expect:
+  exit_code: 0
+  outcomes:
+    repository: clean
+    labels: skipped
+  never:
+    - POST /repos/{repo}/labels
+    - PATCH /repos/{repo}/labels

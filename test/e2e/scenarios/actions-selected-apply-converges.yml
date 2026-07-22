@@ -1,0 +1,27 @@
+# The selected-actions flow. Live allowed_actions is "all", but the settings
+# declare a selected_actions allowlist, which implies allowed_actions "selected".
+# Apply first PUTs the base permissions (policy -> selected) then PUTs the
+# allowlist, in that order. A check rerun then reads the policy as selected and
+# the allowlist as matching, so it converges.
+name: actions-selected-apply-converges
+settings:
+  actions:
+    selected_actions:
+      github_owned_allowed: true
+      verified_allowed: false
+      patterns_allowed: ["docker/*"]
+live_state:
+  actions_permissions:
+    enabled: true
+    allowed_actions: all
+token_permissions:
+  administration: write
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    actions: applied
+  mutations:
+    - "PUT /repos/{repo}/actions/permissions"
+    - "PUT /repos/{repo}/actions/permissions/selected-actions"
+  converges: true

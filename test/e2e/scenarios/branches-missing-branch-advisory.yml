@@ -1,0 +1,27 @@
+# Check mode, a declared branch that does not exist live: protection probes 404
+# (unprotected), then the advisory branch-existence probe (Contents-gated) also
+# 404s, so the section pins the definitive "branch does not exist" drift line.
+# No write is attempted.
+name: branches-missing-branch-advisory
+settings:
+  branches:
+    - name: release
+      protection:
+        enforce_admins: true
+inputs:
+  mode: check
+live_state:
+  branches: ["main"]
+  branch_protection: {}
+token_permissions:
+  administration: read
+  contents: read
+expect:
+  exit_code: 1
+  result: drift
+  outcomes:
+    branches: drift
+  summary_contains:
+    - "the branch does not exist on the repo"
+  never:
+    - "PUT /repos/{repo}/branches/release/protection"

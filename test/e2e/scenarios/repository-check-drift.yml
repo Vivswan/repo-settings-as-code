@@ -1,0 +1,24 @@
+name: repository-check-drift
+description: >
+  Check mode reports repository drift without writing: a plain field differs, a
+  security toggle is declared on but live off, and the topics diverge. The run
+  exits 1 and the summary lists the repository drift.
+settings:
+  repository:
+    has_issues: false
+    enable_vulnerability_alerts: true
+    topics:
+      - governance
+inputs:
+  mode: check
+expect:
+  exit_code: 1
+  result: drift
+  outcomes:
+    repository: drift
+  never:
+    - PATCH /repos/{repo}
+    - PUT /repos/{repo}/topics
+    - PUT /repos/{repo}/vulnerability-alerts
+  summary_contains:
+    - repository

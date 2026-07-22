@@ -1,0 +1,21 @@
+name: required-sections-escalation
+description: >
+  Warn policy would normally skip a denied section, but a section named in
+  required-sections cannot be skipped. Labels is denied and required, so the run
+  fails and exits 1 despite the warn policy.
+settings:
+  labels:
+    - name: bug
+      color: d73a4a
+denial_style: 403
+token_permissions:
+  issues: none
+inputs:
+  mode: apply
+  on_missing_permission: warn
+  required_sections: labels
+expect:
+  exit_code: 1
+  result: failed
+  never:
+    - POST /repos/{repo}/labels

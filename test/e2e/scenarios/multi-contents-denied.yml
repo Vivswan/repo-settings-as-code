@@ -1,0 +1,47 @@
+# Multi-repo Contents denial and the 404-disambiguation path. svc-locked's token
+# is denied the Contents permission, so the settings fetch answers a fine-grained
+# read 404; the action then probes GET /repos/{slug} to disambiguate, sees the
+# repo is visible (the probe succeeds via Administration) but permissions.pull is
+# false, and reports the "grant Contents: read" advice - the target fails. svc-ok
+# fetches, reads, and applies normally, proving the denial is isolated.
+name: multi-contents-denied
+settings: {}
+inputs:
+  on_missing_permission: fail
+repos:
+  e2e-owner/svc-locked:
+    settings:
+      labels:
+        - name: unreachable
+          color: "888888"
+    permissions:
+      contents: none
+      administration: read
+    live_state:
+      repo:
+        permissions:
+          pull: false
+    expect:
+      result: failed
+  e2e-owner/svc-ok:
+    settings:
+      labels:
+        - name: healthy
+          color: "00ff00"
+    permissions:
+      issues: write
+      contents: read
+    expect:
+      result: applied
+expect:
+  exit_code: 1
+  result: failed
+  repos_result:
+    e2e-owner/svc-locked: failed
+    e2e-owner/svc-ok: applied
+  mutations:
+    - "POST /repos/e2e-owner/svc-ok/labels"
+  never:
+    - "POST /repos/e2e-owner/svc-locked/labels"
+  stdout_contains:
+    - "grant Contents: read"

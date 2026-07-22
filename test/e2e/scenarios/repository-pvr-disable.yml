@@ -1,0 +1,25 @@
+name: repository-pvr-disable
+description: >
+  Declaring enable_private_vulnerability_reporting false against a repo where it
+  is live enabled issues the disabling DELETE and reports the change. The plan's
+  404/422 "not applicable" variant is not expressible today: the mock always
+  answers this endpoint 200, so a 404/422 response needs mock fault injection
+  (tracked separately). This covers the disable path that is expressible now.
+settings:
+  repository:
+    enable_private_vulnerability_reporting: false
+live_state:
+  repo:
+    private_vulnerability_reporting_enabled: true
+inputs:
+  mode: apply
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    repository: applied
+  mutations:
+    - DELETE /repos/{repo}/private-vulnerability-reporting
+  summary_contains:
+    - private vulnerability reporting
+  converges: true

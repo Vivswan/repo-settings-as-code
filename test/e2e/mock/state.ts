@@ -198,6 +198,139 @@ export function buildState(liveState: LiveState | undefined, ownerKind: OwnerKin
   };
 }
 
+// --- Multi-repo layer -----------------------------------------------------
+//
+// Multi-repo mode runs one admin repo (e2e-owner/e2e-repo) against many target
+// slugs. Rather than re-key the single-repo MockState (which every handler and
+// the round-trip tests depend on), a MultiMockState wraps a Map<slug,
+// MockState> plus the discovery pool the `/user/repos` endpoint serves. The
+// single-repo server path is unchanged; the multi-repo pipeline resolves the
+// slug from the request path and dispatches into the matching per-slug state.
+
+/** One repo's slice of a multi-repo scenario: its data, settings file, mask. */
+export interface MultiRepoSpec {
+  /**
+   * The raw settings.yml body the contents endpoint serves for this slug, or
+   * null when the repo has NO settings file (the contents 404 -> skipped path).
+   */
+  settingsYaml: string | null;
+  /** Starting live state for this slug's section endpoints. */
+  liveState?: LiveState;
+  /** Per-slug token permission mask (denials scoped to one target). */
+  permissions?: Record<string, string>;
+}
+
+/**
+ * A discovery-pool repo, as `/user/repos` returns it: the slug plus the
+ * client-side-filterable attributes the discovery engine reads (archived, fork,
+ * visibility, topics). The mock serves these verbatim; the action applies the
+ * filters, so the mock never pre-filters.
+ */
+export interface DiscoveryRepoSpec {
+  slug: string;
+  archived?: boolean;
+  fork?: boolean;
+  visibility?: string;
+  topics?: string[];
+}
+
+/** The materialized multi-repo working state the mock server mutates. */
+export interface MultiMockState {
+  /** Per-target working state, keyed by "owner/name" slug. */
+  repos: Map<string, MockState>;
+  /** The raw settings.yml each slug serves (null = no file), keyed by slug. */
+  settings: Map<string, string | null>;
+  /** Per-slug permission mask, keyed by slug (empty = default write). */
+  permissions: Map<string, Record<string, string>>;
+  /** The repo objects `/user/repos` enumerates (discovery pool). */
+  discoveryPool: Json[];
+}
+
+/**
+ * Rewrite a MockState's repo object so its identity fields name `slug` instead
+ * of the fixture's e2e-owner/e2e-repo. The disambiguation probe and every
+ * section read then see a coherent repo for this target.
+ */
+function reslugRepo(repo: Json, slug: string): void {
+  const [owner, name] = slug.split("/");
+  repo.full_name = slug;
+  repo.name = name ?? slug;
+  const ownerObj = repo.owner;
+  if (isPlainObject(ownerObj)) {
+    ownerObj.login = owner ?? "";
+  }
+}
+
+/** Build one target's MockState from its spec, stamped with its slug. */
+export function buildStateForSlug(
+  slug: string,
+  spec: MultiRepoSpec,
+  ownerKind: OwnerKind,
+): MockState {
+  const state = buildState(spec.liveState, ownerKind);
+  reslugRepo(state.repo, slug);
+  return state;
+}
+
+/**
+ * A discovery-pool repo body: the fixture repo re-slugged, with the four
+ * filterable attributes overlaid so the action's discovery filters can act on
+ * them. Only the fields discovery reads need be realistic.
+ */
+function discoveryRepoBody(spec: DiscoveryRepoSpec): Json {
+  const body = clone(repoFixture as Json);
+  reslugRepo(body, spec.slug);
+  if (spec.archived !== undefined) {
+    body.archived = spec.archived;
+  }
+  if (spec.fork !== undefined) {
+    body.fork = spec.fork;
+  }
+  if (spec.visibility !== undefined) {
+    body.visibility = spec.visibility;
+  }
+  if (spec.topics !== undefined) {
+    body.topics = spec.topics;
+  }
+  return body;
+}
+
+/**
+ * Materialize a MultiMockState. `repos` maps each target slug to its spec;
+ * `discoveryPool` (optional) is the `/user/repos` enumeration for repos: "*"
+ * scenarios. A discovery-pool slug that also has a repos spec shares that
+ * spec's per-slug state and settings; a pool slug WITHOUT a spec still gets a
+ * default state and a null settings file (so an unconfigured discovered repo
+ * reads as "no settings", the skipped path).
+ */
+export function buildMultiState(
+  repos: Record<string, MultiRepoSpec>,
+  discoveryPool: DiscoveryRepoSpec[] | undefined,
+  ownerKind: OwnerKind,
+): MultiMockState {
+  const state: MultiMockState = {
+    repos: new Map(),
+    settings: new Map(),
+    permissions: new Map(),
+    discoveryPool: (discoveryPool ?? []).map(discoveryRepoBody),
+  };
+  const ensure = (slug: string, spec: MultiRepoSpec): void => {
+    state.repos.set(slug, buildStateForSlug(slug, spec, ownerKind));
+    state.settings.set(slug, spec.settingsYaml);
+    state.permissions.set(slug, spec.permissions ?? {});
+  };
+  for (const [slug, spec] of Object.entries(repos)) {
+    ensure(slug, spec);
+  }
+  // Discovered slugs with no explicit spec: default state, no settings file.
+  for (const pool of discoveryPool ?? []) {
+    if (!state.repos.has(pool.slug)) {
+      ensure(pool.slug, { settingsYaml: null });
+    }
+  }
+  return state;
+}
+
 // --- Write-to-read transformers ------------------------------------------
 //
 // Each turns a section's mutation payload (the PUT/POST body the handler sends)

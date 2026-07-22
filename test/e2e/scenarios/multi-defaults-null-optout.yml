@@ -1,0 +1,48 @@
+# Multi-repo defaults merge with a per-repo null opt-out. The defaults file sets
+# a Pages default under every target. svc-keep inherits it and enables Pages
+# (POST /pages). svc-optout declares pages: null, which opts it out of the
+# defaults-file Pages section - so the action emits the opt-out notice and makes
+# ZERO pages calls for that repo, applying only its own label.
+name: multi-defaults-null-optout
+settings: {}
+defaults_file:
+  pages:
+    build_type: workflow
+    source:
+      branch: main
+      path: /
+repos:
+  e2e-owner/svc-keep:
+    settings:
+      labels:
+        - name: kept
+          color: "0000ff"
+    live_state:
+      pages: null
+    expect:
+      result: applied
+  e2e-owner/svc-optout:
+    settings:
+      pages: null
+      labels:
+        - name: opted
+          color: "ff0000"
+    expect:
+      result: applied
+token_permissions:
+  issues: write
+  pages: write
+expect:
+  exit_code: 0
+  result: applied
+  repos_result:
+    e2e-owner/svc-keep: applied
+    e2e-owner/svc-optout: applied
+  mutations:
+    - "POST /repos/e2e-owner/svc-keep/pages"
+  never:
+    - "POST /repos/e2e-owner/svc-optout/pages"
+    - "PUT /repos/e2e-owner/svc-optout/pages"
+    - "DELETE /repos/e2e-owner/svc-optout/pages"
+  stdout_contains:
+    - 'section "pages" is set to null'

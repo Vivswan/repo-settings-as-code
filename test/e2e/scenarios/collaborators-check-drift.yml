@@ -1,0 +1,28 @@
+name: collaborators-check-drift
+description: >-
+  Check mode reports both a role mismatch on a declared collaborator and an
+  undeclared collaborator that apply would remove, exits 1, and writes
+  nothing.
+settings:
+  collaborators:
+    - username: e2e-existing
+      permission: admin
+inputs:
+  mode: check
+live_state:
+  collaborators:
+    - login: e2e-existing
+      role_name: write
+    - login: e2e-stale
+      role_name: write
+expect:
+  exit_code: 1
+  result: drift
+  outcomes:
+    collaborators: drift
+  never:
+    - "PUT /repos/{repo}/collaborators/e2e-existing"
+    - "DELETE /repos/{repo}/collaborators/e2e-stale"
+  summary_contains:
+    - "collaborators[e2e-existing]"
+    - "collaborators[e2e-stale]"

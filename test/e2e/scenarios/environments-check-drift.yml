@@ -1,0 +1,29 @@
+# Check mode reports drift: the declared wait_timer (60) differs from the live
+# environment's nested wait_timer (15, read out of protection_rules). No write
+# is attempted in check mode.
+name: environments-check-drift
+settings:
+  environments:
+    - name: production
+      wait_timer: 60
+inputs:
+  mode: check
+live_state:
+  environments:
+    production:
+      name: production
+      protection_rules:
+        - id: 3736
+          type: wait_timer
+          wait_timer: 15
+token_permissions:
+  environments: read
+expect:
+  exit_code: 1
+  result: drift
+  outcomes:
+    environments: drift
+  summary_contains:
+    - "environments[production].wait_timer"
+  never:
+    - "PUT /repos/{repo}/environments/production"

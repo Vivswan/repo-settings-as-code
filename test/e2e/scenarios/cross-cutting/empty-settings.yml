@@ -1,0 +1,12 @@
+name: empty-settings
+description: >
+  An empty settings file declares nothing to manage, so the run does no work,
+  exits 0, and makes no mutations. With no sections the overall result reports
+  as applied (nothing to apply, nothing failed).
+settings: {}
+inputs:
+  mode: apply
+expect:
+  exit_code: 0
+  result: applied
+  mutations: []

@@ -1,0 +1,26 @@
+name: pages-null-disable
+description: >-
+  pages: null declares Pages OFF. A live site exists, so apply DELETEs it,
+  and a check rerun converges (the site is gone, nothing to disable).
+settings:
+  pages: null
+live_state:
+  pages:
+    url: https://api.github.com/repos/e2e-owner/e2e-repo/pages
+    build_type: workflow
+    source:
+      branch: main
+      path: /
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    pages: applied
+  mutations:
+    - "DELETE /repos/{repo}/pages"
+  never:
+    - "PUT /repos/{repo}/pages"
+    - "POST /repos/{repo}/pages"
+  stdout_contains:
+    - "disabled GitHub Pages"
+  converges: true

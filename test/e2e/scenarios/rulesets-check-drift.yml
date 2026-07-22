@@ -1,0 +1,43 @@
+# Check mode reports drift when a declared ruleset exists live but differs: the
+# declared enforcement is "active", live is "disabled", so the section pins a
+# drift line and no write is attempted. The org-sourced ruleset is ignored.
+name: rulesets-check-drift
+settings:
+  rulesets:
+    - name: main-protection
+      target: branch
+      enforcement: active
+      conditions:
+        ref_name:
+          include: ["~DEFAULT_BRANCH"]
+          exclude: []
+inputs:
+  mode: check
+live_state:
+  rulesets:
+    - id: 42
+      name: main-protection
+      source_type: Repository
+      target: branch
+      enforcement: disabled
+      conditions:
+        ref_name:
+          include: ["refs/heads/main"]
+          exclude: []
+    - id: 900
+      name: org-baseline
+      source_type: Organization
+      target: branch
+      enforcement: active
+token_permissions:
+  administration: read
+expect:
+  exit_code: 1
+  result: drift
+  outcomes:
+    rulesets: drift
+  summary_contains:
+    - "rulesets[main-protection].enforcement"
+  never:
+    - "PUT /repos/{repo}/rulesets/42"
+    - "PUT /repos/{repo}/rulesets/900"

@@ -1,0 +1,27 @@
+# protection: null declares the branch UNPROTECTED. Live protection exists, so
+# apply DELETEs it. A check rerun then sees the branch unprotected and reports
+# clean with no further writes (the removal converges).
+name: branches-null-removal-converges
+settings:
+  branches:
+    - name: main
+      protection: null
+live_state:
+  branches: ["main"]
+  branch_protection:
+    main:
+      enforce_admins:
+        enabled: true
+      required_linear_history:
+        enabled: true
+token_permissions:
+  administration: write
+  contents: read
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    branches: applied
+  mutations:
+    - "DELETE /repos/{repo}/branches/main/protection"
+  converges: true

@@ -1,0 +1,45 @@
+# Multi-repo error isolation and the multi exit rule. Three targets run
+# independently: svc-missing has no settings file (skipped), svc-fail is denied
+# its labels permission under the fail policy (failed, in isolation), and svc-ok
+# applies cleanly. One failed target makes the aggregate result "failed" and the
+# process exit 1, but it never stops svc-ok from applying - proving isolation.
+name: multi-missing-and-failing
+settings: {}
+inputs:
+  on_missing_permission: fail
+repos:
+  e2e-owner/svc-missing:
+    settings: null
+    expect:
+      result: skipped
+  e2e-owner/svc-fail:
+    settings:
+      labels:
+        - name: blocked
+          color: "888888"
+    permissions:
+      issues: none
+    expect:
+      result: failed
+  e2e-owner/svc-ok:
+    settings:
+      labels:
+        - name: healthy
+          color: "00ff00"
+    permissions:
+      issues: write
+    expect:
+      result: applied
+token_permissions:
+  contents: read
+expect:
+  exit_code: 1
+  result: failed
+  repos_result:
+    e2e-owner/svc-missing: skipped
+    e2e-owner/svc-fail: failed
+    e2e-owner/svc-ok: applied
+  mutations:
+    - "POST /repos/e2e-owner/svc-ok/labels"
+  never:
+    - "POST /repos/e2e-owner/svc-fail/labels"
