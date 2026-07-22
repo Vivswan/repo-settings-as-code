@@ -1,8 +1,7 @@
 ---
-# Repository settings applied by this repo's own Apply Settings workflow
-# (.github/workflows/apply-settings.yml) using the action at HEAD; needs the
-# APPLY_SETTING_TOKEN secret. Undeclared labels are deleted; undeclared
-# rulesets are left alone. Schema: Probot settings.yml superset (see README).
+# Declarative repository settings. INERT until the settings-sync module is
+# enabled (copier update -d 'modules=[..., settings-sync]') or the file is
+# applied manually via Vivswan/repo-settings-as-code.
 # Baseline managed by Vivswan/repo-platform; repo-specific
 # additions survive template updates via three-way merge.
 
