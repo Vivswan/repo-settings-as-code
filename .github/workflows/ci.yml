@@ -27,7 +27,7 @@ jobs:
       # gitignored trimmed spec; restore it from cache or fetch on a miss.
       - name: Cache the trimmed OpenAPI spec
         id: openapi-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: test/e2e/openapi/github-openapi.trimmed.json
           key: openapi-trimmed-${{ hashFiles('.github/scripts/trim-openapi.ts', 'test/e2e/openapi/paths.ts', 'src/sections/**', 'src/schema.ts', 'src/github/api.ts') }}
@@ -120,7 +120,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: .bun-version
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
       - name: Install dependencies
@@ -132,7 +132,7 @@ jobs:
       # cache and re-fetches, never restoring a stale slice.
       - name: Cache the trimmed OpenAPI spec
         id: openapi-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: test/e2e/openapi/github-openapi.trimmed.json
           key: openapi-trimmed-${{ hashFiles('.github/scripts/trim-openapi.ts', 'test/e2e/openapi/paths.ts', 'src/sections/**', 'src/schema.ts', 'src/github/api.ts') }}
