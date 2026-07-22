@@ -11,6 +11,7 @@ import * as core from "@actions/core";
 import { retry } from "@octokit/plugin-retry";
 import { throttling } from "@octokit/plugin-throttling";
 import { Octokit } from "@octokit/rest";
+import Bottleneck from "bottleneck/light.js";
 
 export interface ApiError {
   status: number;
@@ -116,6 +117,15 @@ export class GithubApi implements GithubClient {
       },
       throttle: {
         retryAfterBaseValue: retryBaseMs,
+        // The plugin paces mutating requests through a "write" limiter whose
+        // 1000ms gap retryAfterBaseValue does not reach; supply the same
+        // limiter with the gap on the retryBaseMs scale, so every plugin
+        // wait shrinks together under the test knob (1000 = real seconds).
+        write: new Bottleneck.Group({
+          id: "octokit-write",
+          maxConcurrent: 1,
+          minTime: retryBaseMs,
+        }),
         onRateLimit: (retryAfter, options, _octokit, retryCount) => {
           debugLog(
             `rate limit on ${options.method} ${options.url}; retry ${retryCount + 1}/${MAX_RETRIES} after ${retryAfter}s`,

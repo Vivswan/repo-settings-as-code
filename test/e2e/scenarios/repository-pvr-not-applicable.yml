@@ -1,0 +1,24 @@
+# Private vulnerability reporting not applicable. On some repositories (e.g.
+# private ones) the PVR feature does not apply and its GET answers 404, which
+# the repository section reads as "disabled". The settings declare it disabled
+# (false), so a check run sees no drift - the 404 "not applicable" is not an
+# error, it is the feature legitimately reading as off.
+name: repository-pvr-not-applicable
+settings:
+  repository:
+    enable_private_vulnerability_reporting: false
+inputs:
+  mode: check
+live_state:
+  repo:
+    private_vulnerability_reporting_not_applicable: true
+token_permissions:
+  administration: read
+expect:
+  exit_code: 0
+  result: clean
+  outcomes:
+    repository: clean
+  never:
+    - "PUT /repos/{repo}/private-vulnerability-reporting"
+    - "DELETE /repos/{repo}/private-vulnerability-reporting"

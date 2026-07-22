@@ -1,0 +1,21 @@
+# Network drop. A connection_drop fault destroys the response for the labels
+# list read on every attempt (more than the client retries), so the client
+# exhausts its retries and surfaces a network failure. The section fails and the
+# run exits 1 - proving the client's retry-then-throw path on a dropped
+# connection.
+name: labels-network-drop
+settings:
+  labels:
+    - name: bug
+      color: d73a4a
+faults:
+  - endpoint: labels.list
+    kind: connection_drop
+    times: 10
+token_permissions:
+  issues: write
+expect:
+  exit_code: 1
+  result: failed
+  outcomes:
+    labels: failed

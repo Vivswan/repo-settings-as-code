@@ -1,0 +1,28 @@
+# Enabling the repository security toggles from a disabled live state. Apply
+# PUTs automated-security-fixes, vulnerability-alerts, and
+# private-vulnerability-reporting. The convergence rerun reads each toggle back
+# (GET automated-security-fixes returns {enabled:true}, GET vulnerability-alerts
+# answers 204, GET private-vulnerability-reporting returns {enabled:true}) and
+# finds them matching, so it converges.
+name: repository-security-toggles-enable
+settings:
+  repository:
+    enable_automated_security_fixes: true
+    enable_vulnerability_alerts: true
+    enable_private_vulnerability_reporting: true
+live_state:
+  repo:
+    automated_security_fixes_enabled: false
+    vulnerability_alerts_enabled: false
+    private_vulnerability_reporting_enabled: false
+token_permissions:
+  administration: write
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    repository: applied
+  mutations:
+    - "PUT /repos/{repo}/automated-security-fixes"
+    - "PUT /repos/{repo}/private-vulnerability-reporting"
+  converges: true

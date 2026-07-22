@@ -16,6 +16,7 @@ import { flattenEnvironment } from "../../../src/sections/environments.js";
 import { roleForPermission } from "../../../src/sections/roles.js";
 import {
   buildState,
+  buildStateForSlug,
   collaboratorFromPut,
   environmentFromPut,
   protectionFromPut,
@@ -81,6 +82,29 @@ describe("buildState overlay semantics", () => {
     a.repo.description = "mutated";
     const b = buildState(undefined, "org");
     expect(b.repo.description).not.toBe("mutated");
+  });
+
+  test("reslugging one state's nested owner does not contaminate the fixture singleton", () => {
+    // deepMerge shallow-copied the top level, so before the clone fix state.repo
+    // .owner aliased the imported fixture's nested owner object; reslugRepo then
+    // mutated owner.login on the module singleton, contaminating later builds.
+    // buildStateForSlug re-slugs owner.login; a second, unrelated build must
+    // still see the pristine fixture owner.
+    const first = buildStateForSlug("e2e-owner/svc-a", { settingsYaml: null }, "org");
+    expect((first.repo.owner as Record<string, unknown>).login).toBe("e2e-owner");
+    // Build a second state with a live_state.repo overlay (the deepMerge path)
+    // and re-slug it to a different owner.
+    const second = buildStateForSlug(
+      "other-owner/svc-b",
+      { settingsYaml: null, liveState: { repo: { description: "x" } } },
+      "org",
+    );
+    expect((second.repo.owner as Record<string, unknown>).login).toBe("other-owner");
+    // A third, plain build must see the untouched fixture owner - proof the
+    // module singleton was never mutated by the re-slugs above.
+    const third = buildState(undefined, "org");
+    expect((third.repo.owner as Record<string, unknown>).login).toBe("e2e-owner");
+    expect(third.repo.full_name).toBe("e2e-owner/e2e-repo");
   });
 });
 

@@ -1,0 +1,37 @@
+# Multi-repo teams: the teams section probes GET /orgs/{owner} (org-level, not
+# repo-scoped) before granting team access per repo. This scenario proves the
+# multi-repo mock routes that org probe to the shared org state (it 200s from
+# the fixture) rather than failing the slug router, and that the team-repo grant
+# resolves to the addressed repo. The org owner_kind (default) makes the org
+# probe succeed; svc-a grants a team, svc-b has none declared.
+name: multi-teams-org-probe
+settings: {}
+repos:
+  e2e-owner/svc-a:
+    settings:
+      teams:
+        - name: reviewers
+          permission: push
+    expect:
+      result: applied
+  e2e-owner/svc-b:
+    settings:
+      labels:
+        - name: managed
+          color: "00ff00"
+    expect:
+      result: applied
+token_permissions:
+  administration: write
+  issues: write
+  org_members: read
+expect:
+  exit_code: 0
+  result: applied
+  repos_result:
+    e2e-owner/svc-a: applied
+    e2e-owner/svc-b: applied
+  mutations:
+    - "PUT /orgs/e2e-owner/teams/reviewers/repos/e2e-owner/svc-a"
+  requests_contain:
+    - "GET /orgs/e2e-owner"

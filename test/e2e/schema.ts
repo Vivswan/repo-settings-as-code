@@ -175,6 +175,24 @@ const DiscoverySchema = z
   })
   .strict();
 
+/**
+ * A transport-level fault the mock injects on the first `times` (default 1)
+ * requests that match `endpoint` (a "section.role" key). These model failures
+ * the permission/handler layers cannot: `rate_limit_403` answers 403 with "rate
+ * limit" in the body (the client's classifier must read it as throttling, NOT a
+ * permission denial); `429_then_200` answers 429 with Retry-After: 0 so the
+ * client's retry plugin retries and the next request succeeds (the retry path,
+ * fast under RETRY_BASE_MS=1); `connection_drop` destroys the socket before any
+ * response (a network failure the client surfaces after its retries are spent).
+ */
+const FaultSchema = z
+  .object({
+    endpoint: z.string(),
+    kind: z.enum(["rate_limit_403", "429_then_200", "connection_drop"]),
+    times: z.number().int().positive().optional(),
+  })
+  .strict();
+
 export const ScenarioSchema = z
   .object({
     name: z.string(),
@@ -203,6 +221,8 @@ export const ScenarioSchema = z
     discovery: DiscoverySchema.optional(),
     /** The defaults-file body merged under every target (INPUT_DEFAULTS-FILE). */
     defaults_file: SettingsSchema.optional(),
+    /** Transport-level faults injected on the first matching requests. */
+    faults: z.array(FaultSchema).optional(),
     expect: ExpectSchema,
   })
   .strict();
@@ -217,6 +237,7 @@ export type Expect = z.infer<typeof ExpectSchema>;
 export type MultiRepo = z.infer<typeof MultiRepoSchema>;
 export type DiscoveryRepo = z.infer<typeof DiscoveryRepoSchema>;
 export type Discovery = z.infer<typeof DiscoverySchema>;
+export type Fault = z.infer<typeof FaultSchema>;
 export type Scenario = z.infer<typeof ScenarioSchema>;
 
 /**

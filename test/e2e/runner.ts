@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 import type { LoggedRequest } from "./mock/routes.js";
 import { type ServerOptions, startMockServer } from "./mock/server.js";
+import { sharedValidator } from "./openapi/validate.js";
 import type { Scenario } from "./schema.js";
 
 const ROOT = join(import.meta.dir, "..", "..");
@@ -44,6 +45,8 @@ export interface ScenarioReport {
   stderr: string;
   /** The artifact directory written on failure, for the CLI to surface. */
   artifactDir?: string;
+  /** Full request log snapshot, for coverage and validation consumers. */
+  requests: LoggedRequest[];
 }
 
 /** The result of one child process invocation against a running mock. */
@@ -328,6 +331,13 @@ export async function runScenario(
     dir = mkdtempSync(join(tmpdir(), "e2e-"));
     handle = await startMockServer(scenario, {
       ...(scenario.base_prefix ? { basePrefix: scenario.base_prefix } : {}),
+      // The scenario spells a fault's target as `endpoint`; the mock's
+      // FaultOption keys it as `key`. Map the field name here.
+      ...(scenario.faults
+        ? {
+            faults: scenario.faults.map((f) => ({ key: f.endpoint, kind: f.kind, times: f.times })),
+          }
+        : {}),
       ...opts?.serverOptions,
     });
     writeFileSync(join(dir, "settings.yml"), stringifyYaml(scenario.settings));
@@ -442,6 +452,17 @@ export async function runScenario(
       }
     }
 
+    // 9. OpenAPI contract: every logged request (including the convergence
+    // re-run's) must match a documented path/method, and every request/response
+    // body must satisfy the trimmed spec. Always on: the mock is our stand-in
+    // for GitHub, so any drift from the published contract is a mock bug. Denied
+    // and mock-violation traffic is excluded inside the validator.
+    const openApiViolations = sharedValidator().validateLog(handle.requests);
+    if (openApiViolations.length > 0) {
+      const lines = openApiViolations.map((v) => `${v.request} [${v.kind}]: ${v.detail}`);
+      failures.push(`OpenAPI contract violations:\n  ${lines.join("\n  ")}`);
+    }
+
     const report: ScenarioReport = {
       scenario: scenario.name,
       ok: failures.length === 0,
@@ -451,6 +472,7 @@ export async function runScenario(
       summary: first.summary,
       stdout: first.stdout,
       stderr: first.stderr,
+      requests: [...handle.requests],
     };
     if (!report.ok) {
       report.artifactDir = dumpArtifacts(scenario, report, handle.requests);

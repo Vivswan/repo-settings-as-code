@@ -1,0 +1,22 @@
+# RETRY_BASE_MS=1 retry path. A 429_then_200 fault answers 429 with
+# Retry-After: 0 on the labels list read once; the throttling plugin retries
+# immediately (fast under RETRY_BASE_MS=1, which the runner sets) and the retry
+# succeeds, so the section proceeds and applies normally - proving the client's
+# retry path recovers from a transient 429.
+name: labels-retry-429-then-200
+settings:
+  labels:
+    - name: bug
+      color: d73a4a
+faults:
+  - endpoint: labels.list
+    kind: 429_then_200
+token_permissions:
+  issues: write
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    labels: applied
+  mutations:
+    - "POST /repos/{repo}/labels"

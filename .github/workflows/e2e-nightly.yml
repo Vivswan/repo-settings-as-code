@@ -1,0 +1,84 @@
+name: E2E Nightly
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: Fuzz master seed (blank for a random one)
+        required: false
+        type: string
+      iterations:
+        description: Fuzz iterations
+        required: false
+        type: string
+        default: "300"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: e2e-nightly
+  cancel-in-progress: false
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # The trimmed OpenAPI spec is a fetched, gitignored artifact. The nightly
+      # ALWAYS fetches it (no cache) on purpose: the fetch is the drift tripwire.
+      # trim-openapi.ts HARD-ERRORS when a USED_PATH is absent upstream (the
+      # action calls a path GitHub no longer documents at the pinned version) -
+      # the drift worth catching now that there is no committed artifact to diff.
+      # e2e-smoke caches this for per-PR speed; the nightly re-fetches so the
+      # tripwire runs every night regardless of a cache.
+      - name: Fetch the trimmed OpenAPI spec (drift tripwire)
+        run: bun .github/scripts/trim-openapi.ts
+
+      - name: Curated corpus
+        run: bun test/e2e/run.ts
+
+      - name: Fuzz
+        id: fuzz
+        env:
+          SEED: ${{ inputs.seed }}
+          ITERATIONS: ${{ inputs.iterations || '300' }}
+        run: |
+          if [ -z "$SEED" ]; then
+            SEED="$RANDOM$RANDOM"
+          fi
+          echo "seed=$SEED" >> "$GITHUB_OUTPUT"
+          bun test/e2e/fuzz.ts --iterations "$ITERATIONS" --seed "$SEED"
+
+      # Tripwire: every "section.role" route in allEndpoints() must be hit at
+      # least once by the curated corpus. The checker runs the corpus and reads
+      # each run's request log, then fails naming any route no scenario reached.
+      - name: Endpoint-coverage tripwire
+        run: bun .github/scripts/check-endpoint-coverage.ts
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: test/e2e/.artifacts/
+          if-no-files-found: ignore
+
+      - name: File an issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FUZZ_SEED: ${{ steps.fuzz.outputs.seed }}
+        run: bun .github/scripts/file-fuzz-issue.ts

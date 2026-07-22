@@ -172,7 +172,16 @@ export function buildState(liveState: LiveState | undefined, ownerKind: OwnerKin
     nextId += ls.labels.generate.count;
   }
 
-  const repo = ls.repo ? deepMerge(repoFixture as Json, ls.repo) : clone(repoFixture as Json);
+  // deepMerge shallow-copies the base top level and assigns OVERLAY values by
+  // reference, so both sides must be cloned: the base clone keeps the module
+  // fixture singleton private (a later reslugRepo mutating owner.login would
+  // otherwise contaminate every scenario), and the overlay clone keeps the
+  // scenario's live_state.repo object private (an in-place handler mutation
+  // would otherwise write back into the scenario). Cloning both makes the
+  // resulting repo fully owned by this state.
+  const repo = ls.repo
+    ? deepMerge(clone(repoFixture as Json), clone(ls.repo))
+    : clone(repoFixture as Json);
 
   return {
     ownerKind,
@@ -244,6 +253,14 @@ export interface MultiMockState {
   permissions: Map<string, Record<string, string>>;
   /** The repo objects `/user/repos` enumerates (discovery pool). */
   discoveryPool: Json[];
+  /**
+   * A shared MockState for the org-level endpoints (the teams section's
+   * `GET /orgs/{org}` probe), which are NOT repo-scoped. It carries the org
+   * fixture (or null org when owner_kind is "user"); only its `org` field is
+   * read. Team-repo routes (`/orgs/{org}/teams/.../repos/{owner}/{repo}`) still
+   * resolve to the addressed repo's state via their {owner}/{repo} tail.
+   */
+  orgState: MockState;
 }
 
 /**
@@ -313,6 +330,9 @@ export function buildMultiState(
     settings: new Map(),
     permissions: new Map(),
     discoveryPool: (discoveryPool ?? []).map(discoveryRepoBody),
+    // The org-level endpoints read only `org`; a default MockState carries the
+    // org fixture (or null org for a personal account) with the admin owner.
+    orgState: buildState(undefined, ownerKind),
   };
   const ensure = (slug: string, spec: MultiRepoSpec): void => {
     state.repos.set(slug, buildStateForSlug(slug, spec, ownerKind));

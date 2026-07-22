@@ -1,0 +1,23 @@
+# Rate-limit classification. A rate_limit_403 fault answers 403 with "rate
+# limit" in the body on the labels list read, for more attempts than the client
+# will retry (1 + 2 retries = 3), so the throttling plugin exhausts its retries
+# and the error surfaces. The section must classify it as a RATE LIMIT (its
+# advice mentions re-running after the limit resets), NOT a permission denial.
+name: labels-rate-limit-classification
+settings:
+  labels:
+    - name: bug
+      color: d73a4a
+faults:
+  - endpoint: labels.list
+    kind: rate_limit_403
+    times: 3
+token_permissions:
+  issues: write
+expect:
+  exit_code: 1
+  result: failed
+  outcomes:
+    labels: failed
+  stdout_contains:
+    - "rate limit"

@@ -14,7 +14,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { endpointPermission } from "../../../src/sections/contract.js";
 import { allEndpoints, SECTIONS } from "../../../src/sections/registry.js";
 import { parseScenario, type Scenario } from "../schema.js";
-import { assertHandlerCompleteness, declaredStatuses, slicePage, statusAllowed } from "./routes.js";
+import {
+  assertFaultKeys,
+  assertHandlerCompleteness,
+  declaredStatuses,
+  slicePage,
+  statusAllowed,
+} from "./routes.js";
 import { type MockHandle, type ServerOptions, startMockServer } from "./server.js";
 import type { MockState } from "./state.js";
 
@@ -287,12 +293,18 @@ describe("denial style bodies", () => {
 });
 
 describe("denial barrier", () => {
-  test("a denied write to a 'denied'-semantics section under the fail policy is a violation", async () => {
-    // labels is "denied" and the default policy is fail, so preflight should
-    // have stopped the write; reaching the server is a violation.
+  test("a read-grade mask + fail policy + denied write is NOT a violation (preflight only proves reads)", async () => {
+    // labels is "denied", but issues:read passes the list READ, so preflight
+    // (fail policy) succeeds - it can only prove reads work; the engine then
+    // legitimately sends the create, which is write-denied. No preceding denied
+    // read, so NO violation. Fuzz seed 1723060241 found the old rule flagging
+    // exactly this (repo mask issues:read false-flagged POST labels).
     const h = await start(scenario({ token_permissions: { issues: "read" } }));
-    await call(h, "POST", labelsPath, { body: { name: "x" } });
-    expect(h.violations.some((v) => v.includes("should have been stopped"))).toBe(true);
+    const read = await call(h, "GET", labelsPath);
+    expect(read.status).toBe(200); // the read is allowed
+    const write = await call(h, "POST", labelsPath, { body: { name: "x" } });
+    expect(write.status).toBe(403); // the write is denied
+    expect(h.violations).toHaveLength(0);
   });
 
   test("a denied write to an 'absent'-semantics section under fine_grained is NOT a violation", async () => {
@@ -320,15 +332,19 @@ describe("denial barrier", () => {
     expect(h.violations).toHaveLength(0);
   });
 
-  test("the same denied write under the FAIL policy IS a violation (preflight guarantee)", async () => {
+  test("a denied write AFTER a denied read in the same section IS a violation (fail policy)", async () => {
+    // Under fail, preflight issues the section's read first. When the read grade
+    // is none the read is denied (fatal) and recorded; the apply-pass write then
+    // proves broken sequencing. Simulate preflight's read explicitly.
     const h = await start(
       scenario({
         inputs: { on_missing_permission: "fail" },
         token_permissions: { administration: "none" },
       }),
     );
+    await call(h, "GET", `/repos/${OWNER}/${REPO}`); // repository.get denied, fatal
     await call(h, "PATCH", `/repos/${OWNER}/${REPO}`, { body: { description: "x" } });
-    expect(h.violations.some((v) => v.includes("should have been stopped"))).toBe(true);
+    expect(h.violations.some((v) => v.includes("should have aborted"))).toBe(true);
   });
 
   test("a first-op denied write under WARN + uniform 403 style is NOT a violation", async () => {
@@ -347,7 +363,7 @@ describe("denial barrier", () => {
     expect(h.violations).toHaveLength(0);
   });
 
-  test("a denied write AFTER a denied read in the same section is a violation (any policy)", async () => {
+  test("a denied write AFTER a denied read in the same section is a violation (warn policy too)", async () => {
     // The engine aborts a section at a hard-denied read, so a later write for
     // that section proves broken sequencing even under warn.
     const h = await start(
@@ -359,7 +375,7 @@ describe("denial barrier", () => {
     );
     await call(h, "GET", labelsPath); // denied read, not tolerated (403)
     await call(h, "POST", labelsPath, { body: { name: "x" } });
-    expect(h.violations.some((v) => v.includes("should have been stopped"))).toBe(true);
+    expect(h.violations.some((v) => v.includes("should have aborted"))).toBe(true);
   });
 
   test("a tolerated fine_grained 404 read does not arm the write barrier", async () => {
@@ -394,6 +410,17 @@ describe("check-mode barrier", () => {
     const res = await call(h, "POST", labelsPath, { body: { name: "x" } });
     expect(res.status).toBe(400);
     expect((await json(res)).message).toContain("write in check mode");
+    expect(h.violations.some((v) => v === "write in check mode")).toBe(true);
+  });
+
+  test("a faulted write in check mode is STILL a check-mode violation (barrier runs before faults)", async () => {
+    // The check-mode barrier runs before the fault barrier, so a synthetic fault
+    // cannot mask the write the engine should never have sent in check mode.
+    const h = await start(scenario({ inputs: { mode: "check" } }), {
+      faults: [{ key: "labels.create", kind: "rate_limit_403" }],
+    });
+    const res = await call(h, "POST", labelsPath, { body: { name: "x" } });
+    expect(res.status).toBe(400); // the check-mode violation, not the 403 fault
     expect(h.violations.some((v) => v === "write in check mode")).toBe(true);
   });
 
@@ -577,7 +604,7 @@ describe("actions selected-actions 409", () => {
 });
 
 describe("code-scanning 200-vs-202 rule", () => {
-  test("a payload changing languages answers 202 with run_id; else 200", async () => {
+  test("a payload changing languages answers 202 with run_id; else 200 with an empty body", async () => {
     const h = await start(
       scenario({ live_state: { code_scanning: { state: "configured", languages: ["python"] } } }),
     );
@@ -588,6 +615,27 @@ describe("code-scanning 200-vs-202 rule", () => {
 
     const same = await call(h, "PATCH", path, { body: { state: "configured" } });
     expect(same.status).toBe(200);
+    // The spec's 200 body is an empty object (additionalProperties: false), NOT
+    // the stored config - so the handler returns {}.
+    expect(await json(same)).toEqual({});
+  });
+});
+
+describe("logged response bodies are snapshots, not live-state aliases", () => {
+  test("a later mutation does not retroactively rewrite an earlier logged body", async () => {
+    // repository.get returns the live state.repo; a subsequent repository.update
+    // Object.assigns into that same object. If the log kept a reference, the GET
+    // entry's body would reflect the later PATCH. structuredClone prevents that.
+    const h = await start(scenario());
+    await call(h, "GET", `/repos/${OWNER}/${REPO}`);
+    await call(h, "PATCH", `/repos/${OWNER}/${REPO}`, { body: { description: "changed-after" } });
+    const getLog = h.requests.find(
+      (r) => r.method === "GET" && r.pathname === `/repos/${OWNER}/${REPO}`,
+    );
+    // The GET's logged body must show the ORIGINAL description, not the PATCH's.
+    expect((getLog?.responseBody as Record<string, unknown>)?.description).not.toBe(
+      "changed-after",
+    );
   });
 });
 
@@ -613,6 +661,32 @@ describe("chaos hook", () => {
     const body = await json(await call(h, "GET", `/repos/${OWNER}/${REPO}/actions/workflows`));
     expect(body.workflows).toBeUndefined();
     expect(body.total_count).toBe(1);
+  });
+
+  test("times defaults to 1: only the first response is corrupt, the follow-up is real", async () => {
+    const h = await start(scenario(), { corrupt: { key: "labels.list", mode: "invalid_json" } });
+    await expect((await call(h, "GET", labelsPath)).json()).rejects.toThrow();
+    // The second request serves the real (empty) labels list.
+    expect(await jsonArray(await call(h, "GET", labelsPath))).toEqual([]);
+  });
+
+  test('times: "always" corrupts every response', async () => {
+    const h = await start(scenario(), {
+      corrupt: { key: "labels.list", mode: "invalid_json", times: "always" },
+    });
+    for (let i = 0; i < 4; i++) {
+      await expect((await call(h, "GET", labelsPath)).json()).rejects.toThrow();
+    }
+  });
+
+  test("times: N corrupts the first N responses then serves real ones", async () => {
+    const h = await start(scenario(), {
+      corrupt: { key: "labels.list", mode: "invalid_json", times: 3 },
+    });
+    for (let i = 0; i < 3; i++) {
+      await expect((await call(h, "GET", labelsPath)).json()).rejects.toThrow();
+    }
+    expect(await jsonArray(await call(h, "GET", labelsPath))).toEqual([]);
   });
 });
 
@@ -723,8 +797,8 @@ describe("handler statuses obey the realism rule", () => {
       // environments: probe (both), update (create + update)
       ["environments.probe", "GET", `/repos/${OWNER}/${REPO}/environments/prod`],
       ["environments.probe", "GET", `/repos/${OWNER}/${REPO}/environments/absent`], // 404
-      ["environments.update", "PUT", `/repos/${OWNER}/${REPO}/environments/staging`, {}], // 201
-      ["environments.update", "PUT", `/repos/${OWNER}/${REPO}/environments/staging`, {}], // 200
+      ["environments.update", "PUT", `/repos/${OWNER}/${REPO}/environments/staging`, {}], // 200 create
+      ["environments.update", "PUT", `/repos/${OWNER}/${REPO}/environments/staging`, {}], // 200 update
       // autolinks: list, create, remove (both)
       ["autolinks.list", "GET", `/repos/${OWNER}/${REPO}/autolinks`],
       [
@@ -1013,6 +1087,72 @@ describe("multi-repo mode", () => {
     expect(probe.name).toBe("svc-a");
   });
 
+  test("the org probe (GET /orgs/{owner}) is served from the shared org state, not slug-routed", async () => {
+    // Org-level endpoints are not repo-scoped; before this they hit the slug
+    // router and failed with "names no known target slug".
+    const h = await start(scenario({ repos: { "e2e-owner/svc-a": { settings: {} } } }));
+    const org = await call(h, "GET", "/orgs/e2e-owner");
+    expect(org.status).toBe(200);
+    expect((await json(org)).login).toBe("e2e-owner");
+    expect(h.violations).toHaveLength(0);
+  });
+
+  test("the org probe 404s under a personal-account owner_kind", async () => {
+    const h = await start(
+      scenario({ owner_kind: "user", repos: { "e2e-owner/svc-a": { settings: {} } } }),
+    );
+    expect((await call(h, "GET", "/orgs/e2e-owner")).status).toBe(404);
+  });
+
+  test("a team-repo route resolves its {owner}/{repo} tail to the addressed slug's state", async () => {
+    const h = await start(
+      scenario({
+        owner_kind: "org",
+        repos: {
+          "e2e-owner/svc-a": {
+            settings: {},
+            live_state: { teams: { reviewers: { role_name: "write" } } },
+          },
+          "e2e-owner/svc-b": { settings: {} },
+        },
+      }),
+    );
+    // The team-repo probe reads svc-a's teams state (role_name write), not svc-b's.
+    const res = await call(h, "GET", "/orgs/e2e-owner/teams/reviewers/repos/e2e-owner/svc-a");
+    expect(res.status).toBe(200);
+    expect((await json(res)).role_name).toBe("write");
+    // svc-b has no reviewers team -> 404, proving per-slug resolution.
+    const missing = await call(h, "GET", "/orgs/e2e-owner/teams/reviewers/repos/e2e-owner/svc-b");
+    expect(missing.status).toBe(404);
+    expect(h.violations).toHaveLength(0);
+  });
+
+  test("org endpoints grade against the GLOBAL mask, not a per-slug mask", async () => {
+    // svc-a denies administration per-slug, but the org probe (permission:
+    // none) and team-repo grading use the global mask - so a per-slug denial
+    // does not leak into the org route. Deny org_members globally to prove the
+    // team probe reads the global mask.
+    const h = await start(
+      scenario({
+        owner_kind: "org",
+        token_permissions: { org_members: "none" },
+        repos: {
+          "e2e-owner/svc-a": {
+            settings: {},
+            permissions: { org_members: "write" },
+            live_state: { teams: { reviewers: { role_name: "write" } } },
+          },
+        },
+      }),
+    );
+    // The team probe needs org_members read; the GLOBAL mask denies it, and the
+    // per-slug override must NOT apply to this org-level route.
+    const res = await call(h, "GET", "/orgs/e2e-owner/teams/reviewers/repos/e2e-owner/svc-a");
+    expect(res.status).toBe(404); // denied by global org_members: none
+    const log = h.requests.find((r) => r.pathname.includes("/teams/reviewers/"));
+    expect(log?.deniedBy).toBe("org_members");
+  });
+
   test("per-slug permission mask scopes a denial to one repository", async () => {
     const h = await start(
       scenario({
@@ -1049,5 +1189,189 @@ describe("multi-repo mode", () => {
     const res = await call(h, "GET", "/repos/e2e-owner/ghost/labels");
     expect(res.status).toBe(400);
     expect(h.violations.some((v) => v.includes("no known target slug"))).toBe(true);
+  });
+
+  test("the denial barrier does not leak across slugs (per-target keying)", async () => {
+    // repo-1 (svc-a) denies issues -> its labels read is fatal-denied and arms
+    // the barrier for svc-a:labels. repo-2 (svc-b) grants issues -> its labels
+    // write is legitimate and must NOT be flagged by svc-a's denied read.
+    const h = await start(
+      scenario({
+        denial_style: 403,
+        repos: {
+          "e2e-owner/svc-a": { settings: {}, permissions: { issues: "none" } },
+          "e2e-owner/svc-b": { settings: {}, permissions: { issues: "write" } },
+        },
+      }),
+    );
+    // svc-a: denied read (fatal, 403) arms svc-a:labels.
+    expect((await call(h, "GET", "/repos/e2e-owner/svc-a/labels")).status).toBe(403);
+    // svc-b: a legitimate labels create - the barrier must not fire across slugs.
+    const write = await call(h, "POST", "/repos/e2e-owner/svc-b/labels", { body: { name: "x" } });
+    expect(write.status).toBe(201);
+    expect(h.violations).toHaveLength(0);
+  });
+
+  test("a team-repo route naming an unknown slug is a violation (not an orgState fallback)", async () => {
+    // The team-repo route carries a {owner}/{repo} tail; an unknown slug must be
+    // the unknown-target violation, NOT a silent fall-through to orgState (which
+    // would let a buggy write mutate shared org state). Only the BARE org probe
+    // (no slug) uses orgState.
+    const h = await start(
+      scenario({ owner_kind: "org", repos: { "e2e-owner/svc-a": { settings: {} } } }),
+    );
+    const res = await call(h, "PUT", "/orgs/e2e-owner/teams/reviewers/repos/e2e-owner/ghost", {
+      body: { permission: "push" },
+    });
+    expect(res.status).toBe(400);
+    expect(h.violations.some((v) => v.includes("no known target slug"))).toBe(true);
+    // The bare org probe (no repo tail) still works from orgState.
+    expect((await call(h, "GET", "/orgs/e2e-owner")).status).toBe(200);
+  });
+
+  test("a fault does not mask the unknown-target violation (resolution runs first)", async () => {
+    // A fault on labels.list must not fire for a request naming a ghost slug:
+    // the unknown-target check is a harness-integrity invariant that resolution
+    // raises before the fault barrier.
+    const h = await start(scenario({ repos: { "e2e-owner/svc-a": { settings: {} } } }), {
+      faults: [{ key: "labels.list", kind: "rate_limit_403" }],
+    });
+    const res = await call(h, "GET", "/repos/e2e-owner/ghost/labels");
+    expect(res.status).toBe(400); // the unknown-target violation, NOT the 403 fault
+    expect(h.violations.some((v) => v.includes("no known target slug"))).toBe(true);
+    // The fault still fires for a VALID target (unchanged behavior).
+    expect((await call(h, "GET", "/repos/e2e-owner/svc-a/labels")).status).toBe(403);
+  });
+});
+
+describe("fault injection", () => {
+  test("rate_limit_403 answers 403 with a rate-limit body, then normal", async () => {
+    const h = await start(scenario(), {
+      faults: [{ key: "labels.list", kind: "rate_limit_403" }],
+    });
+    const faulted = await call(h, "GET", labelsPath);
+    expect(faulted.status).toBe(403);
+    // The body says "rate limit" (this is the ONLY place a 403 may) so the
+    // client classifies it as throttling, not a permission denial.
+    expect((await faulted.text()).toLowerCase()).toContain("rate limit");
+    // The fault fired once (default times: 1); the next request is served.
+    const normal = await call(h, "GET", labelsPath);
+    expect(normal.status).toBe(200);
+  });
+
+  test("times: N applies the fault to the first N matching requests", async () => {
+    const h = await start(scenario(), {
+      faults: [{ key: "labels.list", kind: "rate_limit_403", times: 2 }],
+    });
+    expect((await call(h, "GET", labelsPath)).status).toBe(403);
+    expect((await call(h, "GET", labelsPath)).status).toBe(403);
+    expect((await call(h, "GET", labelsPath)).status).toBe(200);
+  });
+
+  test("429_then_200 answers 429 with Retry-After: 0, then serves the handler", async () => {
+    const h = await start(scenario(), {
+      faults: [{ key: "labels.list", kind: "429_then_200" }],
+    });
+    const faulted = await call(h, "GET", labelsPath);
+    expect(faulted.status).toBe(429);
+    expect(faulted.headers.get("retry-after")).toBe("0");
+    const retried = await call(h, "GET", labelsPath);
+    expect(retried.status).toBe(200);
+  });
+
+  test("connection_drop does not serve the real response and logs the attempt (status 0)", async () => {
+    const h = await start(scenario({ live_state: { labels: [{ id: 1, name: "real" }] } }), {
+      faults: [{ key: "labels.list", kind: "connection_drop" }],
+    });
+    // The mid-response abort is the drop: the client never receives the real
+    // labels list. Bun's in-process fetch cannot observe the connection-level
+    // failure the way undici does over a socket (the true client-visible reject
+    // is proven end-to-end by labels-network-drop), so the reliable in-process
+    // signals are: the attempt is logged with status 0, and the body is NOT the
+    // served list.
+    const res = await call(h, "GET", labelsPath);
+    expect(res.status).not.toBe(200);
+    expect(h.requests.some((r) => r.status === 0)).toBe(true);
+    // The fault fires once, so the next request serves the real list.
+    const normal = await jsonArray(await call(h, "GET", labelsPath));
+    expect(normal.map((l) => l.name)).toEqual(["real"]);
+  });
+
+  test("a fault only fires for its named endpoint", async () => {
+    const h = await start(scenario(), {
+      faults: [{ key: "labels.list", kind: "rate_limit_403" }],
+    });
+    // A different endpoint is unaffected.
+    expect((await call(h, "GET", `/repos/${OWNER}/${REPO}/milestones`)).status).toBe(200);
+  });
+
+  test("a fault/corrupt naming an unknown endpoint throws at construction", async () => {
+    await expect(
+      startMockServer(scenario(), { faults: [{ key: "labels.nope", kind: "rate_limit_403" }] }),
+    ).rejects.toThrow(/unknown endpoint/);
+    await expect(
+      startMockServer(scenario(), { corrupt: { key: "ghost.list", mode: "invalid_json" } }),
+    ).rejects.toThrow(/unknown endpoint/);
+  });
+
+  test("duplicate fault entries for one endpoint throw at construction", async () => {
+    await expect(
+      startMockServer(scenario(), {
+        faults: [
+          { key: "labels.list", kind: "rate_limit_403" },
+          { key: "labels.list", kind: "connection_drop" },
+        ],
+      }),
+    ).rejects.toThrow(/duplicate fault/);
+  });
+
+  test("assertFaultKeys accepts valid keys and rejects unknown/duplicate directly", () => {
+    expect(() =>
+      assertFaultKeys([{ key: "labels.list", kind: "rate_limit_403" }], undefined),
+    ).not.toThrow();
+    expect(() => assertFaultKeys([{ key: "bogus", kind: "rate_limit_403" }], undefined)).toThrow(
+      /unknown endpoint/,
+    );
+  });
+});
+
+describe("state-flag gaps", () => {
+  test("code-scanning update answers 409 when a run is in progress", async () => {
+    const h = await start(
+      scenario({
+        live_state: { code_scanning: { state: "configured", configuration_run_in_progress: true } },
+      }),
+    );
+    const res = await call(h, "PATCH", `/repos/${OWNER}/${REPO}/code-scanning/default-setup`, {
+      body: { state: "configured", languages: ["javascript"] },
+    });
+    expect(res.status).toBe(409);
+  });
+
+  test("code-scanning update applies (202) without the in-progress flag", async () => {
+    const h = await start(scenario({ live_state: { code_scanning: { state: "configured" } } }));
+    const applied = await call(h, "PATCH", `/repos/${OWNER}/${REPO}/code-scanning/default-setup`, {
+      body: { languages: ["javascript"] },
+    });
+    expect(applied.status).toBe(202);
+  });
+
+  test("private-vulnerability-reporting GET/DELETE answer 404 when not applicable", async () => {
+    const h = await start(
+      scenario({
+        live_state: { repo: { private_vulnerability_reporting_not_applicable: true } },
+      }),
+    );
+    const get = await call(h, "GET", `/repos/${OWNER}/${REPO}/private-vulnerability-reporting`);
+    expect(get.status).toBe(404);
+    const del = await call(h, "DELETE", `/repos/${OWNER}/${REPO}/private-vulnerability-reporting`);
+    expect(del.status).toBe(404);
+    expect(h.violations).toHaveLength(0);
+  });
+
+  test("PVR GET answers 200 when applicable (flag absent)", async () => {
+    const h = await start(scenario());
+    const get = await call(h, "GET", `/repos/${OWNER}/${REPO}/private-vulnerability-reporting`);
+    expect(get.status).toBe(200);
   });
 });

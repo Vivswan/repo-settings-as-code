@@ -39,9 +39,30 @@ function parseFlags(argv: string[]): Flags {
 }
 
 /**
- * A scenario "touches" a section when that section is a top-level key of its
- * settings document. --sections keeps scenarios touching any listed section;
- * --scenario matches an exact name.
+ * Every section a scenario touches: the top-level `settings` keys plus each
+ * multi-repo target's `repos.<slug>.settings` keys and the `defaults_file`
+ * keys. A multi-repo scenario declares its sections per target, not at the top
+ * level, so filtering on `settings` alone would drop it from a --sections run.
+ */
+function scenarioSections(scenario: Scenario): Set<string> {
+  const keys = new Set<string>(Object.keys(scenario.settings ?? {}));
+  for (const spec of Object.values(scenario.repos ?? {})) {
+    if (spec.settings) {
+      for (const key of Object.keys(spec.settings)) {
+        keys.add(key);
+      }
+    }
+  }
+  for (const key of Object.keys(scenario.defaults_file ?? {})) {
+    keys.add(key);
+  }
+  return keys;
+}
+
+/**
+ * A scenario "touches" a section when that section appears in its settings, in
+ * any multi-repo target's settings, or in its defaults file. --sections keeps
+ * scenarios touching any listed section; --scenario matches an exact name.
  */
 function selectScenarios(all: Scenario[], flags: Flags): Scenario[] {
   let selected = all;
@@ -50,7 +71,14 @@ function selectScenarios(all: Scenario[], flags: Flags): Scenario[] {
   }
   if (flags.sections) {
     const wanted = new Set(flags.sections);
-    selected = selected.filter((s) => Object.keys(s.settings).some((key) => wanted.has(key)));
+    selected = selected.filter((s) => {
+      for (const key of scenarioSections(s)) {
+        if (wanted.has(key)) {
+          return true;
+        }
+      }
+      return false;
+    });
   }
   return selected;
 }

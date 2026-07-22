@@ -27,7 +27,7 @@ const ENDPOINTS = {
   },
   update: {
     route: "PUT /repos/{owner}/{repo}/environments/{environment_name}",
-    statuses: { 200: "environment updated", 201: "environment created" },
+    statuses: { 200: "environment created or updated" },
   },
 } as const satisfies Record<string, EndpointDecl>;
 

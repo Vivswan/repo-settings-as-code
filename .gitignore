@@ -2,6 +2,11 @@
 # BEGIN REPOSITORY LOCAL
 # Add repository-specific ignore patterns in this section only.
 test/e2e/.artifacts/
+# The trimmed GitHub OpenAPI spec is a FETCHED artifact, not committed: it is a
+# ~2MB generated blob that would bloat history on every ref bump. Generate it
+# with `bun .github/scripts/trim-openapi.ts` (reproducible at the pinned sha);
+# CI restores it from actions/cache or re-fetches on a miss.
+test/e2e/openapi/github-openapi.trimmed.json
 
 # END REPOSITORY LOCAL
 

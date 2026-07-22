@@ -9,6 +9,7 @@
         "@octokit/plugin-retry": "^8.1.0",
         "@octokit/plugin-throttling": "^11.0.3",
         "@octokit/rest": "^22.0.1",
+        "bottleneck": "^2.19.5",
         "yaml": "^2.8.2",
         "zod": "^4.4.3",
       },

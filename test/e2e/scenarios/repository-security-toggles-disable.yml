@@ -1,0 +1,28 @@
+# Disabling the repository security toggles from an enabled live state. Apply
+# issues the disabling DELETE for automated-security-fixes and
+# vulnerability-alerts (and private-vulnerability-reporting). The convergence
+# rerun reads each toggle back and finds it off: GET automated-security-fixes
+# returns {enabled:false}, GET vulnerability-alerts answers 404, GET
+# private-vulnerability-reporting returns {enabled:false}.
+name: repository-security-toggles-disable
+settings:
+  repository:
+    enable_automated_security_fixes: false
+    enable_vulnerability_alerts: false
+    enable_private_vulnerability_reporting: false
+live_state:
+  repo:
+    automated_security_fixes_enabled: true
+    vulnerability_alerts_enabled: true
+    private_vulnerability_reporting_enabled: true
+token_permissions:
+  administration: write
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    repository: applied
+  mutations:
+    - "DELETE /repos/{repo}/vulnerability-alerts"
+    - "DELETE /repos/{repo}/automated-security-fixes"
+  converges: true

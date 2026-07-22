@@ -1,0 +1,32 @@
+# The workflow-token and access-level actions endpoints. Live state has a
+# different default_workflow_permissions and a different access_level, so apply
+# PUTs the workflow-token permissions and the access level. The convergence
+# rerun reads both back (GET workflow, GET access) and finds them matching, so
+# it converges. access_level applies to private repositories only, so the repo
+# is private here.
+name: actions-workflow-access-apply-converges
+settings:
+  actions:
+    default_workflow_permissions: read
+    can_approve_pull_request_reviews: false
+    access_level: organization
+live_state:
+  repo:
+    private: true
+    visibility: private
+  workflow_permissions:
+    default_workflow_permissions: write
+    can_approve_pull_request_reviews: true
+  actions_access:
+    access_level: none
+token_permissions:
+  administration: write
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    actions: applied
+  mutations:
+    - "PUT /repos/{repo}/actions/permissions/workflow"
+    - "PUT /repos/{repo}/actions/permissions/access"
+  converges: true

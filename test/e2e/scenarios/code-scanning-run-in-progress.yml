@@ -1,0 +1,25 @@
+# Code-scanning configuration run in progress. The live state has a default-
+# setup run already running, so the PATCH answers 409. The section tolerates the
+# 409 and gives its own advice (a run is in progress; re-run after it finishes)
+# rather than the generic fix-the-file error - and the section fails, so the run
+# exits 1.
+name: code-scanning-run-in-progress
+settings:
+  code_scanning_default_setup:
+    state: configured
+    languages: ["javascript-typescript"]
+live_state:
+  code_scanning:
+    state: configured
+    languages: ["python"]
+    configuration_run_in_progress: true
+token_permissions:
+  administration: write
+  code_scanning_alerts: write
+expect:
+  exit_code: 1
+  result: failed
+  outcomes:
+    code_scanning_default_setup: failed
+  stdout_contains:
+    - "configuration run is already in progress"

@@ -12,8 +12,10 @@
 import { stringify as stringifyYaml } from "yaml";
 import type { Scenario } from "../schema.js";
 import {
+  assertFaultKeys,
   assertHandlerCompleteness,
   type CorruptOption,
+  type FaultOption,
   type LoggedRequest,
   runPipeline,
 } from "./routes.js";
@@ -31,6 +33,8 @@ export interface ServerOptions {
   basePrefix?: string;
   /** Corrupt the first response of one endpoint, to prove loud client failure. */
   corrupt?: CorruptOption;
+  /** Transport-level faults injected on the first matching requests. */
+  faults?: FaultOption[];
 }
 
 /** The live server: where to reach it, its state, its logs, and how to stop. */
@@ -94,6 +98,8 @@ export async function startMockServer(
   // Fail loudly at construction if the handler table has drifted from the
   // section endpoint dictionary, before any request is served.
   assertHandlerCompleteness();
+  // Reject fault/corrupt directives naming unknown endpoints or duplicate faults.
+  assertFaultKeys(options.faults, options.corrupt);
 
   // Multi-repo scenarios run per-slug state; single-repo scenarios keep the one
   // MockState. Exactly one is populated, and the pipeline dispatches on which.
@@ -101,8 +107,9 @@ export async function startMockServer(
   const state = multi ? undefined : buildState(scenario.live_state, scenario.owner_kind);
   const requests: LoggedRequest[] = [];
   const violations: string[] = [];
-  const corruptedKeys = new Set<string>();
+  const corruptCounts = new Map<string, number>();
   const deniedReadSections = new Set<string>();
+  const faultCounts = new Map<string, number>();
   // One-way override flipped by enterCheckMode(); ORed with the scenario mode.
   let checkModeOverride = false;
 
@@ -131,15 +138,49 @@ export async function startMockServer(
           multi,
           basePrefix: options.basePrefix,
           corrupt: options.corrupt,
-          corruptedKeys,
+          corruptCounts,
+          faults: options.faults,
+          faultCounts,
           deniedReadSections,
           checkMode: scenario.inputs?.mode === "check" || checkModeOverride,
         },
       );
 
+      // Mark responses that are deliberately off the OpenAPI contract so the
+      // validator skips them ENTIRELY (status and body):
+      //   - the chaos raw case (a deliberately-corrupt, non-JSON body);
+      //   - synthetic transport faults (rate-limit 403 / 429 / connection drop),
+      //     whose statuses no per-endpoint spec lists;
+      //   - any response to a request that asked for a RAW media type: the raw
+      //     Accept header (e.g. the settings-file fetch) returns file TEXT, not
+      //     the JSON content-object the spec documents. Keying this on the
+      //     REQUEST media type - not an endpoint name - means every future raw
+      //     endpoint inherits the exemption automatically.
+      const rawMediaType = (request.headers.get("accept") ?? "").includes(".raw");
+      const offSpec = result.raw !== undefined || result.offSpecBody || rawMediaType;
+      result.log.offSpec = offSpec;
+      // SNAPSHOT the body: handlers return LIVE state objects (ok(state.repo),
+      // in-place Object.assigns), and validateLog runs at scenario end, so
+      // logging by reference would let a later mutation retroactively rewrite an
+      // earlier logged body. structuredClone freezes what was actually sent.
+      result.log.responseBody = offSpec ? undefined : structuredClone(result.response.body);
       requests.push(result.log);
       if (result.violation) {
         violations.push(result.violation);
+      }
+
+      // connection_drop: Bun.serve cannot abort before the status line, so the
+      // drop happens mid-response via an erroring body stream; undici surfaces
+      // that as a network read failure (a real drop can occur at any phase).
+      if (result.drop) {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(new Error("connection dropped"));
+            },
+          }),
+          { status: 500 },
+        );
       }
 
       const status = result.response.status;
@@ -150,10 +191,11 @@ export async function startMockServer(
           headers: { "content-type": "application/json" },
         });
       }
+      const headers = result.response.headers;
       if (result.response.body === null || result.response.body === undefined) {
-        return new Response(null, { status });
+        return new Response(null, { status, ...(headers ? { headers } : {}) });
       }
-      return Response.json(result.response.body, { status });
+      return Response.json(result.response.body, { status, ...(headers ? { headers } : {}) });
     },
   });
 

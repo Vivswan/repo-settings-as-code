@@ -54,19 +54,36 @@ export interface LoggedRequest {
   deniedBy?: string;
   /** Parsed JSON body for writes. */
   body?: unknown;
+  /**
+   * The response body the mock sent, captured by server.ts once the pipeline
+   * has decided. The OpenAPI validator checks it against responses[status];
+   * undefined for an empty (204) body. Not set by the pipeline itself - the
+   * transport shell attaches it from result.response.body after logging.
+   */
+  responseBody?: unknown;
+  /**
+   * True when this whole response is deliberately off the OpenAPI contract -
+   * a raw media type (the settings-file fetch returns file text), a synthetic
+   * transport fault (rate-limit 403 / 429 / connection drop), or a chaos-corrupt
+   * body. The validator skips such entries entirely (status AND body): the spec
+   * documents neither the status nor the shape, by design. Set by server.ts.
+   */
+  offSpec?: boolean;
 }
 
 /** The reply a handler (or the pipeline) produces: a status and a JSON body. */
 export interface MockResponse {
   status: number;
   body: unknown;
+  /** Extra response headers (e.g. Retry-After on the 429 fault). */
+  headers?: Record<string, string>;
 }
 
 /**
  * Everything a handler needs to serve one request: the mutable state, the
  * matched endpoint, the concrete path (so id/name params can be parsed out),
- * the parsed query, and the request body. `corrupt` carries the one-shot chaos
- * directive for this endpoint when the scenario armed one.
+ * the parsed query, and the request body. The chaos-corruption directive is
+ * applied by the pipeline AFTER the handler returns, so it is not passed here.
  */
 export interface HandlerContext {
   state: MockState;
@@ -279,7 +296,8 @@ const HANDLERS: Record<string, Handler> = {
   },
   "repository.automatedSecurityFixesGet": ({ state }) => {
     if (state.repo.automated_security_fixes_enabled === undefined) {
-      return { status: 404, body: { message: "Not Found" } };
+      // The spec documents this 404 (feature not enabled) with NO content.
+      return { status: 404, body: null };
     }
     return ok({ enabled: state.repo.automated_security_fixes_enabled === true, paused: false });
   },
@@ -291,13 +309,26 @@ const HANDLERS: Record<string, Handler> = {
     state.repo.automated_security_fixes_enabled = false;
     return noContent();
   },
-  "repository.privateVulnerabilityReportingGet": ({ state }) =>
-    ok({ enabled: state.repo.private_vulnerability_reporting_enabled === true }),
+  "repository.privateVulnerabilityReportingGet": ({ state }) => {
+    // When the feature is not applicable to this repository (observed on
+    // private repos), the GET answers 404 - one of its declared statuses. The
+    // section reads that as "not enabled". Flag set via live_state.repo.
+    if (state.repo.private_vulnerability_reporting_not_applicable === true) {
+      return { status: 404, body: { message: "Not Found" } };
+    }
+    return ok({ enabled: state.repo.private_vulnerability_reporting_enabled === true });
+  },
   "repository.privateVulnerabilityReportingPut": ({ state }) => {
     state.repo.private_vulnerability_reporting_enabled = true;
     return noContent();
   },
   "repository.privateVulnerabilityReportingRemove": ({ state }) => {
+    // Disabling where the feature does not apply is already the declared state;
+    // the DELETE answers 404 (a declared "already off / not applicable" status)
+    // rather than 204, which the section tolerates.
+    if (state.repo.private_vulnerability_reporting_not_applicable === true) {
+      return { status: 404, body: { message: "Not Found" } };
+    }
     state.repo.private_vulnerability_reporting_enabled = false;
     return noContent();
   },
@@ -411,9 +442,10 @@ const HANDLERS: Record<string, Handler> = {
   },
   "environments.update": ({ state, pathname, body }) => {
     const name = lastSegment(pathname);
-    const created = state.environments[name] === undefined;
+    // GitHub's PUT environment returns 200 on BOTH create and update (never
+    // 201), matching the section's declared status and the OpenAPI spec.
     state.environments[name] = { name, ...environmentFromPut(asObject(body)) };
-    return { status: created ? 201 : 200, body: state.environments[name] };
+    return ok(state.environments[name]);
   },
 
   // autolinks --------------------------------------------------------------
@@ -522,6 +554,14 @@ const HANDLERS: Record<string, Handler> = {
   // code_scanning_default_setup -------------------------------------------
   "code_scanning_default_setup.get": ({ state }) => ok(state.code_scanning),
   "code_scanning_default_setup.update": ({ state, body }) => {
+    // A configuration validation run already in progress: the PATCH answers 409
+    // (a declared status the section tolerates and gives its own advice for),
+    // and no change is applied. Flag set via live_state.code_scanning. This is
+    // checked before the language/200-vs-202 rule so it can be triggered
+    // independently.
+    if (state.code_scanning.configuration_run_in_progress === true) {
+      return { status: 409, body: { message: "A configuration run is already in progress" } };
+    }
     // The PATCH answers 200 (synchronous) or 202 (async run started). Rule,
     // deterministic: when the payload changes `languages`, GitHub kicks off an
     // async configuration run and answers 202 with a run_id; otherwise it
@@ -542,7 +582,10 @@ const HANDLERS: Record<string, Handler> = {
         },
       };
     }
-    return ok({ ...state.code_scanning });
+    // The spec's 200 response is an EMPTY object (additionalProperties: false):
+    // a synchronous apply returns no body content. The 202 path (below) carries
+    // {run_id, run_url}. State is still updated above; only the wire body is {}.
+    return ok({});
   },
 
   // collaborators ----------------------------------------------------------
@@ -558,7 +601,31 @@ const HANDLERS: Record<string, Handler> = {
       return noContent(); // 204: already a collaborator, access updated
     }
     state.collaborators.push(stored);
-    return { status: 201, body: { id: state.nextId++, permissions: stored } }; // invitation created
+    // 201 returns a repository-invitation object; its `permissions` is a STRING
+    // (read/write/admin/...), not the collaborator role object. The section does
+    // not read this body, but the OpenAPI validator checks its shape. Derive all
+    // identity fields from state.repo (re-slugged per target in multi mode) so
+    // the invitee/inviter/urls stay internally consistent with the target repo.
+    const permission = String(asObject(body).permission ?? "push");
+    const invitationPermission =
+      permission === "pull" ? "read" : permission === "push" ? "write" : permission;
+    const id = state.nextId++;
+    const slug = String(state.repo.full_name ?? "e2e-owner/e2e-repo");
+    const ownerLogin = String((state.repo.owner as Json | undefined)?.login ?? slug.split("/")[0]);
+    return {
+      status: 201,
+      body: {
+        id,
+        node_id: `MDEwOlJlcG9JbnZpdGF0aW9u${id}`,
+        repository: state.repo,
+        invitee: { login: username, id: 0, type: "User", site_admin: false },
+        inviter: { login: ownerLogin, id: 0, type: "User", site_admin: false },
+        permissions: invitationPermission,
+        created_at: "2026-07-01T00:00:00Z",
+        url: `https://api.github.com/repos/${slug}/invitations/${id}`,
+        html_url: `https://github.com/${slug}/invitations`,
+      },
+    };
   },
   "collaborators.remove": ({ state, pathname }) => {
     const username = lastSegment(pathname);
@@ -583,7 +650,9 @@ const HANDLERS: Record<string, Handler> = {
     const slug = segmentFromEnd(pathname, 3); // .../teams/{slug}/repos/{owner}/{repo}
     const access = state.teams[slug];
     if (!access) {
-      return { status: 404, body: { message: "Not Found" } };
+      // The spec documents this 404 ("team does not have permission for the
+      // repository") with NO response content, so the body is empty.
+      return { status: 404, body: null };
     }
     // The repository media type makes this return the repo object with the
     // team's role_name folded in.
@@ -627,9 +696,13 @@ function pagesUrl(): string {
   return "https://api.github.com/repos/e2e-owner/e2e-repo/pages";
 }
 
-/** A GET on a 204/404 boolean toggle: 204 when enabled, 404 when not. */
+/**
+ * A GET on a 204/404 boolean toggle (vulnerability-alerts): 204 when enabled,
+ * 404 when not. The spec documents this 404 with NO content, so the body is
+ * empty.
+ */
 function booleanToggleGet(enabled: boolean): MockResponse {
-  return enabled ? noContent() : { status: 404, body: { message: "Not Found" } };
+  return enabled ? noContent() : { status: 404, body: null };
 }
 
 function labelName(label: Json): string {
@@ -680,6 +753,39 @@ export function assertHandlerCompleteness(
 }
 
 /**
+ * Reject fault/corrupt directives that name an unknown endpoint or duplicate a
+ * fault. Keys are free-form strings, so a typo would silently never fire and a
+ * duplicate fault would silently take first-match; validating at server
+ * construction (the same loud-at-startup pattern as assertHandlerCompleteness)
+ * turns both into an immediate throw. Exported for direct testing.
+ */
+export function assertFaultKeys(
+  faults: FaultOption[] | undefined,
+  corrupt: CorruptOption | undefined,
+): void {
+  const known = new Set(Object.keys(allEndpoints()));
+  const seen = new Set<string>();
+  for (const fault of faults ?? []) {
+    if (!known.has(fault.key)) {
+      throw new Error(
+        `E2E MOCK: fault names unknown endpoint "${fault.key}" (not in allEndpoints())`,
+      );
+    }
+    if (seen.has(fault.key)) {
+      throw new Error(
+        `E2E MOCK: duplicate fault for endpoint "${fault.key}"; keep one entry per endpoint`,
+      );
+    }
+    seen.add(fault.key);
+  }
+  if (corrupt && !known.has(corrupt.key)) {
+    throw new Error(
+      `E2E MOCK: corrupt names unknown endpoint "${corrupt.key}" (not in allEndpoints())`,
+    );
+  }
+}
+
+/**
  * The status-realism rule a handler must obey, and the reason it is not simply
  * "declared statuses only": a handler may answer any status the endpoint
  * DECLARES, plus any UNdeclared error status (>= 400). GitHub itself returns
@@ -693,6 +799,11 @@ export function assertHandlerCompleteness(
  * instead is deliberately avoided - a declared >= 400 status feeds
  * toleratedStatuses(), so declaring e.g. 404 on labels.update would silently
  * make that error tolerated if the call site ever moved to tryCall.
+ *
+ * This rule governs HANDLER responses only. Transport-level faults (the fault
+ * barrier's rate-limit 403 / 429, and the connection_drop status 0) fire BEFORE
+ * any handler and deliberately bypass this invariant: they model wire failures
+ * GitHub returns on any endpoint regardless of its declared statuses.
  */
 export function statusAllowed(key: string, status: number): boolean {
   return declaredStatuses(key).has(status) || status >= 400;
@@ -709,10 +820,29 @@ export function declaredStatuses(key: string): Set<number> {
 
 // --- The request pipeline -------------------------------------------------
 
-/** A one-shot corruption directive for a named endpoint's first response. */
+/**
+ * A corruption directive for a named endpoint's responses. `times` (default 1)
+ * is how many matching responses to corrupt: 1 (the default) corrupts only the
+ * first, which octokit's retry plugin transparently retries away (a parse/shape
+ * fault is not a 4xx, so it is retried; MAX_RETRIES=2) - a retry-resilience
+ * test. A persistent count (>= 3, more than 1 + MAX_RETRIES) or "always"
+ * defeats the retries so the client fails loudly.
+ */
 export interface CorruptOption {
   key: string;
   mode: "invalid_json" | "wrong_shape" | "missing_envelope";
+  times?: number | "always";
+}
+
+/**
+ * A transport-level fault applied to the first `times` (default 1) requests
+ * matching `key` (a "section.role" endpoint). Mirrors the Fault schema; the
+ * fault barrier in runPipeline turns each kind into its wire behavior.
+ */
+export interface FaultOption {
+  key: string;
+  kind: "rate_limit_403" | "429_then_200" | "connection_drop";
+  times?: number;
 }
 
 /** Options the server passes into the pipeline for each request. */
@@ -730,13 +860,19 @@ export interface PipelineOptions {
   multi?: MultiMockState;
   basePrefix?: string;
   corrupt?: CorruptOption;
-  /** Endpoint keys already corrupted (chaos fires once); mutated in place. */
-  corruptedKeys: Set<string>;
+  /** Per-endpoint chaos-corruption counts, mutated in place so `times` is honored. */
+  corruptCounts: Map<string, number>;
+  /** Transport-level faults to inject on matching requests (see fault barrier). */
+  faults?: FaultOption[];
+  /** Per-endpoint fault fire counts, mutated in place so `times` is honored. */
+  faultCounts: Map<string, number>;
   /**
-   * Sections whose READ was permission-denied earlier in this run; mutated in
-   * place. The engine aborts a section at its first denied read, so a write
-   * arriving for one of these sections afterwards proves broken sequencing
-   * regardless of policy or denial style (see the denial barrier).
+   * Target+section keys (`${slug}:${section}`, empty slug in single-repo mode)
+   * whose READ was permission-denied (fatally, not tolerated) earlier this run;
+   * mutated in place. The engine aborts a section at its first fatal denied
+   * read, so a write arriving for the same target+section afterwards proves
+   * broken sequencing (see the denial barrier). Keyed per target so one repo's
+   * denied read never arms the barrier for another repo's legitimate write.
    */
   deniedReadSections: Set<string>;
   /**
@@ -756,6 +892,23 @@ export interface PipelineResult {
   violation?: string;
   /** When set, the response body must be sent RAW (chaos invalid_json). */
   raw?: string;
+  /**
+   * When true, the server drops the connection MID-RESPONSE (an erroring body
+   * stream; Bun.serve cannot abort before the status line) - the
+   * connection_drop fault, modeling a network failure the client surfaces after
+   * its retries are spent. The log entry still records the attempt (status 0).
+   */
+  drop?: boolean;
+  /**
+   * When true, this response is a DELIBERATE off-contract body the validator
+   * must skip, else it re-reports a corruption/fault the test already asserts.
+   * Set for: synthetic transport faults (rate-limit 403 / 429 - GitHub returns
+   * these on ANY endpoint, off any per-endpoint spec), the chaos corruptions
+   * (wrong_shape / missing_envelope; invalid_json uses `raw`), and the
+   * connection_drop status-0 log. (Raw-MEDIA-TYPE bodies are exempted separately
+   * in server.ts, keyed on the request's raw Accept header, not this flag.)
+   */
+  offSpecBody?: boolean;
 }
 
 const VIOLATION_PREFIX = "E2E MOCK VIOLATION:";
@@ -895,7 +1048,8 @@ function slugFromPath(pathname: string): string | null {
  * it reads and mutates `state`, appends nothing to logs itself (the caller
  * owns the arrays), and returns the response plus the log entry and any
  * violation. The order is the contract: wire checks, prefix, route match,
- * permission gate, denial barrier, check-mode barrier, then the handler.
+ * check-mode barrier, target/state resolution, fault barrier, permission gate,
+ * denial barrier, then the handler.
  */
 export function runPipeline(
   request: {
@@ -1009,6 +1163,9 @@ export function runPipeline(
       return { response, log: { ...baseLog, status: response.status, deniedBy: grading.deniedBy } };
     }
     const response = contentsResponse(options.multi, cSlug);
+    // The raw settings-file body skips response-body validation, but that is
+    // decided by the request's raw Accept media type in server.ts (so every
+    // raw endpoint inherits it), not marked here per-endpoint.
     return { response, log: { ...baseLog, status: response.status } };
   }
 
@@ -1024,28 +1181,72 @@ export function runPipeline(
   }
   const { key, endpoint } = matched;
 
+  // Check-mode barrier: no writes may leave the client in check mode. This runs
+  // BEFORE the fault barrier so a faulted write in check mode is still caught as
+  // a violation - the engine must never send a write in check mode, which is
+  // the exact case this barrier exists to catch, and a synthetic fault must not
+  // mask it. The flag is the scenario's mode ORed with the server's one-way
+  // override, so a convergence re-run against the same server arms it too.
+  if (options.checkMode && request.method !== "GET") {
+    const message = "write in check mode";
+    return {
+      response: violationResponse(message),
+      log: { ...baseLog, status: 400 },
+      violation: message,
+    };
+  }
+
   // Resolve the working state and permission mask for this request. In
   // single-repo mode both come from the one MockState and the scenario mask; in
-  // multi-repo mode the target slug in the path selects a per-slug MockState and
-  // its per-slug mask overlaid on the global mask (so a denial can be scoped to
-  // one repository while the global grades still apply). A path with no
-  // resolvable slug under multi-repo mode is a design error - every section
-  // endpoint carries owner/repo.
+  // multi-repo mode the routing depends on whether the endpoint is repo-scoped:
+  //   - a repo endpoint (path starts /repos/) selects the target slug's
+  //     MockState and grades against that slug's per-slug mask overlaid on the
+  //     global mask (a denial can be scoped to one repository);
+  //   - an org endpoint (the teams /orgs/{org} probe) is NOT per-slug: it reads
+  //     the shared org state and grades against the GLOBAL mask. A team-repo
+  //     route (/orgs/{org}/teams/.../repos/{owner}/{repo}) still carries a repo
+  //     tail, so it resolves to the addressed slug's state, but org endpoints
+  //     never get a per-slug mask.
   let state = options.state;
   let mask: PermissionMask = scenario.token_permissions ?? {};
+  // The target slug for keying the per-target denied-read barrier ("" in
+  // single-repo mode). Set inside the multi block below.
+  let targetSlug = "";
   if (options.multi) {
+    const repoScoped = endpointPath(endpoint.route).startsWith("/repos/");
     const slug = slugFromPath(pathname);
     const repoState = slug ? options.multi.repos.get(slug) : undefined;
-    if (!slug || !repoState) {
-      const message = `multi-repo request ${request.method} ${pathname} names no known target slug`;
-      return {
-        response: violationResponse(message),
-        log: { ...baseLog, status: 400 },
-        violation: message,
-      };
+    if (repoScoped) {
+      if (!slug || !repoState) {
+        const message = `multi-repo request ${request.method} ${pathname} names no known target slug`;
+        return {
+          response: violationResponse(message),
+          log: { ...baseLog, status: 400 },
+          violation: message,
+        };
+      }
+      state = repoState;
+      mask = effectiveMask(scenario.token_permissions ?? {}, options.multi.permissions.get(slug));
+      targetSlug = slug;
+    } else {
+      // Org endpoint. A team-repo route carries a {owner}/{repo} tail: it MUST
+      // resolve to that slug's state, so an unknown slug is the same violation
+      // the repo-scoped branch raises (falling back to orgState would let a
+      // buggy write silently mutate shared org state). Only the BARE org probe
+      // (no slug in the path, e.g. GET /orgs/{org}) uses orgState. Grading is
+      // always against the global mask (not per-slug).
+      if (slug && !repoState) {
+        const message = `multi-repo request ${request.method} ${pathname} names no known target slug`;
+        return {
+          response: violationResponse(message),
+          log: { ...baseLog, status: 400 },
+          violation: message,
+        };
+      }
+      state = repoState ?? options.multi.orgState;
+      mask = scenario.token_permissions ?? {};
+      targetSlug = slug ?? "";
     }
-    state = repoState;
-    mask = effectiveMask(scenario.token_permissions ?? {}, options.multi.permissions.get(slug));
   }
   if (!state) {
     const message = `no working state for ${request.method} ${pathname}`;
@@ -1056,29 +1257,45 @@ export function runPipeline(
     };
   }
 
+  // Fault barrier: transport-level failures fire before the permission gate and
+  // handler (a rate limit / drop happens at the wire regardless of permissions),
+  // but AFTER target/state resolution so a fault can never mask the
+  // unknown-target violation - that check is a harness-integrity invariant and
+  // must be unmaskable. Each fault applies to the first `times` (default 1)
+  // requests matching its endpoint key.
+  const fault = options.faults?.find((f) => f.key === key);
+  if (fault) {
+    const fired = options.faultCounts.get(key) ?? 0;
+    if (fired < (fault.times ?? 1)) {
+      options.faultCounts.set(key, fired + 1);
+      return applyFault(fault.kind, { ...baseLog });
+    }
+  }
+
   // 4. Permission gate.
   const requirement = endpointRequirement(endpoint);
   const grading = gradeRequirement(mask, requirement);
   if (!grading.allowed) {
     const response = denialResponse(scenario.denial_style, requirement.kind);
     const log: LoggedRequest = { ...baseLog, status: response.status, deniedBy: grading.deniedBy };
-    // 5. Denial barrier: a denied WRITE that reached the server despite a
-    // guarantee it should not have is a violation; otherwise it is deny-only.
-    // The guarantee comes from one of two places:
-    //   - a "denied"-semantics section UNDER the fail policy: its primary read
-    //     goes through the classifier, and preflight (which runs only when
-    //     on-missing-permission is "fail", orchestrate.ts) reads it first and
-    //     refuses every write.
-    //   - a READ in this section was already denied earlier in the run: the
-    //     engine aborts a section at its denied read (any policy, any style),
-    //     so a later write for the same section proves broken sequencing.
-    // Under the WARN policy there is no preflight, so a "denied"-semantics
-    // section whose FIRST apply operation is a write (a repository/actions/
-    // code_scanning PATCH/PUT with no preceding read) legitimately sends that
-    // write and takes the denial, in BOTH denial styles - deny it with NO
-    // violation, exactly like an "absent"-semantics section. The
-    // deny-and-never-mutate invariant holds in every case; only the violation
-    // flag is conditional.
+    // 5. Denial barrier. A denied write is a hard VIOLATION only when a fatal
+    // denied READ in the SAME target+section already happened this run: the
+    // engine reads a section before diffing/writing, so once its read is denied
+    // and classified as fatal, the section loop aborts - a later write reaching
+    // the server proves broken sequencing. This is the ONLY signal. Preflight is
+    // deliberately NOT used as a separate guarantee: preflight (fail policy)
+    // only proves READS work - the engine's probe wrapper stops writes
+    // client-side - so a mask graded READ (write denied) on a "denied"-semantics
+    // section PASSES preflight, and the engine then legitimately sends the first
+    // write. That write is denied but is NOT a violation; the old
+    // "denied-semantics && fail => violation" branch false-flagged exactly this
+    // case. When the read grade is `none` the denied read always precedes the
+    // write and arms the set, so no coverage is lost by relying on it alone.
+    //
+    // The set is keyed per TARGET (`${slug}:${section}`, empty slug single-repo)
+    // so one repo's denied read never arms the barrier for another repo's
+    // legitimate write.
+    const barrierKey = `${targetSlug}:${endpoint.section}`;
     let violation: string | undefined;
     if (requirement.kind === "read") {
       // Track the denied read ONLY when the engine perceives it as a failure:
@@ -1086,30 +1303,14 @@ export function runPipeline(
       // probeAbsent-tolerant endpoint) reads as "resource absent" and the
       // section legitimately proceeds, so it must not arm the barrier.
       if (!toleratedStatuses(endpoint).includes(response.status)) {
-        options.deniedReadSections.add(endpoint.section);
+        options.deniedReadSections.add(barrierKey);
       }
     }
-    if (requirement.kind === "write") {
+    if (requirement.kind === "write" && options.deniedReadSections.has(barrierKey)) {
       const semantics = DENIAL_SEMANTICS[endpoint.section];
-      const policy = scenario.inputs?.on_missing_permission ?? "fail";
-      const preflightGuaranteed = semantics === "denied" && policy === "fail";
-      if (preflightGuaranteed || options.deniedReadSections.has(endpoint.section)) {
-        violation = `write to ${request.method} ${pathname} reached the server despite being permission-denied; it should have been stopped first (section "${endpoint.section}" has "${semantics}" denial semantics, on-missing-permission "${policy}", style ${String(scenario.denial_style)})`;
-      }
+      violation = `write to ${request.method} ${pathname} reached the server after a fatal denied read in the same target+section; the engine's section loop should have aborted at that read (section "${endpoint.section}" has "${semantics}" denial semantics, style ${String(scenario.denial_style)})`;
     }
     return { response, log, violation };
-  }
-
-  // 6. Check-mode barrier: no writes may leave the client in check mode. The
-  // flag is the scenario's mode ORed with the server's one-way override, so a
-  // convergence re-run against the same server arms the barrier too.
-  if (options.checkMode && request.method !== "GET") {
-    const message = "write in check mode";
-    return {
-      response: violationResponse(message),
-      log: { ...baseLog, status: 400 },
-      violation: message,
-    };
   }
 
   // 7. Handler runs.
@@ -1132,20 +1333,84 @@ export function runPipeline(
     body: request.body,
   });
 
-  // 9. Chaos hook: corrupt the FIRST response of the named endpoint.
-  if (options.corrupt && options.corrupt.key === key && !options.corruptedKeys.has(key)) {
-    options.corruptedKeys.add(key);
-    return applyCorruption(options.corrupt.mode, response, { ...baseLog, status: response.status });
+  // Structural status-subset guard: a handler may only answer a status the
+  // endpoint declares or an undeclared error (>= 400); an undeclared 2xx/3xx is
+  // a mock design bug (see statusAllowed). Asserting it here - right after the
+  // handler, before the chaos hook (which deliberately produces off-contract
+  // responses) - makes the invariant hold on EVERY request, not just the ones a
+  // curated test happens to drive.
+  if (!statusAllowed(key, response.status)) {
+    const message = `handler "${key}" returned status ${response.status}, which is neither declared [${[...declaredStatuses(key)].join(", ")}] nor a >= 400 error`;
+    return {
+      response: violationResponse(message),
+      log: { ...baseLog, status: 400 },
+      violation: message,
+    };
+  }
+
+  // 9. Chaos hook: corrupt the response of the named endpoint for its first
+  // `times` matches ("always" = every match). Default 1 preserves the one-shot
+  // behavior octokit's retry plugin transparently recovers from.
+  if (options.corrupt && options.corrupt.key === key) {
+    const done = options.corruptCounts.get(key) ?? 0;
+    const limit = options.corrupt.times ?? 1;
+    if (limit === "always" || done < limit) {
+      options.corruptCounts.set(key, done + 1);
+      return applyCorruption(options.corrupt.mode, response, {
+        ...baseLog,
+        status: response.status,
+      });
+    }
   }
 
   return { response, log: { ...baseLog, status: response.status } };
 }
 
 /**
+ * Turn a fault kind into its wire behavior:
+ *   - rate_limit_403: 403 with "rate limit" in the message, so the client's
+ *     classifier reads it as throttling (isRateLimitError), NOT a permission
+ *     denial. This is the one place a 403 body is ALLOWED to say "rate limit".
+ *   - 429_then_200: 429 with Retry-After: 0 so the throttling plugin retries
+ *     immediately (fast under RETRY_BASE_MS=1); the retried request then runs
+ *     the handler normally.
+ *   - connection_drop: signal the server to drop the connection mid-response
+ *     (an erroring body stream), which undici surfaces as a network failure.
+ * The log records the attempt; the fault status (403/429) or 0 (drop) is set.
+ */
+function applyFault(kind: FaultOption["kind"], log: LoggedRequest): PipelineResult {
+  if (kind === "rate_limit_403") {
+    const response: MockResponse = {
+      status: 403,
+      body: { message: "API rate limit exceeded for this token" },
+    };
+    return { response, log: { ...log, status: 403 }, offSpecBody: true };
+  }
+  if (kind === "429_then_200") {
+    const response: MockResponse = {
+      status: 429,
+      body: { message: "Too Many Requests" },
+      headers: { "retry-after": "0" },
+    };
+    return { response, log: { ...log, status: 429 }, offSpecBody: true };
+  }
+  // connection_drop
+  return {
+    response: { status: 0, body: null },
+    log: { ...log, status: 0 },
+    drop: true,
+    offSpecBody: true,
+  };
+}
+
+/**
  * Corrupt a response per the chaos mode: invalid_json emits an unparseable
  * body (raw), wrong_shape replaces a list/object body with a scalar, and
- * missing_envelope strips the wrapper key from an enveloped list. The runner
- * asserts the client fails loudly on each.
+ * missing_envelope strips the wrapper key from an enveloped list. All three are
+ * DELIBERATE off-contract bodies, so each marks offSpecBody (invalid_json via
+ * the `raw` path, the others explicitly) - the validator must skip them, else
+ * it re-reports the corruption the chaos test already asserts. The mock's own
+ * status-subset invariant still guards real handler statuses.
  */
 function applyCorruption(
   mode: CorruptOption["mode"],
@@ -1160,7 +1425,7 @@ function applyCorruption(
     };
   }
   if (mode === "wrong_shape") {
-    return { response: { status: response.status, body: 42 }, log };
+    return { response: { status: response.status, body: 42 }, log, offSpecBody: true };
   }
   // missing_envelope: unwrap a {total_count, <key>: []} body to a bare object
   // (drops the list the client expects behind the envelope key).
@@ -1172,9 +1437,9 @@ function applyCorruption(
         stripped[entryKey] = value;
       }
     }
-    return { response: { status: response.status, body: stripped }, log };
+    return { response: { status: response.status, body: stripped }, log, offSpecBody: true };
   }
-  return { response: { status: response.status, body: {} }, log };
+  return { response: { status: response.status, body: {} }, log, offSpecBody: true };
 }
 
 export { VIOLATION_PREFIX };

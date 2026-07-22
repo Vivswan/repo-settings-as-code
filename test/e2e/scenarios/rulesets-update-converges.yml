@@ -1,0 +1,44 @@
+# A Repository-sourced ruleset already exists under the declared name with a
+# drifted field (enforcement is "evaluate" live, "active" declared), so apply
+# takes the update PUT path by id rather than creating a new one. The
+# convergence rerun reads the ruleset back and finds the declared fields
+# matching, so it converges.
+name: rulesets-update-converges
+settings:
+  rulesets:
+    - name: main-protection
+      target: branch
+      enforcement: active
+      conditions:
+        ref_name:
+          include: ["~DEFAULT_BRANCH"]
+          exclude: []
+      rules:
+        - type: deletion
+        - type: non_fast_forward
+live_state:
+  rulesets:
+    - id: 4242
+      name: main-protection
+      source_type: Repository
+      target: branch
+      enforcement: evaluate
+      conditions:
+        ref_name:
+          include: ["~DEFAULT_BRANCH"]
+          exclude: []
+      rules:
+        - type: deletion
+        - type: non_fast_forward
+token_permissions:
+  administration: write
+expect:
+  exit_code: 0
+  result: applied
+  outcomes:
+    rulesets: applied
+  mutations:
+    - "PUT /repos/{repo}/rulesets/4242"
+  never:
+    - "POST /repos/{repo}/rulesets"
+  converges: true
