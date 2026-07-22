@@ -71,10 +71,10 @@ field GitHub ships tomorrow must never read as an error (see
 
 ## Versioning
 
-- `@v0` is a moving major tag: <!-- x-release-please-major -->
+- `@v1` is a moving major tag: <!-- x-release-please-major -->
   every release in that major line moves it, so fixes arrive without
   changing your pin.
-- Pin an exact tag (`@v0.0.0`) when you need byte-stable behavior, and <!-- x-release-please-version -->
+- Pin an exact tag (`@v1.0.0`) when you need byte-stable behavior, and <!-- x-release-please-version -->
   upgrade deliberately.
 - Only the latest release is supported; fixes are not backported (see
   [SECURITY.md](SECURITY.md)).
