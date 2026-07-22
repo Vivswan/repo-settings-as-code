@@ -8,16 +8,34 @@ import { subsetDiff } from "../engine/diff.js";
 import type { EnvironmentConfig } from "../schema.js";
 import {
   call,
+  type EndpointDecl,
   emptyResult,
+  grantFor,
   probeAbsent,
   rejectDuplicates,
   type SectionModule,
+  type SectionPermission,
   type SectionResult,
 } from "./contract.js";
 
+const permission: SectionPermission = { repo: ["environments"] };
+
+const ENDPOINTS = {
+  probe: {
+    route: "GET /repos/{owner}/{repo}/environments/{environment_name}",
+    statuses: { 200: "the environment", 404: "no such environment yet" },
+  },
+  update: {
+    route: "PUT /repos/{owner}/{repo}/environments/{environment_name}",
+    statuses: { 200: "environment updated", 201: "environment created" },
+  },
+} as const satisfies Record<string, EndpointDecl>;
+
 export const environmentsSection: SectionModule<"environments"> = {
   key: "environments",
-  grant: `grant "Environments" (read and write) under the PAT's Repository permissions`,
+  permission,
+  grant: grantFor(permission),
+  endpoints: ENDPOINTS,
   shape: z.array(z.looseObject({ name: z.string() })),
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
@@ -30,9 +48,10 @@ export const environmentsSection: SectionModule<"environments"> = {
     );
     for (const env of desired) {
       const { name, ...settings } = env;
-      const path = `/repos/${ctx.repo}/environments/${encodeURIComponent(name)}`;
       if (ctx.check) {
-        const probe = await probeAbsent(ctx, this, path);
+        const probe = await probeAbsent(ctx, this, ENDPOINTS.probe, {
+          params: { environment_name: name },
+        });
         if ("missing" in probe) {
           result.drift.push(
             `environments[${name}]: missing - declared in the settings file but not on the repo; apply will create it`,
@@ -43,7 +62,10 @@ export const environmentsSection: SectionModule<"environments"> = {
           );
         }
       } else {
-        await call(ctx, this, "PUT", path, settings);
+        await call(ctx, this, ENDPOINTS.update, {
+          params: { environment_name: name },
+          payload: settings,
+        });
         result.changes.push(`applied environment "${name}"`);
       }
     }

@@ -9,10 +9,13 @@ import { subsetDiff } from "../engine/diff.js";
 import type { RulesetConfig } from "../schema.js";
 import {
   call,
+  type EndpointDecl,
   emptyResult,
+  grantFor,
   listAll,
   rejectDuplicates,
   type SectionModule,
+  type SectionPermission,
   type SectionResult,
 } from "./contract.js";
 
@@ -60,9 +63,29 @@ interface LiveRulesetSummary {
   source_type?: string;
 }
 
+const permission: SectionPermission = { repo: ["administration"] };
+
+const ENDPOINTS = {
+  list: {
+    route: "GET /repos/{owner}/{repo}/rulesets",
+    statuses: { 200: "the repository ruleset list" },
+  },
+  create: { route: "POST /repos/{owner}/{repo}/rulesets", statuses: { 201: "ruleset created" } },
+  get: {
+    route: "GET /repos/{owner}/{repo}/rulesets/{ruleset_id}",
+    statuses: { 200: "the ruleset" },
+  },
+  update: {
+    route: "PUT /repos/{owner}/{repo}/rulesets/{ruleset_id}",
+    statuses: { 200: "ruleset updated" },
+  },
+} as const satisfies Record<string, EndpointDecl>;
+
 export const rulesetsSection: SectionModule<"rulesets"> = {
   key: "rulesets",
-  grant: `grant "Administration" (read and write) under the PAT's Repository permissions`,
+  permission,
+  grant: grantFor(permission),
+  endpoints: ENDPOINTS,
   shape: z.array(
     z.looseObject({
       name: z.string(),
@@ -91,11 +114,7 @@ export const rulesetsSection: SectionModule<"rulesets"> = {
       (r) => r.name,
       (r) => r.name,
     );
-    const summaries = (await listAll(
-      ctx,
-      this,
-      `/repos/${ctx.repo}/rulesets`,
-    )) as LiveRulesetSummary[];
+    const summaries = (await listAll(ctx, this, ENDPOINTS.list)) as LiveRulesetSummary[];
     const repoRulesets = summaries.filter((r) => (r.source_type ?? "Repository") === "Repository");
     const idByName = new Map(repoRulesets.map((r) => [r.name, r.id]));
 
@@ -107,16 +126,19 @@ export const rulesetsSection: SectionModule<"rulesets"> = {
             `rulesets[${ruleset.name}]: missing - declared in the settings file but not on the repo; apply will create it`,
           );
         } else {
-          await call(ctx, this, "POST", `/repos/${ctx.repo}/rulesets`, ruleset);
+          await call(ctx, this, ENDPOINTS.create, { payload: ruleset });
           result.changes.push(`created ruleset "${ruleset.name}"`);
         }
         continue;
       }
       if (ctx.check) {
-        const live = await call(ctx, this, "GET", `/repos/${ctx.repo}/rulesets/${id}`);
+        const live = await call(ctx, this, ENDPOINTS.get, { params: { ruleset_id: String(id) } });
         result.drift.push(...subsetDiff(ruleset, live, `rulesets[${ruleset.name}]`));
       } else {
-        await call(ctx, this, "PUT", `/repos/${ctx.repo}/rulesets/${id}`, ruleset);
+        await call(ctx, this, ENDPOINTS.update, {
+          params: { ruleset_id: String(id) },
+          payload: ruleset,
+        });
         result.changes.push(`updated ruleset "${ruleset.name}" (id ${id})`);
       }
     }

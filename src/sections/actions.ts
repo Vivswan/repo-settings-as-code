@@ -9,15 +9,61 @@ import type { ActionsConfig } from "../schema.js";
 import {
   anyRecord,
   call,
+  type EndpointDecl,
   emptyResult,
+  grantFor,
   probeAbsent,
   type SectionModule,
+  type SectionPermission,
   type SectionResult,
 } from "./contract.js";
 
+const permission: SectionPermission = { repo: ["administration"] };
+
+const ENDPOINTS = {
+  getPermissions: {
+    route: "GET /repos/{owner}/{repo}/actions/permissions",
+    statuses: { 200: "the Actions permissions policy" },
+  },
+  putPermissions: {
+    route: "PUT /repos/{owner}/{repo}/actions/permissions",
+    statuses: { 204: "Actions permissions policy applied" },
+  },
+  getSelected: {
+    route: "GET /repos/{owner}/{repo}/actions/permissions/selected-actions",
+    statuses: {
+      200: "the selected-actions allowlist",
+      404: "no allowlist because the policy is not selected",
+      409: "the allowed_actions policy is not selected, so the allowlist does not apply",
+    },
+  },
+  putSelected: {
+    route: "PUT /repos/{owner}/{repo}/actions/permissions/selected-actions",
+    statuses: { 204: "selected-actions allowlist applied" },
+  },
+  getWorkflow: {
+    route: "GET /repos/{owner}/{repo}/actions/permissions/workflow",
+    statuses: { 200: "the workflow token permissions" },
+  },
+  putWorkflow: {
+    route: "PUT /repos/{owner}/{repo}/actions/permissions/workflow",
+    statuses: { 204: "workflow token permissions applied" },
+  },
+  getAccess: {
+    route: "GET /repos/{owner}/{repo}/actions/permissions/access",
+    statuses: { 200: "the workflows access level" },
+  },
+  putAccess: {
+    route: "PUT /repos/{owner}/{repo}/actions/permissions/access",
+    statuses: { 204: "workflows access level applied" },
+  },
+} as const satisfies Record<string, EndpointDecl>;
+
 export const actionsSection: SectionModule<"actions"> = {
   key: "actions",
-  grant: `grant "Administration" (read and write) under the PAT's Repository permissions`,
+  permission,
+  grant: grantFor(permission),
+  endpoints: ENDPOINTS,
   shape: anyRecord,
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
@@ -76,18 +122,14 @@ export const actionsSection: SectionModule<"actions"> = {
 
     if (ctx.check) {
       if (Object.keys(permissions).length > 0) {
-        const live = await call(ctx, this, "GET", `/repos/${ctx.repo}/actions/permissions`);
+        const live = await call(ctx, this, ENDPOINTS.getPermissions);
         result.drift.push(...subsetDiff(permissions, live, "actions.permissions"));
       }
       if (desired.selected_actions !== undefined) {
         // This GET errors (409) when the live allowed_actions policy is not
-        // "selected"; that is drift, not a failure.
-        const probe = await probeAbsent(
-          ctx,
-          this,
-          `/repos/${ctx.repo}/actions/permissions/selected-actions`,
-          { tolerate: [409, 404] },
-        );
+        // "selected"; that is drift, not a failure. The declared statuses
+        // (200, 409, 404) make 409 and 404 tolerated automatically.
+        const probe = await probeAbsent(ctx, this, ENDPOINTS.getSelected);
         if ("missing" in probe) {
           result.drift.push(
             'actions.selected: the live allowed_actions policy is not "selected", so no selected-actions allowlist exists; apply will set the declared policy and allowlist',
@@ -99,16 +141,11 @@ export const actionsSection: SectionModule<"actions"> = {
         }
       }
       if (Object.keys(workflow).length > 0) {
-        const live = await call(
-          ctx,
-          this,
-          "GET",
-          `/repos/${ctx.repo}/actions/permissions/workflow`,
-        );
+        const live = await call(ctx, this, ENDPOINTS.getWorkflow);
         result.drift.push(...subsetDiff(workflow, live, "actions.workflow"));
       }
       if (desired.access_level !== undefined) {
-        const live = await call(ctx, this, "GET", `/repos/${ctx.repo}/actions/permissions/access`);
+        const live = await call(ctx, this, ENDPOINTS.getAccess);
         result.drift.push(
           ...subsetDiff({ access_level: desired.access_level }, live, "actions.access"),
         );
@@ -117,26 +154,20 @@ export const actionsSection: SectionModule<"actions"> = {
     }
 
     if (Object.keys(permissions).length > 0) {
-      await call(ctx, this, "PUT", `/repos/${ctx.repo}/actions/permissions`, permissions);
+      await call(ctx, this, ENDPOINTS.putPermissions, { payload: permissions });
       result.changes.push("applied actions permissions");
     }
     if (desired.selected_actions !== undefined) {
-      await call(
-        ctx,
-        this,
-        "PUT",
-        `/repos/${ctx.repo}/actions/permissions/selected-actions`,
-        desired.selected_actions,
-      );
+      await call(ctx, this, ENDPOINTS.putSelected, { payload: desired.selected_actions });
       result.changes.push("applied selected-actions policy");
     }
     if (Object.keys(workflow).length > 0) {
-      await call(ctx, this, "PUT", `/repos/${ctx.repo}/actions/permissions/workflow`, workflow);
+      await call(ctx, this, ENDPOINTS.putWorkflow, { payload: workflow });
       result.changes.push("applied workflow token permissions");
     }
     if (desired.access_level !== undefined) {
-      await call(ctx, this, "PUT", `/repos/${ctx.repo}/actions/permissions/access`, {
-        access_level: desired.access_level,
+      await call(ctx, this, ENDPOINTS.putAccess, {
+        payload: { access_level: desired.access_level },
       });
       result.changes.push("applied workflows access level");
     }

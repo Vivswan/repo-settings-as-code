@@ -9,10 +9,13 @@ import { subsetDiff } from "../engine/diff.js";
 import type { MilestoneConfig } from "../schema.js";
 import {
   call,
+  type EndpointDecl,
   emptyResult,
+  grantFor,
   listAll,
   rejectDuplicates,
   type SectionModule,
+  type SectionPermission,
   type SectionResult,
 } from "./contract.js";
 
@@ -23,9 +26,25 @@ interface LiveMilestone {
   state: string;
 }
 
+const permission: SectionPermission = { repo: ["issues"] };
+
+const ENDPOINTS = {
+  list: { route: "GET /repos/{owner}/{repo}/milestones", statuses: { 200: "the milestone list" } },
+  create: {
+    route: "POST /repos/{owner}/{repo}/milestones",
+    statuses: { 201: "milestone created" },
+  },
+  update: {
+    route: "PATCH /repos/{owner}/{repo}/milestones/{milestone_number}",
+    statuses: { 200: "milestone updated" },
+  },
+} as const satisfies Record<string, EndpointDecl>;
+
 export const milestonesSection: SectionModule<"milestones"> = {
   key: "milestones",
-  grant: `grant "Issues" (read and write) under the PAT's Repository permissions`,
+  permission,
+  grant: grantFor(permission),
+  endpoints: ENDPOINTS,
   shape: z.array(z.looseObject({ title: z.string() })),
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
@@ -36,11 +55,9 @@ export const milestonesSection: SectionModule<"milestones"> = {
       (m) => m.title,
       (m) => m.title,
     );
-    const live = (await listAll(
-      ctx,
-      this,
-      `/repos/${ctx.repo}/milestones?state=all`,
-    )) as LiveMilestone[];
+    const live = (await listAll(ctx, this, ENDPOINTS.list, {
+      query: { state: "all" },
+    })) as LiveMilestone[];
     const liveByTitle = new Map(live.map((m) => [m.title, m]));
     const declared = new Set<string>();
 
@@ -57,7 +74,7 @@ export const milestonesSection: SectionModule<"milestones"> = {
             `milestones[${milestone.title}]: missing - declared in the settings file but not on the repo; apply will create it`,
           );
         } else {
-          await call(ctx, this, "POST", `/repos/${ctx.repo}/milestones`, want);
+          await call(ctx, this, ENDPOINTS.create, { payload: want });
           result.changes.push(`created milestone "${milestone.title}"`);
         }
         continue;
@@ -68,7 +85,10 @@ export const milestonesSection: SectionModule<"milestones"> = {
         if (ctx.check) {
           result.drift.push(...drift);
         } else {
-          await call(ctx, this, "PATCH", `/repos/${ctx.repo}/milestones/${existing.number}`, want);
+          await call(ctx, this, ENDPOINTS.update, {
+            params: { milestone_number: String(existing.number) },
+            payload: want,
+          });
           result.changes.push(`updated milestone "${milestone.title}"`);
         }
       }

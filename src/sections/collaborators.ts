@@ -7,10 +7,13 @@ import { z } from "zod";
 import type { CollaboratorConfig } from "../schema.js";
 import {
   call,
+  type EndpointDecl,
   emptyResult,
+  grantFor,
   listAll,
   rejectDuplicates,
   type SectionModule,
+  type SectionPermission,
   type SectionResult,
 } from "./contract.js";
 import { roleForPermission } from "./roles.js";
@@ -21,9 +24,28 @@ interface LiveCollaborator {
   role_name?: string;
 }
 
+const permission: SectionPermission = { repo: ["administration"] };
+
+const ENDPOINTS = {
+  list: {
+    route: "GET /repos/{owner}/{repo}/collaborators",
+    statuses: { 200: "the direct-collaborator list" },
+  },
+  update: {
+    route: "PUT /repos/{owner}/{repo}/collaborators/{username}",
+    statuses: { 201: "invitation created", 204: "collaborator already had the access" },
+  },
+  remove: {
+    route: "DELETE /repos/{owner}/{repo}/collaborators/{username}",
+    statuses: { 204: "collaborator removed" },
+  },
+} as const satisfies Record<string, EndpointDecl>;
+
 export const collaboratorsSection: SectionModule<"collaborators"> = {
   key: "collaborators",
-  grant: `grant "Administration" (read and write) under the PAT's Repository permissions`,
+  permission,
+  grant: grantFor(permission),
+  endpoints: ENDPOINTS,
   shape: z.array(z.looseObject({ username: z.string() })),
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
@@ -34,11 +56,9 @@ export const collaboratorsSection: SectionModule<"collaborators"> = {
       (c) => c.username.toLowerCase(),
       (c) => c.username,
     );
-    const live = (await listAll(
-      ctx,
-      this,
-      `/repos/${ctx.repo}/collaborators?affiliation=direct`,
-    )) as LiveCollaborator[];
+    const live = (await listAll(ctx, this, ENDPOINTS.list, {
+      query: { affiliation: "direct" },
+    })) as LiveCollaborator[];
     const liveByLogin = new Map(live.map((c) => [c.login.toLowerCase(), c]));
     const declared = new Set<string>();
 
@@ -59,13 +79,10 @@ export const collaboratorsSection: SectionModule<"collaborators"> = {
         );
       } else {
         const { username: _u, ...body } = collaborator;
-        await call(
-          ctx,
-          this,
-          "PUT",
-          `/repos/${ctx.repo}/collaborators/${encodeURIComponent(collaborator.username)}`,
-          { ...body, permission }, // future sibling keys pass through
-        );
+        await call(ctx, this, ENDPOINTS.update, {
+          params: { username: collaborator.username },
+          payload: { ...body, permission }, // future sibling keys pass through
+        });
         result.changes.push(
           `${existing ? "updated" : "invited"} collaborator "${collaborator.username}" (${permission})`,
         );
@@ -82,12 +99,9 @@ export const collaboratorsSection: SectionModule<"collaborators"> = {
           `collaborators[${collaborator.login}]: undeclared - not in the settings file, so apply will REMOVE them; add them to the settings file to keep their access`,
         );
       } else {
-        await call(
-          ctx,
-          this,
-          "DELETE",
-          `/repos/${ctx.repo}/collaborators/${encodeURIComponent(collaborator.login)}`,
-        );
+        await call(ctx, this, ENDPOINTS.remove, {
+          params: { username: collaborator.login },
+        });
         result.changes.push(`REMOVED undeclared collaborator "${collaborator.login}"`);
       }
     }

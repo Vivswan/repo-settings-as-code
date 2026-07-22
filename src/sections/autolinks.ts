@@ -8,9 +8,12 @@ import { subsetDiff } from "../engine/diff.js";
 import type { AutolinkConfig } from "../schema.js";
 import {
   call,
+  type EndpointDecl,
   emptyResult,
+  grantFor,
   rejectDuplicates,
   type SectionModule,
+  type SectionPermission,
   type SectionResult,
 } from "./contract.js";
 
@@ -21,9 +24,22 @@ interface LiveAutolink {
   is_alphanumeric: boolean;
 }
 
+const permission: SectionPermission = { repo: ["administration"] };
+
+const ENDPOINTS = {
+  list: { route: "GET /repos/{owner}/{repo}/autolinks", statuses: { 200: "the autolink list" } },
+  create: { route: "POST /repos/{owner}/{repo}/autolinks", statuses: { 201: "autolink created" } },
+  remove: {
+    route: "DELETE /repos/{owner}/{repo}/autolinks/{autolink_id}",
+    statuses: { 204: "autolink deleted" },
+  },
+} as const satisfies Record<string, EndpointDecl>;
+
 export const autolinksSection: SectionModule<"autolinks"> = {
   key: "autolinks",
-  grant: `grant "Administration" (read and write) under the PAT's Repository permissions`,
+  permission,
+  grant: grantFor(permission),
+  endpoints: ENDPOINTS,
   shape: z.array(z.looseObject({ key_prefix: z.string(), url_template: z.string() })),
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
@@ -36,7 +52,7 @@ export const autolinksSection: SectionModule<"autolinks"> = {
     );
     // The autolinks list endpoint is not paginated; a single GET returns
     // everything, and sending page params would not advance anything.
-    const live = (await call(ctx, this, "GET", `/repos/${ctx.repo}/autolinks`)) as LiveAutolink[];
+    const live = (await call(ctx, this, ENDPOINTS.list)) as LiveAutolink[];
     const liveByPrefix = new Map(live.map((a) => [a.key_prefix, a]));
     const declared = new Set<string>();
 
@@ -59,11 +75,13 @@ export const autolinksSection: SectionModule<"autolinks"> = {
       }
       if (existing) {
         // Autolinks have no update endpoint; replace.
-        await call(ctx, this, "DELETE", `/repos/${ctx.repo}/autolinks/${existing.id}`);
+        await call(ctx, this, ENDPOINTS.remove, { params: { autolink_id: String(existing.id) } });
       }
-      await call(ctx, this, "POST", `/repos/${ctx.repo}/autolinks`, {
-        is_alphanumeric: true,
-        ...autolink, // declared keys (including future ones) pass through
+      await call(ctx, this, ENDPOINTS.create, {
+        payload: {
+          is_alphanumeric: true,
+          ...autolink, // declared keys (including future ones) pass through
+        },
       });
       result.changes.push(`${existing ? "replaced" : "created"} autolink ${autolink.key_prefix}`);
     }
@@ -75,7 +93,7 @@ export const autolinksSection: SectionModule<"autolinks"> = {
             `autolinks[${autolink.key_prefix}]: undeclared - not in the settings file, so apply will DELETE it; add it to the settings file to keep it`,
           );
         } else {
-          await call(ctx, this, "DELETE", `/repos/${ctx.repo}/autolinks/${autolink.id}`);
+          await call(ctx, this, ENDPOINTS.remove, { params: { autolink_id: String(autolink.id) } });
           result.changes.push(`DELETED undeclared autolink ${autolink.key_prefix}`);
         }
       }

@@ -8,21 +8,41 @@ import { subsetDiff } from "../engine/diff.js";
 import type { PagesConfig } from "../schema.js";
 import {
   call,
+  type EndpointDecl,
   emptyResult,
+  grantFor,
   probeAbsent,
   type SectionModule,
+  type SectionPermission,
   type SectionResult,
 } from "./contract.js";
 
+const permission: SectionPermission = { repo: ["pages"] };
+
+const ENDPOINTS = {
+  get: {
+    route: "GET /repos/{owner}/{repo}/pages",
+    statuses: { 200: "the Pages site", 404: "Pages is not enabled on the repository" },
+  },
+  create: { route: "POST /repos/{owner}/{repo}/pages", statuses: { 201: "Pages enabled" } },
+  update: {
+    route: "PUT /repos/{owner}/{repo}/pages",
+    statuses: { 204: "Pages configuration updated" },
+  },
+  remove: { route: "DELETE /repos/{owner}/{repo}/pages", statuses: { 204: "Pages disabled" } },
+} as const satisfies Record<string, EndpointDecl>;
+
 export const pagesSection: SectionModule<"pages"> = {
   key: "pages",
-  grant: `grant "Pages" (read and write) under the PAT's Repository permissions`,
+  permission,
+  grant: grantFor(permission),
+  endpoints: ENDPOINTS,
   // The handler dereferences source.path before the API sees it, so the
   // shape must catch source: null or a source without a branch.
   shape: z.looseObject({ source: z.looseObject({ branch: z.string() }).optional() }).nullable(),
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
-    const probe = await probeAbsent(ctx, this, `/repos/${ctx.repo}/pages`);
+    const probe = await probeAbsent(ctx, this, ENDPOINTS.get);
     const exists = !("missing" in probe);
     const liveSite = "data" in probe ? probe.data : undefined;
 
@@ -44,7 +64,7 @@ export const pagesSection: SectionModule<"pages"> = {
         );
         return result;
       }
-      await call(ctx, this, "DELETE", `/repos/${ctx.repo}/pages`);
+      await call(ctx, this, ENDPOINTS.remove);
       result.changes.push("disabled GitHub Pages");
       return result;
     }
@@ -83,15 +103,15 @@ export const pagesSection: SectionModule<"pages"> = {
       if (payload.source !== undefined) {
         create.source = payload.source;
       }
-      await call(ctx, this, "POST", `/repos/${ctx.repo}/pages`, create);
+      await call(ctx, this, ENDPOINTS.create, { payload: create });
       result.changes.push("enabled GitHub Pages");
       const rest = Object.keys(payload).filter((k) => !(k in create));
       if (rest.length > 0) {
-        await call(ctx, this, "PUT", `/repos/${ctx.repo}/pages`, payload);
+        await call(ctx, this, ENDPOINTS.update, { payload });
         result.changes.push("applied remaining Pages configuration");
       }
     } else {
-      await call(ctx, this, "PUT", `/repos/${ctx.repo}/pages`, payload);
+      await call(ctx, this, ENDPOINTS.update, { payload });
       result.changes.push("updated GitHub Pages configuration");
     }
     return result;

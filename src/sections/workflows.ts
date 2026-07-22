@@ -8,10 +8,13 @@ import { z } from "zod";
 import type { WorkflowConfig } from "../schema.js";
 import {
   call,
+  type EndpointDecl,
   emptyResult,
+  grantFor,
   listAllEnveloped,
   rejectDuplicates,
   type SectionModule,
+  type SectionPermission,
   type SectionResult,
 } from "./contract.js";
 
@@ -22,9 +25,28 @@ interface LiveWorkflow {
   state: string;
 }
 
+const permission: SectionPermission = { repo: ["actions"] };
+
+const ENDPOINTS = {
+  list: {
+    route: "GET /repos/{owner}/{repo}/actions/workflows",
+    statuses: { 200: "the workflow list" },
+  },
+  enable: {
+    route: "PUT /repos/{owner}/{repo}/actions/workflows/{workflow_id}/enable",
+    statuses: { 204: "workflow enabled" },
+  },
+  disable: {
+    route: "PUT /repos/{owner}/{repo}/actions/workflows/{workflow_id}/disable",
+    statuses: { 204: "workflow disabled" },
+  },
+} as const satisfies Record<string, EndpointDecl>;
+
 export const workflowsSection: SectionModule<"workflows"> = {
   key: "workflows",
-  grant: `grant "Actions" (read and write) under the PAT's Repository permissions`,
+  permission,
+  grant: grantFor(permission),
+  endpoints: ENDPOINTS,
   shape: z.array(z.looseObject({ path: z.string(), state: z.enum(["active", "disabled"]) })),
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
@@ -37,12 +59,7 @@ export const workflowsSection: SectionModule<"workflows"> = {
       (w) => (w.path.includes("/") ? w.path : `.github/workflows/${w.path}`),
       (w) => w.path,
     );
-    const live = (await listAllEnveloped(
-      ctx,
-      this,
-      `/repos/${ctx.repo}/actions/workflows`,
-      "workflows",
-    )) as LiveWorkflow[];
+    const live = (await listAllEnveloped(ctx, this, ENDPOINTS.list, "workflows")) as LiveWorkflow[];
     // A "deleted" workflow has no file behind it anymore; treat as absent.
     const present = live.filter((w) => w.state !== "deleted");
 
@@ -74,7 +91,9 @@ export const workflowsSection: SectionModule<"workflows"> = {
           `workflows[${workflow.path}]: declared "${workflow.state}" != live "${liveState}"${raw}; apply will ${action} the workflow`,
         );
       } else {
-        await call(ctx, this, "PUT", `/repos/${ctx.repo}/actions/workflows/${match.id}/${action}`);
+        await call(ctx, this, action === "enable" ? ENDPOINTS.enable : ENDPOINTS.disable, {
+          params: { workflow_id: String(match.id) },
+        });
         result.changes.push(`${action}d workflow "${match.path}"`);
       }
     }

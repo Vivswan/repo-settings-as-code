@@ -14,7 +14,7 @@ import { autolinksSection } from "./autolinks.js";
 import { branchesSection } from "./branches.js";
 import { codeScanningDefaultSetupSection } from "./code-scanning.js";
 import { collaboratorsSection } from "./collaborators.js";
-import type { SectionModule } from "./contract.js";
+import type { EndpointDecl, SectionModule } from "./contract.js";
 import { environmentsSection } from "./environments.js";
 import { labelsSection } from "./labels.js";
 import { milestonesSection } from "./milestones.js";
@@ -46,4 +46,34 @@ export const SECTIONS: readonly SectionModule[] = SECTION_KEYS.map((key) => byKe
 /** The loose shape validation accepts for a section's declared value. */
 export function sectionShape(key: SectionKey): z.ZodType {
   return byKey[key].shape;
+}
+
+/** One endpoint in the flattened cross-section view, tagged with its owner. */
+export type TaggedEndpoint = EndpointDecl & { section: SectionKey; role: string };
+
+/**
+ * Every section's endpoints flattened into one dictionary keyed
+ * `${sectionKey}.${role}` ("labels.update", "teams.org", ...). Keys are
+ * globally unique by construction (section key + local role). This is the
+ * merge-ready single view downstream consumers (the e2e mock's route table,
+ * USED_PATHS derivation) iterate, without renaming any section's local roles.
+ *
+ * The returned record, each tagged entry, and the nested statuses/permission
+ * objects are frozen: they are (or reference) the section declarations, which
+ * must never mutate at runtime, so a consumer cannot corrupt the source
+ * dictionaries through this view.
+ */
+export function allEndpoints(): Readonly<Record<string, TaggedEndpoint>> {
+  const out: Record<string, TaggedEndpoint> = {};
+  for (const section of SECTIONS) {
+    for (const [role, endpoint] of Object.entries(section.endpoints)) {
+      Object.freeze(endpoint.statuses);
+      if (endpoint.permission && typeof endpoint.permission === "object") {
+        Object.freeze(endpoint.permission);
+        Object.freeze(endpoint.permission.repo);
+      }
+      out[`${section.key}.${role}`] = Object.freeze({ ...endpoint, section: section.key, role });
+    }
+  }
+  return Object.freeze(out);
 }

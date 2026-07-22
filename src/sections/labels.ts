@@ -7,7 +7,16 @@
 import { z } from "zod";
 import { subsetDiff } from "../engine/diff.js";
 import type { LabelConfig } from "../schema.js";
-import { call, emptyResult, listAll, type SectionModule, type SectionResult } from "./contract.js";
+import {
+  call,
+  type EndpointDecl,
+  emptyResult,
+  grantFor,
+  listAll,
+  type SectionModule,
+  type SectionPermission,
+  type SectionResult,
+} from "./contract.js";
 
 /** Case-insensitive key for name-matched resources (labels). */
 export function nameKey(name: string): string {
@@ -27,9 +36,29 @@ interface LiveLabel {
   description: string | null;
 }
 
+const permission: SectionPermission = { repo: ["issues"] };
+
+const ENDPOINTS = {
+  list: { route: "GET /repos/{owner}/{repo}/labels", statuses: { 200: "the label list" } },
+  create: {
+    route: "POST /repos/{owner}/{repo}/labels",
+    statuses: { 201: "label created" },
+  },
+  update: {
+    route: "PATCH /repos/{owner}/{repo}/labels/{name}",
+    statuses: { 200: "label updated" },
+  },
+  remove: {
+    route: "DELETE /repos/{owner}/{repo}/labels/{name}",
+    statuses: { 204: "label deleted" },
+  },
+} as const satisfies Record<string, EndpointDecl>;
+
 export const labelsSection: SectionModule<"labels"> = {
   key: "labels",
-  grant: `grant "Issues" (read and write) under the PAT's Repository permissions`,
+  permission,
+  grant: grantFor(permission),
+  endpoints: ENDPOINTS,
   shape: z.array(z.looseObject({ name: z.string(), new_name: z.string().optional() })),
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
@@ -52,7 +81,7 @@ export const labelsSection: SectionModule<"labels"> = {
         claimed.set(key, label.name);
       }
     }
-    const live = (await listAll(ctx, this, `/repos/${ctx.repo}/labels`)) as LiveLabel[];
+    const live = (await listAll(ctx, this, ENDPOINTS.list)) as LiveLabel[];
     const liveByKey = new Map<string, LiveLabel>();
     for (const label of live) {
       liveByKey.set(nameKey(label.name), label);
@@ -83,11 +112,13 @@ export const labelsSection: SectionModule<"labels"> = {
             `labels[${finalName}]: missing - declared in the settings file but not on the repo; apply will create it`,
           );
         } else {
-          await call(ctx, this, "POST", `/repos/${ctx.repo}/labels`, {
-            name: finalName,
-            ...(wantColor === undefined ? {} : { color: wantColor }),
-            description: wantDescription,
-            ...extraKeys, // future label fields pass through verbatim
+          await call(ctx, this, ENDPOINTS.create, {
+            payload: {
+              name: finalName,
+              ...(wantColor === undefined ? {} : { color: wantColor }),
+              description: wantDescription,
+              ...extraKeys, // future label fields pass through verbatim
+            },
           });
           result.changes.push(`created label "${finalName}"`);
         }
@@ -118,18 +149,15 @@ export const labelsSection: SectionModule<"labels"> = {
           }
           result.drift.push(...extraDrift);
         } else {
-          await call(
-            ctx,
-            this,
-            "PATCH",
-            `/repos/${ctx.repo}/labels/${encodeURIComponent(existing.name)}`,
-            {
+          await call(ctx, this, ENDPOINTS.update, {
+            params: { name: existing.name },
+            payload: {
               new_name: finalName,
               ...(wantColor === undefined ? {} : { color: wantColor }),
               ...(label.description === undefined ? {} : { description: wantDescription }),
               ...extraKeys, // future label fields pass through verbatim
             },
-          );
+          });
           result.changes.push(`updated label "${finalName}"`);
         }
       }
@@ -143,12 +171,7 @@ export const labelsSection: SectionModule<"labels"> = {
             `labels[${label.name}]: undeclared - not in the settings file, so apply will DELETE it; add it to the settings file to keep it`,
           );
         } else {
-          await call(
-            ctx,
-            this,
-            "DELETE",
-            `/repos/${ctx.repo}/labels/${encodeURIComponent(label.name)}`,
-          );
+          await call(ctx, this, ENDPOINTS.remove, { params: { name: label.name } });
           result.changes.push(`DELETED undeclared label "${label.name}"`);
         }
       }

@@ -65,14 +65,22 @@ function isHttpError(error: unknown): error is OctokitHttpError {
   );
 }
 
+/** RETRY_BASE_MS parsed defensively: only a finite, positive number counts. */
+function testRetryBaseMs(): number | undefined {
+  const value = Number(process.env.RETRY_BASE_MS ?? "");
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
 export class GithubApi implements GithubClient {
   private readonly octokit: InstanceType<typeof ActionOctokit>;
-
   constructor(
     token: string,
     private readonly baseUrl = process.env.GITHUB_API_URL ?? "https://api.github.com",
     private readonly apiVersion = "2022-11-28",
-    retryBaseMs = 1000,
+    // Test knob for e2e retry scenarios: RETRY_BASE_MS scales the plugin
+    // waits so backoff can run in milliseconds. Non-finite or non-positive
+    // values fall back to the production default.
+    retryBaseMs = testRetryBaseMs() ?? 1000,
   ) {
     this.octokit = new ActionOctokit({
       auth: token,

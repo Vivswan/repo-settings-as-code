@@ -11,10 +11,14 @@ import type { BranchConfig } from "../schema.js";
 import {
   anyRecord,
   call,
+  type EndpointDecl,
   emptyResult,
+  expand,
+  grantFor,
   probeAbsent,
   rejectDuplicates,
   type SectionModule,
+  type SectionPermission,
   type SectionResult,
 } from "./contract.js";
 
@@ -25,9 +29,39 @@ const REQUIRED_PROTECTION_KEYS = [
   "restrictions",
 ] as const;
 
+const permission: SectionPermission = { repo: ["administration"] };
+
+const ENDPOINTS = {
+  getProtection: {
+    route: "GET /repos/{owner}/{repo}/branches/{branch}/protection",
+    statuses: { 200: "the branch protection", 404: "the branch is unprotected or does not exist" },
+  },
+  putProtection: {
+    route: "PUT /repos/{owner}/{repo}/branches/{branch}/protection",
+    statuses: { 200: "protection replaced" },
+  },
+  removeProtection: {
+    route: "DELETE /repos/{owner}/{repo}/branches/{branch}/protection",
+    statuses: { 204: "protection removed" },
+  },
+  // Advisory branch-existence probe: called directly via tryRequest (not
+  // through the enforced helpers), declared here so the dictionary is
+  // complete for downstream mock-route and USED_PATHS derivation. It is
+  // Contents-gated in reality, but that requirement stays OUT of the
+  // section's grant prose because the probe is optional (a token without
+  // Contents just skips the advisory branch-does-not-exist wording).
+  branchProbe: {
+    route: "GET /repos/{owner}/{repo}/branches/{branch}",
+    statuses: { 200: "the branch exists", 404: "no such branch" },
+    permission: { repo: ["contents"] },
+  },
+} as const satisfies Record<string, EndpointDecl>;
+
 export const branchesSection: SectionModule<"branches"> = {
   key: "branches",
-  grant: `grant "Administration" (read and write) under the PAT's Repository permissions`,
+  permission,
+  grant: grantFor(permission),
+  endpoints: ENDPOINTS,
   shape: z.array(z.looseObject({ name: z.string(), protection: anyRecord.nullable() })),
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
@@ -41,9 +75,10 @@ export const branchesSection: SectionModule<"branches"> = {
       (b) => b.name,
     );
     for (const branch of desired) {
-      const path = `/repos/${ctx.repo}/branches/${encodeURIComponent(branch.name)}/protection`;
       if (branch.protection === null) {
-        const probe = await probeAbsent(ctx, this, path);
+        const probe = await probeAbsent(ctx, this, ENDPOINTS.getProtection, {
+          params: { branch: branch.name },
+        });
         const isProtected = !("missing" in probe);
         if (ctx.check) {
           if (isProtected) {
@@ -52,7 +87,7 @@ export const branchesSection: SectionModule<"branches"> = {
             );
           }
         } else if (isProtected) {
-          await call(ctx, this, "DELETE", path);
+          await call(ctx, this, ENDPOINTS.removeProtection, { params: { branch: branch.name } });
           result.changes.push(`removed protection from "${branch.name}"`);
         }
         continue;
@@ -65,13 +100,18 @@ export const branchesSection: SectionModule<"branches"> = {
         }
       }
       if (ctx.check) {
-        const probe = await probeAbsent(ctx, this, path);
+        const probe = await probeAbsent(ctx, this, ENDPOINTS.getProtection, {
+          params: { branch: branch.name },
+        });
         if ("missing" in probe) {
           // Protection 404s for a missing BRANCH too. The branch probe is
           // advisory: only a definitive 404 flips the message (other errors,
           // e.g. a token without Contents read, fall back to the plain
           // unprotected reading rather than misreporting or failing).
-          const branchProbe = await ctx.api.tryRequest("GET", path.replace(/\/protection$/, ""));
+          const branchProbe = await ctx.api.tryRequest(
+            "GET",
+            expand(ENDPOINTS.branchProbe, ctx, { branch: branch.name }),
+          );
           if ("error" in branchProbe && branchProbe.error.status === 404) {
             result.drift.push(
               `branches[${branch.name}]: declared in the settings file but the branch does not exist on the repo, so apply cannot protect it; create the branch, or remove it from the settings file`,
@@ -99,7 +139,10 @@ export const branchesSection: SectionModule<"branches"> = {
           }
         }
       } else {
-        await call(ctx, this, "PUT", path, payload);
+        await call(ctx, this, ENDPOINTS.putProtection, {
+          params: { branch: branch.name },
+          payload,
+        });
         result.changes.push(`applied protection to "${branch.name}"`);
       }
     }
