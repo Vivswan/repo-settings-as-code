@@ -37,7 +37,7 @@ describe("README Sections table", () => {
     const byKey = new Map(SECTIONS.map((section) => [section.key, section]));
     for (const cells of rows) {
       const key = (cells[0] ?? "").replace(/`/g, "");
-      const notes = cells[2] ?? "";
+      const notes = cells.at(-1) ?? ""; // Notes is the table's last column
       const section = byKey.get(key as (typeof SECTION_KEYS)[number]);
       if (!section) {
         throw new Error(`README Sections row "${key}" is not a section key`);

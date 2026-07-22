@@ -19,14 +19,15 @@ import {
 import { allEndpoints, SECTIONS } from "../../src/sections/registry.js";
 
 describe("registry <-> README", () => {
-  test("the README grant table lists every section, in order, naming each granted permission", () => {
+  test("the README Sections table lists every section, in order, naming each granted permission", () => {
     const readme = readFileSync("README.md", "utf8");
-    const start = readme.indexOf("## Token permissions by section");
+    const start = readme.indexOf("\n## Sections\n");
     expect(start).toBeGreaterThan(-1);
     const end = readme.indexOf("\n## ", start + 1);
     const section = end === -1 ? readme.slice(start) : readme.slice(start, end);
 
-    const rows = [...section.matchAll(/^\| `([a-z_]+)` \| ([^|]+) \|/gm)].map((match) => ({
+    // Key from column 1, PAT permission from column 3 (column 2 is Endpoints).
+    const rows = [...section.matchAll(/^\| `([a-z_]+)` \| [^|]+ \| ([^|]+) \|/gm)].map((match) => ({
       key: match[1] ?? "",
       permission: match[2] ?? "",
     }));

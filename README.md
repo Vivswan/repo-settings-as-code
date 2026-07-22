@@ -8,115 +8,84 @@ silently.
 
 ## Usage
 
-```yaml
-# .github/workflows/settings.yml
-name: Apply Settings
-on:
-  push:
-    branches: [main]
-    paths: [.github/settings.yml]
-  workflow_dispatch:
+1. Create a [fine-grained PAT](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token):
+   the [pre-filled token form](https://github.com/settings/personal-access-tokens/new?name=repo-settings-as-code&description=Token+for+Vivswan%2Frepo-settings-as-code&administration=write&issues=write&environments=write&pages=write&actions=write&contents=read)
+   starts you off with every repository permission the
+   [Sections](#sections) table can need. Pick the resource owner and
+   repositories, and add Members: read by hand when the owner is an
+   organization; the form only offers organization permissions once one
+   is selected. The default `GITHUB_TOKEN` can never hold these
+   permissions.
 
-permissions:
-  contents: read
+2. Save the token as a repository secret; `ADMIN_TOKEN` below.
 
-jobs:
-  apply:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: Vivswan/repo-settings-as-code@v1
-        with:
-          token: ${{ secrets.ADMIN_TOKEN }}
-```
+3. Declare your settings in `.github/settings.yml` (see the
+   [example](#example-settingsyml) below). One line at the top gives
+   editor autocomplete and hover docs (agents can fetch the same URL):
 
-Most sections need a [fine-grained PAT](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token) with **Administration: read & write**
-on the repository; the default `GITHUB_TOKEN` can never hold that
-permission.
+   ```yaml
+   # yaml-language-server: $schema=https://raw.githubusercontent.com/Vivswan/repo-settings-as-code/main/lib/settings.schema.json
+   ```
 
-On a repository with existing labels, autolinks, or collaborators, run
-once with `mode: check` before enabling apply on push: the drift report
-lists everything an apply would delete.
+4. Add the workflow. On a repository with existing labels, autolinks, or
+   collaborators, also set `mode: check` under `with:` for the first run:
+   the drift report lists everything an apply would delete, and nothing is
+   written.
+
+   ```yaml
+   # .github/workflows/settings.yml
+   name: Apply Settings
+   on:
+     push:
+       branches: [main]
+       paths: [.github/settings.yml]
+     workflow_dispatch:
+
+   permissions:
+     contents: read
+
+   jobs:
+     apply:
+       runs-on: ubuntu-latest
+       steps:
+         - uses: actions/checkout@v7
+         - uses: Vivswan/repo-settings-as-code@v1
+           with:
+             token: ${{ secrets.ADMIN_TOKEN }}
+   ```
+
+5. Run it once from the Actions tab (workflow_dispatch), review the run,
+   and drop `mode: check` if you set it. From then on every push that
+   touches `.github/settings.yml` applies it.
 
 A JSON Schema describing every section and its structured fields is
 published at
 [`lib/settings.schema.json`](lib/settings.schema.json), generated from the
 commented types in `src/schema.ts`. Passthrough areas (the `repository`
 payload, branch protection, rule parameters) stay open objects on purpose.
-One line at the top of your `settings.yml` gives editor autocomplete and
-hover docs (agents can fetch the same URL):
-
-```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Vivswan/repo-settings-as-code/main/lib/settings.schema.json
-```
 
 The schema is documentation, not a gate: unknown fields validate on
 purpose, because payloads pass through to the API verbatim and declaring a
 field GitHub ships tomorrow must never read as an error (see
 [Forward compatibility](#forward-compatibility)).
 
-## Development
+## Sections
 
-`src/` is TypeScript built with [bun](https://bun.com); `lib/` holds the two
-committed generated artifacts: `index.js`, the bundle the action executes,
-and `settings.schema.json`, the published settings.yml schema (`bun run
-build` regenerates both; CI fails on drift).
-Runtime dependencies (@octokit/rest with the retry and throttling plugins,
-@actions/core, zod, yaml) are compiled into that single bundle. Run
-`bun run check` for lint + typecheck + tests + generated-artifact freshness.
-
-The end-to-end tests run the committed bundle as a real subprocess against a
-mock GitHub API, so they exercise the same `lib/index.js` a user ships, not the
-TypeScript source. `bun run test:e2e` runs the curated scenario corpus, and
-`bun run fuzz` runs seeded property fuzzing: it generates random scenarios and
-checks each run's outcome against an oracle that predicts the outcome class from
-the token mask, policy, and mode. The fuzzer is deterministic. It prints a
-master seed and a per-iteration seed for each run; a whole run reproduces with
-`FUZZ_SEED=<masterSeed> bun run fuzz`, and a single failing iteration replays
-with `bun test/e2e/fuzz.ts --seed <iterationSeed> --iterations 1`. The mock
-serves the section endpoints plus the handful of core routes the action calls
-(the repo fetch, the settings-file contents read, and `repos: "*"` discovery),
-so a request that matches no registered section or core route fails loudly
-rather than returning a made-up response. PR CI runs a diff-aware subset, scoped to the sections a pull request
-changed, and a nightly workflow runs the full fuzz and files an issue labeled
-`e2e-fuzz` on a scenario or fuzz failure with a replay command.
-
-## Debugging
-
-Every API call the action makes is traced as a debug line: method, path,
-request payload, response status, and timing. Debug lines are hidden in
-normal runs; to see them, re-run the workflow with "[Enable debug logging](https://docs.github.com/en/actions/monitoring-and-troubleshooting-workflows/troubleshooting-workflows/enabling-debug-logging)"
-checked (or set the `ACTIONS_STEP_DEBUG` secret to `true`). Failures do not
-need debug mode: every error already carries the API's error message
-verbatim plus the fix, and the step summary table shows the outcome per
-section.
-
-## Inputs
-
-| Input | Default | Meaning |
-|---|---|---|
-| `token` | `github.token` | Token for the API calls (see permissions table below) |
-| `repository` | current repo | Target `owner/name` (single-repo mode only) |
-| `settings-file` | `.github/settings.yml` | Settings file path (single-repo mode only) |
-| `mode` | `apply` | `apply` mutates; `check` reports drift and exits 1 on any, writing nothing |
-| `on-missing-permission` | `fail` | `warn` skips sections the token cannot access (partial success) |
-| `required-sections` | (empty) | Sections that must fully apply even under `warn` |
-| `sections` | (all declared) | Comma-separated allowlist of sections to process |
-| `api-version` | `2022-11-28` | `X-GitHub-Api-Version` header; override to opt into a newer REST API version |
-| `repos` | (empty) | Multi-repo remote mode: `owner/name` list (comma/newline), or `*` to discover owned repos |
-| `repos-dir` | (empty) | Multi-repo central mode: directory of per-repo settings files in this repo |
-| `defaults-file` | (empty) | YAML merged under every multi-repo target's settings (multi-repo mode only) |
-| `visibility` | `all` | Discovery-only: keep `public`, `private`, or `internal` repositories |
-| `archived` | `skip` | Discovery-only: `skip`, `include`, or `only` archived repositories |
-| `forks` | `include` | Discovery-only: `include`, `exclude`, or `only` forks |
-| `exclude` | (empty) | Discovery-only: `*` wildcard patterns (name, or `owner/name` if the pattern has a `/`) to drop |
-| `topics` | (empty) | Discovery-only: keep repositories carrying at least one listed topic |
-| `affiliation` | `owner` | Discovery-only: `owner`, `collaborator`, `organization_member` (comma list) |
-
-Outputs: `result` (`applied` / `partial` / `clean` / `drift` / `failed`;
-worst-of across targets in multi-repo mode, where `skipped` can also
-appear), `skipped-sections`, and `repos-result` (multi-repo mode: a JSON
-map of `owner/name` to `{result, source, skippedSections}`).
+| Section | Endpoints | PAT permission | Notes |
+|---|---|---|---|
+| `repository` | PATCH repo, PUT topics, vulnerability-alerts, automated-security-fixes, private-vulnerability-reporting | Administration: write | Probot schema incl. `topics` as string or list; `enable_private_vulnerability_reporting` toggle; declared fields only, siblings undeclared untouched |
+| `labels` | labels CRUD | Issues: write | upsert by name (rename via `new_name`); undeclared deleted |
+| `rulesets` | repo rulesets CRUD | Administration: write | branch, tag, and push targets; short ref names auto-prefixed (`staging` -> `refs/heads/staging`); `~DEFAULT_BRANCH` passes through; undeclared kept (notes only) |
+| `branches` | classic branch protection | Administration: write | `protection: null` removes protection; undeclared untouched; add Contents: read so check mode can tell a missing branch from an unprotected one |
+| `environments` | PUT environments | Environments: write | reviewers, wait timer, branch policies; undeclared untouched |
+| `autolinks` | autolinks CRUD | Administration: write | immutable upstream, so changed entries are replaced; undeclared deleted |
+| `actions` | actions permissions + selected-actions + workflow token + access level | Administration: write | `enabled`, `allowed_actions`, `selected_actions`, `default_workflow_permissions`, `can_approve_pull_request_reviews`, `access_level` (private repos only); undeclared untouched |
+| `workflows` | list workflows, enable/disable | Actions: write | `{path, state: active or disabled}`; bare file names match `.github/workflows/`; undeclared untouched |
+| `pages` | POST/PUT/DELETE pages | Pages: write | `build_type: workflow` or `legacy` + source, `cname`, `https_enforced`; `pages: null` disables the site; undeclared untouched |
+| `code_scanning_default_setup` | code scanning default setup | Administration or Code scanning alerts: write | `state`, `query_suite`, `languages` (compared as a set), and future PATCH fields; needs Advanced Security on private repos, where a 403 can mean Advanced Security is off or the repo is archived; undeclared untouched |
+| `collaborators` | direct collaborators | Administration: write | invitations for new users; undeclared deleted (owner never touched) |
+| `teams` | org team repo permissions | Members: read (org permission) + Administration: write | org repos only, skipped with a notice on personal accounts; undeclared untouched |
+| `milestones` | milestones | Issues: write | upsert by title; undeclared kept (may hold issues) |
 
 ## Semantics
 
@@ -147,90 +116,6 @@ map of `owner/name` to `{result, source, skippedSections}`).
 See [COVERAGE.md](COVERAGE.md) for the full inventory: everything
 supported, every repo-scoped gap, and the user-scoped surface that is out of
 scope by design.
-
-## Multi-repo mode
-
-One run in an admin repository can manage a whole fleet, in the spirit of
-[safe-settings](https://github.com/github-community-projects/safe-settings)
-but without a hosted app. Two sourcing modes, usable together:
-
-- Central (`repos-dir`): a directory in the admin repo holds one settings
-  file per target: `<name>.yml` (same owner as the admin repo) or
-  `<owner>/<name>.yml`. Needs `actions/checkout`. These files are the
-  curated, code-reviewed source of truth.
-- Remote (`repos`): a comma- or newline-separated list of `owner/name`
-  targets, each applied from its own `.github/settings.yml` (default
-  branch). `repos: "*"` alone discovers every repository the token's user
-  owns (needs a user PAT; the workflow `GITHUB_TOKEN` cannot enumerate).
-  A target without a settings file is skipped with a notice.
-
-Discovery takes six filter inputs that apply only to `repos: "*"`;
-setting any of them in another mode fails the run. `visibility` keeps
-public, private, or internal repositories. `archived` defaults to `skip`,
-because settings writes fail on archived repositories; `archived: only`
-is mostly useful with `mode: check`. `forks` includes, excludes, or keeps
-only forks. `topics` keeps repositories carrying at least one listed
-topic, so a single marker topic can opt repositories in. `exclude` takes
-wildcard patterns where `*` matches anything: a pattern containing `/` is
-matched against the full `owner/name`, any other against the name alone,
-case-insensitively. `affiliation` selects which relationships to the
-token's user qualify: `owner` (the default), `collaborator`, or
-`organization_member`; the list replaces the default, so widening
-discovery beyond owned repositories takes `owner,collaborator`.
-Repositories a filter drops are reported in one aggregate notice per
-reason.
-
-When the same repository appears in both, the central file wins (with a
-notice). `defaults-file` names a YAML document deep-merged UNDER every
-target's settings: target keys win, objects merge, arrays and scalars
-replace (an array is always a full payload, matching check-mode semantics).
-A target section set to `null` opts that repository out of the defaults
-section, when the defaults file declares that section with a non-null
-value. A `null` section the defaults do not override passes through to
-the engine, where null can carry meaning of its own; the consequences
-are that `pages: null` in the defaults file disables Pages fleet-wide,
-while `pages: null` in a target under a defaults file that declares a
-`pages` object means "leave this repo's Pages alone", not "disable
-Pages".
-
-Targets run independently and sequentially: one repository's failure never
-stops the others; the run exits 1 at the end if any target failed (or, in
-check mode, drifted). The step summary shows a fleet rollup table plus a
-per-repository section table, and the `repos-result` output carries the
-per-repo results as JSON. `sections` and `required-sections` apply to all
-targets alike, and the token needs the same per-section permissions (see
-the table below) on every target.
-
-```yaml
-# One admin repo managing the fleet
-- uses: actions/checkout@v7
-- uses: Vivswan/repo-settings-as-code@v1
-  with:
-    token: ${{ secrets.FLEET_TOKEN }}
-    repos-dir: .github/repos
-    defaults-file: .github/settings-defaults.yml
-    repos: |
-      other-org/service-a
-      other-org/service-b
-```
-
-## Sections
-
-| Section | Endpoints | Notes |
-|---|---|---|
-| `repository` | PATCH repo, PUT topics, vulnerability-alerts, automated-security-fixes, private-vulnerability-reporting | Probot schema incl. `topics` as string or list; `enable_private_vulnerability_reporting` toggle; declared fields only, siblings undeclared untouched |
-| `labels` | labels CRUD | upsert by name (rename via `new_name`); undeclared deleted |
-| `rulesets` | repo rulesets CRUD | branch, tag, and push targets; short ref names auto-prefixed (`staging` -> `refs/heads/staging`); `~DEFAULT_BRANCH` passes through; undeclared kept (notes only) |
-| `branches` | classic branch protection | `protection: null` removes protection; undeclared untouched |
-| `environments` | PUT environments | reviewers, wait timer, branch policies; undeclared untouched |
-| `autolinks` | autolinks CRUD | immutable upstream, so changed entries are replaced; undeclared deleted |
-| `actions` | actions permissions + selected-actions + workflow token + access level | `enabled`, `allowed_actions`, `selected_actions`, `default_workflow_permissions`, `can_approve_pull_request_reviews`, `access_level` (private repos only); undeclared untouched |
-| `workflows` | list workflows, enable/disable | `{path, state: active or disabled}`; bare file names match `.github/workflows/`; undeclared untouched |
-| `pages` | POST/PUT/DELETE pages | `build_type: workflow` or `legacy` + source, `cname`, `https_enforced`; `pages: null` disables the site; undeclared untouched |
-| `code_scanning_default_setup` | code scanning default setup | `state`, `query_suite`, `languages` (compared as a set), and future PATCH fields; needs Advanced Security on private repos; undeclared untouched |
-| `collaborators` | direct collaborators | invitations for new users; undeclared deleted (owner never touched) |
-| `teams` | org team repo permissions | skipped with a notice on personal accounts; undeclared untouched |
-| `milestones` | milestones | upsert by title; undeclared kept (may hold issues) |
 
 ## Example settings.yml
 
@@ -278,67 +163,119 @@ rulesets:
             - context: all-green
 ```
 
-## Forward compatibility
+## Inputs
 
-Passthrough-first by design: payloads are sent to the API verbatim
-except for documented normalizations (ref prefixes, topics splitting,
-vocabulary mapping), so new fields and rule types GitHub ships work the day
-they exist: declare them in `settings.yml`, no action update needed. This
-holds for `rulesets` (new rule types, bypass-actor fields, condition
-types), `repository`, `branches`, `environments`, `actions`, `pages`, and
-`code_scanning_default_setup`.
-Two deliberate boundaries: a brand-new top-level settings *category* needs
-a handler (a new API endpoint cannot be guessed, so unknown sections fail
-loudly rather than no-op), and the pinned `X-GitHub-Api-Version` only
-changes intentionally.
-
-## Migrating from the Probot Settings app
-
-Your existing `settings.yml` works as-is for `repository`, `labels`,
-`branches`, `collaborators`, `teams`, and `milestones` (same schema).
-Uninstall the app, add the workflow above, and optionally move branch
-protection to `rulesets`. Differences: applies run visibly in Actions
-(loud failures instead of silent skips), rulesets are supported, and
-nothing except labels/autolinks/collaborators is ever deleted implicitly.
-
-In short, what you gain over the app: visible runs instead of silent
-no-ops, a drift-report check mode, first-class rulesets, a partial-success
-policy (`on-missing-permission` + `required-sections`), a token you scope
-yourself, per-call debug tracing, and multi-repo fleet management with a
-defaults layer (the `extends` role, minus the hosted app). The full
-side-by-side table is in
-[COVERAGE.md](COVERAGE.md#compared-to-the-probot-settings-app).
-
-## Token permissions by section
-
-Grant only the permissions for the sections your settings file declares;
-the action never needs more. In multi-repo mode the token needs the same
-permissions on every target repository.
-
-| Section | Fine-grained PAT permission | Notes |
+| Input | Default | Meaning |
 |---|---|---|
-| `repository` | Administration: write | Covers the PATCH passthrough and the three security toggles |
-| `labels` | Issues: write | |
-| `rulesets` | Administration: write | |
-| `branches` | Administration: write | Add Contents: read so check mode can tell a missing branch from an unprotected one |
-| `environments` | Environments: write | |
-| `autolinks` | Administration: write | |
-| `actions` | Administration: write | `access_level` applies to private repositories only |
-| `workflows` | Actions: write | |
-| `pages` | Pages: write | |
-| `code_scanning_default_setup` | Administration or Code scanning alerts: write | Also needs GitHub Advanced Security on private repos; a 403 here can mean Advanced Security is off or the repo is archived rather than a missing permission |
-| `collaborators` | Administration: write | |
-| `teams` | Members: read (organization permission) + Administration: write | Org repos only; skipped with a notice on personal accounts |
-| `milestones` | Issues: write | |
+| `token` | `github.token` | Token for the API calls (see [Token permissions](#token-permissions)) |
+| `repository` | current repo | Target `owner/name` (single-repo mode only) |
+| `settings-file` | `.github/settings.yml` | Settings file path (single-repo mode only) |
+| `mode` | `apply` | `apply` mutates; `check` reports drift and exits 1 on any, writing nothing |
+| `on-missing-permission` | `fail` | `warn` skips sections the token cannot access (partial success) |
+| `required-sections` | (empty) | Sections that must fully apply even under `warn` |
+| `sections` | (all declared) | Comma-separated allowlist of sections to process |
+| `api-version` | `2022-11-28` | `X-GitHub-Api-Version` header; override to opt into a newer REST API version |
+| `repos` | (empty) | Multi-repo remote mode: `owner/name` list (comma/newline), or `*` to discover owned repos |
+| `repos-dir` | (empty) | Multi-repo central mode: directory of per-repo settings files in this repo |
+| `defaults-file` | (empty) | YAML merged under every multi-repo target's settings (multi-repo mode only) |
+| `visibility` | `all` | Discovery-only: keep `public`, `private`, or `internal` repositories |
+| `archived` | `skip` | Discovery-only: `skip`, `include`, or `only` archived repositories |
+| `forks` | `include` | Discovery-only: `include`, `exclude`, or `only` forks |
+| `exclude` | (empty) | Discovery-only: `*` wildcard patterns (name, or `owner/name` if the pattern has a `/`) to drop |
+| `topics` | (empty) | Discovery-only: keep repositories carrying at least one listed topic |
+| `affiliation` | `owner` | Discovery-only: `owner`, `collaborator`, `organization_member` (comma list) |
 
-To manage everything in one PAT: Administration, Issues, Environments,
-Pages, and Actions at write, plus Contents at read and (for org repos)
-the Members organization permission at read. The
-[pre-filled token form](https://github.com/settings/personal-access-tokens/new?name=repo-settings-as-code&description=Token+for+Vivswan%2Frepo-settings-as-code&administration=write&issues=write&environments=write&pages=write&actions=write&contents=read)
-starts you off with exactly those repository permissions; pick the
-resource owner and repositories, and add Members: read by hand when the
-owner is an organization (the form only offers organization permissions
-once one is selected).
+Outputs: `result` (`applied` / `partial` / `clean` / `drift` / `failed`;
+worst-of across targets in multi-repo mode, where `skipped` can also
+appear), `skipped-sections`, and `repos-result` (multi-repo mode: a JSON
+map of `owner/name` to `{result, source, skippedSections}`).
+
+## Multi-repo mode
+
+One run in an admin repository can manage a whole fleet, in the spirit of
+[safe-settings](https://github.com/github-community-projects/safe-settings)
+but without a hosted app. Two sourcing modes, usable together:
+
+- Central (`repos-dir`): a directory in the admin repo holds one settings
+  file per target: `<name>.yml` (same owner as the admin repo) or
+  `<owner>/<name>.yml`. Needs `actions/checkout`. These files are the
+  curated, code-reviewed source of truth.
+- Remote (`repos`): a comma- or newline-separated list of `owner/name`
+  targets, each applied from its own `.github/settings.yml` (default
+  branch). `repos: "*"` alone discovers every repository the token's user
+  owns (needs a user PAT; the workflow `GITHUB_TOKEN` cannot enumerate).
+  A target without a settings file is skipped with a notice.
+
+Discovery takes six filter inputs that apply only to `repos: "*"`; setting
+any of them in another mode fails the run. Repositories a filter drops are
+reported in one aggregate notice per reason.
+
+- `visibility` keeps public, private, or internal repositories.
+- `archived` defaults to `skip`, because settings writes fail on archived
+  repositories; `archived: only` is mostly useful with `mode: check`.
+- `forks` includes, excludes, or keeps only forks.
+- `topics` keeps repositories carrying at least one listed topic, so a
+  single marker topic can opt repositories in.
+- `exclude` takes wildcard patterns where `*` matches anything: a pattern
+  containing `/` is matched against the full `owner/name`, any other
+  against the name alone, case-insensitively.
+- `affiliation` selects which relationships to the token's user qualify:
+  `owner` (the default), `collaborator`, or `organization_member`. The
+  list replaces the default, so widening discovery beyond owned
+  repositories takes `owner,collaborator`.
+
+When the same repository appears in both, the central file wins (with a
+notice).
+
+`defaults-file` names a YAML document deep-merged UNDER every target's
+settings: target keys win, objects merge, arrays and scalars replace (an
+array is always a full payload, matching check-mode semantics).
+
+A `null` section in a target means one of two things in that merge:
+
+- When the defaults file declares the section with a non-null value,
+  `null` opts that repository out of the defaults section.
+- When the defaults do not override it, the `null` passes through to the
+  engine, where it can carry meaning of its own. So `pages: null` in the
+  defaults file disables Pages fleet-wide, while `pages: null` in a target
+  under a defaults file that declares a `pages` object means "leave this
+  repo's Pages alone", not "disable Pages".
+
+Targets run independently and sequentially: one repository's failure never
+stops the others; the run exits 1 at the end if any target failed (or, in
+check mode, drifted). The step summary shows a fleet rollup table plus a
+per-repository section table, and the `repos-result` output carries the
+per-repo results as JSON.
+
+`sections` and `required-sections` apply to all targets alike, and the
+token needs the same per-section permissions (see the
+[Sections](#sections) table) on every target.
+
+```yaml
+# One admin repo managing the fleet
+- uses: actions/checkout@v7
+- uses: Vivswan/repo-settings-as-code@v1
+  with:
+    token: ${{ secrets.FLEET_TOKEN }}
+    repos-dir: .github/repos
+    defaults-file: .github/settings-defaults.yml
+    repos: |
+      other-org/service-a
+      other-org/service-b
+```
+
+## Token permissions
+
+The PAT permission column in the [Sections](#sections) table names the
+grant each section needs. Grant only the permissions for the sections your
+settings file declares; the action never needs more. In multi-repo mode
+the token needs the same permissions on every target repository.
+
+To manage everything in one PAT, grant Administration, Issues,
+Environments, Pages, and Actions at write, plus Contents at read and (for
+org repos) the Members organization permission at read. The pre-filled
+token form linked under [Usage](#usage) grants exactly the repository
+half of that set.
 
 Three things worth knowing when a run fails on permissions:
 
@@ -352,3 +289,59 @@ Three things worth knowing when a run fails on permissions:
   repositories. Remote multi-repo targets also need Contents: read on
   every target, because each repository's own settings.yml is fetched
   through the contents API.
+
+## Forward compatibility
+
+Passthrough-first by design: payloads are sent to the API verbatim
+except for documented normalizations (ref prefixes, topics splitting,
+vocabulary mapping), so new fields and rule types GitHub ships work the day
+they exist: declare them in `settings.yml`, no action update needed. This
+holds for `rulesets` (new rule types, bypass-actor fields, condition
+types), `repository`, `branches`, `environments`, `actions`, `pages`, and
+`code_scanning_default_setup`.
+
+Two deliberate boundaries:
+
+- A brand-new top-level settings *category* needs a handler: a new API
+  endpoint cannot be guessed, so unknown sections fail loudly rather
+  than no-op.
+- The pinned `X-GitHub-Api-Version` only changes intentionally.
+
+## Migrating from the Probot Settings app
+
+Your existing `settings.yml` works as-is for `repository`, `labels`,
+`branches`, `collaborators`, `teams`, and `milestones` (same schema).
+Uninstall the app, add the workflow above, and optionally move branch
+protection to `rulesets`. Differences: applies run visibly in Actions
+(loud failures instead of silent skips), rulesets are supported, and
+nothing except labels/autolinks/collaborators is ever deleted implicitly.
+
+In short, what you gain over the app:
+
+- visible runs instead of silent no-ops
+- a drift-report check mode
+- first-class rulesets
+- a partial-success policy (`on-missing-permission` + `required-sections`)
+- a token you scope yourself
+- per-call debug tracing
+- multi-repo fleet management with a defaults layer (the `extends` role,
+  minus the hosted app)
+
+The full side-by-side table is in
+[COVERAGE.md](COVERAGE.md#compared-to-the-probot-settings-app).
+
+## Debugging
+
+Every API call the action makes is traced as a debug line: method, path,
+request payload, response status, and timing. Debug lines are hidden in
+normal runs; to see them, re-run the workflow with "[Enable debug logging](https://docs.github.com/en/actions/monitoring-and-troubleshooting-workflows/troubleshooting-workflows/enabling-debug-logging)"
+checked (or set the `ACTIONS_STEP_DEBUG` secret to `true`).
+
+Failures do not need debug mode: every error already carries the API's
+error message verbatim plus the fix, and the step summary table shows the
+outcome per section.
+
+## Contributing
+
+The toolchain, the end-to-end harness, and the PR conventions are
+documented in [CONTRIBUTING.md](CONTRIBUTING.md).
