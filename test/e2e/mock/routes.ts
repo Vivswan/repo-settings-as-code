@@ -11,6 +11,7 @@
  * handler (or leaving a stale handler behind) fails loudly at construction.
  */
 
+import type { SectionKey } from "../../../src/schema.js";
 import {
   endpointKind,
   endpointMethod,
@@ -20,7 +21,6 @@ import {
   type SectionPermission,
 } from "../../../src/sections/contract.js";
 import { allEndpoints, SECTIONS, type TaggedEndpoint } from "../../../src/sections/registry.js";
-import type { SectionKey } from "../../../src/schema.js";
 import { DENIAL_SEMANTICS } from "../denial-semantics.js";
 import type { DenialStyle, MaskGrade, MaskKey, Scenario } from "../schema.js";
 import {
@@ -34,15 +34,24 @@ import {
 /** A plain JSON object body. */
 type Json = Record<string, unknown>;
 
-/** One logged request, the audit trail the runner asserts against. */
+/**
+ * One logged request, the audit trail the runner asserts against. `pathname`
+ * is the path only (no query string, GHES base prefix already stripped) and
+ * `query` is the raw query string ("" when none), kept as separate fields: the
+ * runner prefix-matches mutations/never against "METHOD pathname" and
+ * substring-matches requests_contain (e.g. "page=2") against a rejoined
+ * "METHOD pathname?query", so both rules hold without the mock guessing which
+ * a scenario wants.
+ */
 export interface LoggedRequest {
   method: string;
   pathname: string;
-  query: Record<string, string>;
-  body?: unknown;
+  query: string;
   status: number;
   /** The masked resource that denied this request, when a denial fired. */
   deniedBy?: string;
+  /** Parsed JSON body for writes. */
+  body?: unknown;
 }
 
 /** The reply a handler (or the pipeline) produces: a status and a JSON body. */
@@ -488,7 +497,11 @@ const HANDLERS: Record<string, Handler> = {
     if (changesLanguages) {
       return {
         status: 202,
-        body: { run_id: state.nextId++, run_url: "https://api.github.com/repos/e2e-owner/e2e-repo/code-scanning/default-setup/runs/1" },
+        body: {
+          run_id: state.nextId++,
+          run_url:
+            "https://api.github.com/repos/e2e-owner/e2e-repo/code-scanning/default-setup/runs/1",
+        },
       };
     }
     return ok({ ...state.code_scanning });
@@ -622,7 +635,9 @@ export function assertHandlerCompleteness(
     if (extra.length > 0) {
       lines.push(`handlers naming no known endpoint: [${extra.sort().join(", ")}]`);
     }
-    throw new Error(`E2E MOCK: handler table out of sync with allEndpoints()\n  ${lines.join("\n  ")}`);
+    throw new Error(
+      `E2E MOCK: handler table out of sync with allEndpoints()\n  ${lines.join("\n  ")}`,
+    );
   }
 }
 
@@ -682,7 +697,10 @@ function violationResponse(message: string): MockResponse {
  * Find the endpoint whose method and path template match this request. Returns
  * the "section.role" key and the tagged endpoint, or null when nothing matches.
  */
-function matchEndpoint(method: string, pathname: string): { key: string; endpoint: TaggedEndpoint } | null {
+function matchEndpoint(
+  method: string,
+  pathname: string,
+): { key: string; endpoint: TaggedEndpoint } | null {
   for (const [key, endpoint] of Object.entries(allEndpoints())) {
     if (endpointMethod(endpoint.route) !== method) {
       continue;
@@ -707,7 +725,10 @@ function handleCorePath(
   if (method === "GET" && matchesTemplate("/repos/{owner}/{repo}", pathname)) {
     return { response: ok(state.repo) };
   }
-  if (matchesTemplate("/repos/{owner}/{repo}/contents/{path}", pathname)) {
+  // The contents {path} param spans the remaining path (e.g. a file under
+  // .github/), so match by prefix rather than the one-segment template.
+  const contentsPrefix = pathname.match(/^\/repos\/[^/]+\/[^/]+\/contents\//);
+  if (contentsPrefix) {
     const message = "settings-file fetch (contents) is not implemented in this phase";
     return { response: violationResponse(message), violation: message };
   }
@@ -730,16 +751,24 @@ export function runPipeline(
     method: string;
     rawPath: string;
     query: Record<string, string>;
+    rawQuery: string;
     headers: Headers;
     body: unknown;
   },
   options: PipelineOptions,
 ): PipelineResult {
   const { scenario, state } = options;
+  // The logged pathname has the GHES prefix stripped when the scenario opts
+  // in; when the prefix is required but missing, there is nothing to strip, so
+  // the raw path is logged with the resulting violation.
+  const strippedForLog =
+    options.basePrefix && request.rawPath.startsWith(options.basePrefix)
+      ? request.rawPath.slice(options.basePrefix.length) || "/"
+      : request.rawPath;
   const baseLog: LoggedRequest = {
     method: request.method,
-    pathname: request.rawPath,
-    query: request.query,
+    pathname: strippedForLog,
+    query: request.rawQuery,
     body: request.body,
     status: 0,
   };
@@ -867,7 +896,11 @@ function applyCorruption(
   log: LoggedRequest,
 ): PipelineResult {
   if (mode === "invalid_json") {
-    return { response: { status: response.status, body: undefined }, log, raw: "{ this is not json" };
+    return {
+      response: { status: response.status, body: undefined },
+      log,
+      raw: "{ this is not json",
+    };
   }
   if (mode === "wrong_shape") {
     return { response: { status: response.status, body: 42 }, log };

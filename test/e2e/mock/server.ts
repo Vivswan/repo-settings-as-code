@@ -9,6 +9,7 @@
  * and violation logs the runner checks after the run.
  */
 
+import type { Scenario } from "../schema.js";
 import {
   assertHandlerCompleteness,
   type CorruptOption,
@@ -16,7 +17,6 @@ import {
   runPipeline,
 } from "./routes.js";
 import { buildState, type MockState } from "./state.js";
-import type { Scenario } from "../schema.js";
 
 /** Extra knobs beyond the scenario: the GHES prefix and the chaos directive. */
 export interface ServerOptions {
@@ -38,9 +38,16 @@ export interface MockHandle {
 /**
  * Start a mock server for one scenario. The state is materialized from the
  * scenario's live_state overlay; the server listens on port 0 (an OS-assigned
- * free port) so many scenarios can run concurrently without contention.
+ * free port) so many scenarios can run concurrently without contention. The
+ * returned `url` is the FULL base the runner points GITHUB_API_URL at,
+ * including the GHES prefix when the scenario opts into one - the runner
+ * appends nothing. Async so a future tier (a real subprocess-backed server)
+ * can await readiness without changing the signature.
  */
-export function startMockServer(scenario: Scenario, options: ServerOptions = {}): MockHandle {
+export async function startMockServer(
+  scenario: Scenario,
+  options: ServerOptions = {},
+): Promise<MockHandle> {
   // Fail loudly at construction if the handler table has drifted from the
   // section endpoint dictionary, before any request is served.
   assertHandlerCompleteness();
@@ -65,10 +72,17 @@ export function startMockServer(scenario: Scenario, options: ServerOptions = {})
           method: request.method,
           rawPath: url.pathname,
           query,
+          rawQuery: url.search.replace(/^\?/, ""),
           headers: request.headers,
           body,
         },
-        { scenario, state, basePrefix: options.basePrefix, corrupt: options.corrupt, corruptedKeys },
+        {
+          scenario,
+          state,
+          basePrefix: options.basePrefix,
+          corrupt: options.corrupt,
+          corruptedKeys,
+        },
       );
 
       requests.push(result.log);
@@ -91,8 +105,12 @@ export function startMockServer(scenario: Scenario, options: ServerOptions = {})
     },
   });
 
+  // The prefix is part of the base URL the client is pointed at, so every
+  // request the client makes carries it (which is exactly what the pipeline's
+  // prefix check expects).
+  const base = `http://localhost:${server.port}`;
   return {
-    url: `http://localhost:${server.port}`,
+    url: options.basePrefix ? `${base}${options.basePrefix}` : base,
     state,
     requests,
     violations,
