@@ -333,7 +333,12 @@ permissions on every target repository.
 
 To manage everything in one PAT: Administration, Issues, Environments,
 Pages, and Actions at write, plus Contents at read and (for org repos)
-the Members organization permission at read.
+the Members organization permission at read. The
+[pre-filled token form](https://github.com/settings/personal-access-tokens/new?name=repo-settings-as-code&description=Token+for+Vivswan%2Frepo-settings-as-code&administration=write&issues=write&environments=write&pages=write&actions=write&contents=read)
+starts you off with exactly those repository permissions; pick the
+resource owner and repositories, and add Members: read by hand when the
+owner is an organization (the form only offers organization permissions
+once one is selected).
 
 Three things worth knowing when a run fails on permissions:
 
