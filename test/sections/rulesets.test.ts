@@ -41,7 +41,7 @@ describe("rulesets", () => {
       "GET /repos/o/r/rulesets?per_page=100&page=1": {
         data: [{ id: 7, name: "legacy", source_type: "Repository" }],
       },
-    });
+    }).allowMutations("POST /repos/o/r/rulesets");
     const result = await rulesetsSection.run(ctx(api), [
       {
         name: "build-tags",
@@ -66,7 +66,7 @@ describe("rulesets", () => {
       "GET /repos/o/r/rulesets?per_page=100&page=1": {
         data: [{ id: 9, name: "main", source_type: "Repository" }],
       },
-    });
+    }).allowMutations("PUT /repos/o/r/rulesets/*");
     const result = await rulesetsSection.run(ctx(api), [
       { name: "main", target: "branch", rules: [{ type: "deletion" }] },
     ]);
@@ -77,7 +77,7 @@ describe("rulesets", () => {
   test("ruleset create defaults enforcement", async () => {
     const api = new MockApi({
       "GET /repos/o/r/rulesets?per_page=100&page=1": { data: [] },
-    });
+    }).allowMutations("POST /repos/o/r/rulesets");
     await rulesetsSection.run(ctx(api), [{ name: "x", target: "branch" }]);
     const payload = api.mutations()[0]?.payload as { enforcement?: string };
     expect(payload.enforcement).toBe("active");

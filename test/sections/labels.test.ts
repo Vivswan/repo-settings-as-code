@@ -18,7 +18,7 @@ describe("labels", () => {
   test("creates missing, updates drifted, deletes undeclared", async () => {
     const api = new MockApi({
       "GET /repos/o/r/labels?per_page=100&page=1": { data: liveLabels },
-    });
+    }).allowMutations("POST /repos/o/r/labels", "DELETE /repos/o/r/labels/*");
     const result = await labelsSection.run(ctx(api), [
       { name: "bug", color: "#D73A4A", description: "Something isn't working" },
       { name: "enhancement", color: "a2eeef" },
@@ -51,7 +51,7 @@ describe("labels", () => {
       "GET /repos/o/r/labels?per_page=100&page=1": {
         data: [{ name: "autorelease: pending", color: "ededed", description: "x" }],
       },
-    });
+    }).allowMutations("PATCH /repos/o/r/labels/*");
     await labelsSection.run(ctx(api), [
       { name: "autorelease: pending", color: "ffffff", description: "x" },
     ]);

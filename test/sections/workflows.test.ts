@@ -15,7 +15,9 @@ describe("workflows", () => {
   const route = "GET /repos/o/r/actions/workflows?per_page=100&page=1";
 
   test("enables and disables by live id, matching bare file names", async () => {
-    const api = new MockApi({ [route]: { data: liveWorkflows } });
+    const api = new MockApi({ [route]: { data: liveWorkflows } }).allowMutations(
+      "PUT /repos/o/r/actions/workflows/*",
+    );
     const result = await workflowsSection.run(ctx(api), [
       { path: "ci.yml", state: "disabled" },
       { path: ".github/workflows/old.yml", state: "active" },
@@ -89,7 +91,7 @@ describe("workflows", () => {
       "GET /repos/o/r/actions/workflows?per_page=100&page=2": {
         data: { total_count: 101, workflows: page2 },
       },
-    });
+    }).allowMutations("PUT /repos/o/r/actions/workflows/*");
     const result = await workflowsSection.run(ctx(api), [{ path: "tail.yml", state: "disabled" }]);
     expect(result.changes).toEqual(['disabled workflow ".github/workflows/tail.yml"']);
   });

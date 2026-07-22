@@ -27,7 +27,7 @@ describe("code_scanning_default_setup", () => {
   });
 
   test("apply PATCHes the declared payload verbatim", async () => {
-    const api = new MockApi({});
+    const api = new MockApi({}).allowMutations(`PATCH ${path}`);
     const result = await codeScanningDefaultSetupSection.run(ctx(api), {
       state: "configured",
       query_suite: "extended",

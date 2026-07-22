@@ -50,7 +50,7 @@ describe("runMulti", () => {
       // o/c: repo visible with readable contents, but has no settings file
       // (contents GET unrouted -> 404; the repo probe confirms Contents access)
       "GET /repos/o/c": { data: { permissions: { pull: true } } },
-    });
+    }).allowMutations("PATCH /repos/o/a");
     const { io, annotations } = captureIo();
     const { fatal, targets } = await runMulti(
       api,
@@ -64,7 +64,7 @@ describe("runMulti", () => {
   });
 
   test("defaults-file merges under a central per-repo file", async () => {
-    const api = new MockApi({});
+    const api = new MockApi({}).allowMutations("PATCH /repos/viv/api", "PATCH /repos/octo/web");
     const { io } = captureIo();
     const { fatal, targets } = await runMulti(
       api,
@@ -195,7 +195,7 @@ describe("runMulti under on-missing-permission: fail", () => {
       "GET /repos/o/d/labels?per_page=100&page=1": {
         error: { status: 403, message: "Forbidden", body: "" },
       },
-    });
+    }).allowMutations("PATCH /repos/o/a");
     const { io, annotations } = captureIo();
     const { fatal, targets } = await runMulti(api, cfg({ reposInput: "o/a, o/d" }), io);
     expect(fatal).toBeNull();

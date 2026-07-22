@@ -19,7 +19,12 @@ describe("normalizeTopics", () => {
 
 describe("repository", () => {
   test("splits specials onto their endpoints", async () => {
-    const api = new MockApi({});
+    const api = new MockApi({}).allowMutations(
+      "PATCH /repos/o/r",
+      "PUT /repos/o/r/topics",
+      "PUT /repos/o/r/vulnerability-alerts",
+      "DELETE /repos/o/r/automated-security-fixes",
+    );
     await repositorySection.run(ctx(api), {
       description: "d",
       topics: "A, b",
@@ -48,7 +53,10 @@ describe("repository", () => {
   });
 
   test("private vulnerability reporting toggles its own endpoint", async () => {
-    const api = new MockApi({});
+    const api = new MockApi({}).allowMutations(
+      "PUT /repos/o/r/private-vulnerability-reporting",
+      "DELETE /repos/o/r/private-vulnerability-reporting",
+    );
     const on = await repositorySection.run(ctx(api), {
       enable_private_vulnerability_reporting: true,
     });

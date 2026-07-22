@@ -43,7 +43,9 @@ describe("run (legacy single-repo regression)", () => {
   test("apply mode patches the declared keys and exits 0", async () => {
     setEnv();
     process.env.INPUT_MODE = "apply";
-    const api = new MockApi({ "GET /repos/o/r": { data: { has_wiki: true } } });
+    const api = new MockApi({ "GET /repos/o/r": { data: { has_wiki: true } } }).allowMutations(
+      "PATCH /repos/o/r",
+    );
     expect(await run({ api: api })).toBe(0);
     expect(api.mutations()).toEqual([
       { method: "PATCH", path: "/repos/o/r", payload: { has_wiki: false } },
