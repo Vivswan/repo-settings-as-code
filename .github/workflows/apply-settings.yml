@@ -38,7 +38,7 @@ jobs:
           if [ -n "$PAT" ]; then
             echo "proceed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice::APPLY_SETTING_TOKEN is not set; self-apply skipped. Add the secret (fine-grained PAT with Administration and Issues read/write on this repo) to enable it."
+            echo "::notice::APPLY_SETTING_TOKEN is not set; self-apply skipped. Add a fine-grained PAT secret to enable it; the run names the exact per-section permissions to grant if any are missing."
             echo "proceed=false" >> "$GITHUB_OUTPUT"
           fi
 

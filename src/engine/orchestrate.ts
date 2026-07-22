@@ -8,7 +8,7 @@
 
 import type { GithubClient } from "../github/api.js";
 import type { Io } from "../io.js";
-import { SECTION_KEYS, type SettingsFile } from "../schema.js";
+import { type MustBeNever, SECTION_KEYS, type SettingsFile } from "../schema.js";
 import { PermissionDenied, type SectionContext, type SectionResult } from "../sections/contract.js";
 import { SECTIONS } from "../sections/registry.js";
 import { validateSectionShapes } from "./validate.js";
@@ -49,7 +49,6 @@ export const REPO_RESULTS = [
 ] as const satisfies readonly RepoResult[];
 
 /** Compile-time lockstep: a RepoResult value missing from REPO_RESULTS fails here. */
-type MustBeNever<T extends never> = T;
 type _UnlistedResult = MustBeNever<Exclude<RepoResult, (typeof REPO_RESULTS)[number]>>;
 
 export interface RepoRunResult {

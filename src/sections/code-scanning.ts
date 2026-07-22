@@ -36,6 +36,7 @@ const ENDPOINTS = {
 
 export const codeScanningDefaultSetupSection: SectionModule<"code_scanning_default_setup"> = {
   key: "code_scanning_default_setup",
+  deletesUndeclared: "untouched",
   permission,
   grant: grantFor(
     permission,

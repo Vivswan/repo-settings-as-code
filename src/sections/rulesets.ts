@@ -83,6 +83,7 @@ const ENDPOINTS = {
 
 export const rulesetsSection: SectionModule<"rulesets"> = {
   key: "rulesets",
+  deletesUndeclared: "keeps",
   permission,
   grant: grantFor(permission),
   endpoints: ENDPOINTS,

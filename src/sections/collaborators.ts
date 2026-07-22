@@ -16,7 +16,7 @@ import {
   type SectionPermission,
   type SectionResult,
 } from "./contract.js";
-import { roleForPermission } from "./roles.js";
+import { DEFAULT_ROLE, roleForPermission } from "./roles.js";
 
 interface LiveCollaborator {
   login: string;
@@ -43,6 +43,7 @@ const ENDPOINTS = {
 
 export const collaboratorsSection: SectionModule<"collaborators"> = {
   key: "collaborators",
+  deletesUndeclared: "deletes",
   permission,
   grant: grantFor(permission),
   endpoints: ENDPOINTS,
@@ -65,7 +66,7 @@ export const collaboratorsSection: SectionModule<"collaborators"> = {
     for (const collaborator of desired) {
       const login = collaborator.username.toLowerCase();
       declared.add(login);
-      const permission = collaborator.permission ?? "push";
+      const permission = collaborator.permission ?? DEFAULT_ROLE;
       const existing = liveByLogin.get(login);
       const wantRole = roleForPermission(permission);
       if (existing && (existing.role_name ?? "") === wantRole) {

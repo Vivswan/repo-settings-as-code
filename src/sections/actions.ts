@@ -61,6 +61,7 @@ const ENDPOINTS = {
 
 export const actionsSection: SectionModule<"actions"> = {
   key: "actions",
+  deletesUndeclared: "untouched",
   permission,
   grant: grantFor(permission),
   endpoints: ENDPOINTS,

@@ -16,7 +16,7 @@ import {
   type SectionPermission,
   type SectionResult,
 } from "./contract.js";
-import { roleForPermission } from "./roles.js";
+import { DEFAULT_ROLE, roleForPermission } from "./roles.js";
 
 const permission: SectionPermission = { repo: ["administration"], org: "members" };
 
@@ -39,6 +39,7 @@ const ENDPOINTS = {
 
 export const teamsSection: SectionModule<"teams"> = {
   key: "teams",
+  deletesUndeclared: "untouched",
   permission,
   grant: grantFor(permission),
   endpoints: ENDPOINTS,
@@ -63,7 +64,7 @@ export const teamsSection: SectionModule<"teams"> = {
       return result;
     }
     for (const team of desired) {
-      const permission = team.permission ?? "push";
+      const permission = team.permission ?? DEFAULT_ROLE;
       if (ctx.check) {
         // The repository media type makes this endpoint return the repo
         // object (with role_name) instead of 204.

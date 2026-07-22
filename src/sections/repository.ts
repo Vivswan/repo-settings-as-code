@@ -132,10 +132,17 @@ const SECURITY_TOGGLES = [
   },
 ] satisfies readonly SecurityToggle[];
 
-const SPECIAL_KEYS = new Set(["topics", ...SECURITY_TOGGLES.map((toggle) => toggle.key)]);
+/**
+ * The keys the repository section handles specially instead of sending them
+ * through the base PATCH: `topics` (its own PUT) and the security toggles
+ * (each a PUT/DELETE sub-endpoint). Exported as the single source the
+ * README's repository special-keys documentation is pinned against.
+ */
+export const SPECIAL_KEYS = new Set(["topics", ...SECURITY_TOGGLES.map((toggle) => toggle.key)]);
 
 export const repositorySection: SectionModule<"repository"> = {
   key: "repository",
+  deletesUndeclared: "untouched",
   permission,
   grant: grantFor(permission),
   endpoints: ENDPOINTS,

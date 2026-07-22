@@ -5,7 +5,7 @@
  */
 
 import type { components } from "@octokit/openapi-types";
-import type { GithubClient } from "../github/api.js";
+import { type GithubClient, isPermissionError, RERUN_ADVICE } from "../github/api.js";
 import { paginate } from "../github/paginate.js";
 
 type DiscoveredRepo = Pick<
@@ -18,6 +18,14 @@ export const VISIBILITY_FILTERS = ["all", "public", "private", "internal"] as co
 export const ARCHIVED_FILTERS = ["skip", "include", "only"] as const;
 export const FORKS_FILTERS = ["include", "exclude", "only"] as const;
 export const AFFILIATIONS = ["owner", "collaborator", "organization_member"] as const;
+
+/**
+ * The filter reason tag for a repo skipped because it is archived. Shared by
+ * the discovery rule that emits it and formatSkipNotice, which special-cases
+ * it for the unarchive-to-manage prose - a literal in one place and not the
+ * other would silently drop that guidance.
+ */
+export const ARCHIVED_REASON = "archived";
 
 /** Filters applied to repos: "*" discovery only, never to explicit targets. */
 export interface DiscoveryFilters {
@@ -75,8 +83,6 @@ export async function discoverRepos(
   const wrap = (message: string, advice: string): { error: string } => ({
     error: `cannot discover repositories for repos: "*": ${message}. ${advice}`,
   });
-  const RERUN_ADVICE =
-    "This is not a permission problem; re-run the workflow, and retry later if it persists";
   let page: Awaited<ReturnType<typeof paginate>>;
   try {
     page = await paginate(api, path);
@@ -86,9 +92,12 @@ export async function discoverRepos(
   }
   if ("error" in page) {
     const cause = `GET ${path} failed: ${page.error.status} ${page.error.message}`;
-    // The PAT advice fits denials only; transient failures need re-run
-    // advice instead, or an operator abandons "*" discovery for nothing.
-    if ([401, 403, 404].includes(page.error.status)) {
+    // The PAT advice fits genuine denials only. A rate-limit 403 is NOT a
+    // permission problem (isPermissionError excludes it), so it must fall
+    // through to RERUN_ADVICE instead of telling the operator to swap tokens
+    // and abandon "*" discovery for nothing. 401 is an invalid/expired token,
+    // which the same PAT advice covers.
+    if (isPermissionError(page.error) || page.error.status === 401) {
       return wrap(
         cause,
         `Discovery needs a user PAT; the workflow GITHUB_TOKEN and GitHub App installation tokens cannot enumerate a user's repositories. List the target repositories explicitly in the "repos" input`,
@@ -118,7 +127,7 @@ export async function discoverRepos(
     },
     (repo) => {
       if (filters.archived === "skip" && repo.archived) {
-        return "archived";
+        return ARCHIVED_REASON;
       }
       if (filters.archived === "only" && !repo.archived) {
         return "archived=only";
@@ -183,7 +192,7 @@ export function formatSkipNotice(group: { reason: string; slugs: string[] }): st
   const shown = group.slugs.slice(0, 20).join(", ");
   const more = group.slugs.length > 20 ? `, and ${group.slugs.length - 20} more` : "";
   const count = `${group.slugs.length} ${group.slugs.length === 1 ? "repository" : "repositories"}`;
-  if (group.reason === "archived") {
+  if (group.reason === ARCHIVED_REASON) {
     return `repos: "*" discovery skipped ${count} because settings writes fail on archived repositories; unarchive them to manage them: ${shown}${more}`;
   }
   return `repos: "*" discovery skipped ${count} by ${group.reason}: ${shown}${more}`;

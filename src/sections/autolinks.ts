@@ -37,6 +37,7 @@ const ENDPOINTS = {
 
 export const autolinksSection: SectionModule<"autolinks"> = {
   key: "autolinks",
+  deletesUndeclared: "deletes",
   permission,
   grant: grantFor(permission),
   endpoints: ENDPOINTS,

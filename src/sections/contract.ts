@@ -272,6 +272,20 @@ export interface SectionMeta<K extends SectionKey = SectionKey> {
    * derivation iterate Object.values(...).
    */
   endpoints: Readonly<Record<string, EndpointDecl>>;
+  /**
+   * What this section does to live resources it does NOT declare, the single
+   * source the README Sections table and COVERAGE derive their deletion
+   * claims from:
+   * - "deletes": the section lists live resources and DELETES undeclared ones
+   *   (labels, autolinks, collaborators, though the owner is always exempt).
+   * - "keeps": the section lists live resources but KEEPS undeclared ones,
+   *   surfacing each as a note (rulesets, milestones, since removing them stays
+   *   a human action).
+   * - "untouched": the section never enumerates sibling resources, so an
+   *   undeclared one is simply never seen (repository, branches, environments,
+   *   actions, workflows, pages, code_scanning_default_setup, teams).
+   */
+  deletesUndeclared: "deletes" | "keeps" | "untouched";
 }
 
 /**

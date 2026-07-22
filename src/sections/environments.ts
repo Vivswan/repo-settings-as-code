@@ -33,6 +33,7 @@ const ENDPOINTS = {
 
 export const environmentsSection: SectionModule<"environments"> = {
   key: "environments",
+  deletesUndeclared: "untouched",
   permission,
   grant: grantFor(permission),
   endpoints: ENDPOINTS,

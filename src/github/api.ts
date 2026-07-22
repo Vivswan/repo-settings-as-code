@@ -19,6 +19,16 @@ export interface ApiError {
 }
 
 /**
+ * The advice appended to a transient (non-permission) API failure: a network
+ * blip or a 5xx that survived the retries. The single source shared by the
+ * three transient-error builders (discovery's paginate failure and its
+ * non-permission status branch, plus multi.ts's remote-file read failure), so
+ * the "not a permission problem" wording cannot drift between them.
+ */
+export const RERUN_ADVICE =
+  "This is not a permission problem; re-run the workflow, and retry later if it persists";
+
+/**
  * Pinned X-GitHub-Api-Version. The single source for the header default
  * here, the action.yml `api-version` default, and the inputs fallback; the
  * action-yml contract test asserts the three stay equal.

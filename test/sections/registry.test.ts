@@ -225,6 +225,7 @@ describe("section endpoints", () => {
       permission: { repo: ["administration"] },
       grant: "grant",
       endpoints: {},
+      deletesUndeclared: "untouched",
     };
     // No override -> the section's permission.
     expect(
@@ -445,6 +446,7 @@ describe("probeAbsent tolerance derivation", () => {
     permission: { repo: ["administration"] },
     grant: "grant",
     endpoints: {},
+    deletesUndeclared: "untouched",
   };
   const ctxWith = (status: number): SectionContext => ({
     api: {

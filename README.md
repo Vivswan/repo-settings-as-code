@@ -2,7 +2,7 @@
 
 Apply declarative repository settings from `.github/settings.yml`: a loud,
 stateless replacement for the [Probot Settings app](https://github.com/repository-settings/app)
-that also manages [rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets) (branch and tag). Every apply is a visible
+that also manages [rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets) (branch, tag, and push). Every apply is a visible
 workflow run that fails with the API's error message; nothing happens
 silently.
 
@@ -202,19 +202,19 @@ the table below) on every target.
 
 | Section | Endpoints | Notes |
 |---|---|---|
-| `repository` | PATCH repo, PUT topics, vulnerability-alerts, automated-security-fixes, private-vulnerability-reporting | Probot schema incl. `topics` as string or list; `enable_private_vulnerability_reporting` toggle |
-| `labels` | labels CRUD | deletes undeclared |
-| `rulesets` | repo rulesets CRUD | branch AND tag targets; short ref names auto-prefixed (`staging` -> `refs/heads/staging`); `~DEFAULT_BRANCH` passes through |
-| `branches` | classic branch protection | `protection: null` removes protection; undeclared branches untouched |
-| `environments` | PUT environments | reviewers, wait timer, branch policies; undeclared environments untouched |
+| `repository` | PATCH repo, PUT topics, vulnerability-alerts, automated-security-fixes, private-vulnerability-reporting | Probot schema incl. `topics` as string or list; `enable_private_vulnerability_reporting` toggle; declared fields only, siblings undeclared untouched |
+| `labels` | labels CRUD | upsert by name (rename via `new_name`); undeclared deleted |
+| `rulesets` | repo rulesets CRUD | branch, tag, and push targets; short ref names auto-prefixed (`staging` -> `refs/heads/staging`); `~DEFAULT_BRANCH` passes through; undeclared kept (notes only) |
+| `branches` | classic branch protection | `protection: null` removes protection; undeclared untouched |
+| `environments` | PUT environments | reviewers, wait timer, branch policies; undeclared untouched |
 | `autolinks` | autolinks CRUD | immutable upstream, so changed entries are replaced; undeclared deleted |
-| `actions` | actions permissions + selected-actions + workflow token + access level | `enabled`, `allowed_actions`, `selected_actions`, `default_workflow_permissions`, `can_approve_pull_request_reviews`, `access_level` (private repos only) |
-| `workflows` | list workflows, enable/disable | `{path, state: active or disabled}`; bare file names match `.github/workflows/`; undeclared workflows untouched |
-| `pages` | POST/PUT/DELETE pages | `build_type: workflow` or `legacy` + source, `cname`, `https_enforced`; `pages: null` disables the site |
-| `code_scanning_default_setup` | code scanning default setup | `state`, `query_suite`, `languages` (compared as a set), and future PATCH fields; needs Advanced Security on private repos |
-| `collaborators` | direct collaborators | invitations for new users; undeclared direct collaborators removed (owner never touched) |
-| `teams` | org team repo permissions | skipped with a notice on personal accounts; undeclared team access untouched |
-| `milestones` | milestones | upsert by title, never deletes |
+| `actions` | actions permissions + selected-actions + workflow token + access level | `enabled`, `allowed_actions`, `selected_actions`, `default_workflow_permissions`, `can_approve_pull_request_reviews`, `access_level` (private repos only); undeclared untouched |
+| `workflows` | list workflows, enable/disable | `{path, state: active or disabled}`; bare file names match `.github/workflows/`; undeclared untouched |
+| `pages` | POST/PUT/DELETE pages | `build_type: workflow` or `legacy` + source, `cname`, `https_enforced`; `pages: null` disables the site; undeclared untouched |
+| `code_scanning_default_setup` | code scanning default setup | `state`, `query_suite`, `languages` (compared as a set), and future PATCH fields; needs Advanced Security on private repos; undeclared untouched |
+| `collaborators` | direct collaborators | invitations for new users; undeclared deleted (owner never touched) |
+| `teams` | org team repo permissions | skipped with a notice on personal accounts; undeclared untouched |
+| `milestones` | milestones | upsert by title; undeclared kept (may hold issues) |
 
 ## Example settings.yml
 

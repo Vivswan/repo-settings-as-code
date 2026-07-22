@@ -16,7 +16,7 @@ import {
 } from "../discovery/discover.js";
 import { SLUG_RE } from "../discovery/targets.js";
 import { DEFAULT_API_VERSION } from "../github/api.js";
-import { SECTION_KEYS } from "../schema.js";
+import { type MustBeNever, SECTION_KEYS } from "../schema.js";
 
 /**
  * Default settings-file path, and the sentinel the multi-repo guard
@@ -65,8 +65,28 @@ export function input(name: (typeof INPUT_NAMES)[number]): string {
   return core.getInput(name);
 }
 
+/**
+ * Every discovery-filter input name, the single source both the FilterInput
+ * type and the discoveryFiltersSet scan derive from. `satisfies readonly
+ * (keyof DiscoveryFilters)[]` pins each entry to a real filter field, and the
+ * MustBeNever check below fails compilation if a DiscoveryFilters field is
+ * ever added without a matching input name here - the same exhaustiveness
+ * idiom SECTION_KEYS uses in schema.ts.
+ */
+export const FILTER_INPUTS = [
+  "visibility",
+  "archived",
+  "forks",
+  "exclude",
+  "topics",
+  "affiliation",
+] as const satisfies readonly (keyof DiscoveryFilters)[];
+
 /** Read a discovery filter input, whose names are a subset of INPUT_NAMES. */
-type FilterInput = "visibility" | "archived" | "forks" | "exclude" | "topics" | "affiliation";
+type FilterInput = (typeof FILTER_INPUTS)[number];
+
+/** Compile-time lockstep: a DiscoveryFilters field missing from FILTER_INPUTS fails here. */
+type _UnlistedFilter = MustBeNever<Exclude<keyof DiscoveryFilters, FilterInput>>;
 
 /**
  * Read an enum-valued input against the allowed list its type derives
@@ -172,14 +192,6 @@ export function parseConfig(): { config: RunConfig } | { error: string } {
     apiVersion,
   };
 
-  const FILTER_INPUTS: FilterInput[] = [
-    "visibility",
-    "archived",
-    "forks",
-    "exclude",
-    "topics",
-    "affiliation",
-  ];
   const discoveryFiltersSet = FILTER_INPUTS.filter((name) => input(name) !== "");
   const list = (name: FilterInput): string[] =>
     input(name)

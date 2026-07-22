@@ -1,9 +1,10 @@
 /**
- * Types for the settings file: a superset of the Probot Settings app schema
- * (https://github.com/repository-settings/app) plus `rulesets`, `autolinks`,
- * `actions`, `workflows`, `pages`, and `code_scanning_default_setup`. Only
- * DECLARED keys are ever applied or compared - omitting a key means "leave
- * it alone".
+ * Types for the settings file. The sections in PROBOT_PARITY_KEYS keep the
+ * Probot Settings app schema (https://github.com/repository-settings/app), so
+ * an existing Probot config applies to them unchanged; the remaining sections
+ * (rulesets, autolinks, actions, workflows, pages, code_scanning_default_setup)
+ * are additions. Only DECLARED keys are ever applied or compared, so omitting a
+ * key means "leave it alone".
  */
 
 /** One settings.yml document: every top-level section is optional. */
@@ -202,6 +203,28 @@ export const SECTION_KEYS = [
 /** A recognized top-level section name. */
 export type SectionKey = (typeof SECTION_KEYS)[number];
 
+/**
+ * The sections whose settings.yml schema matches the Probot Settings app, so
+ * an existing Probot config applies to them as-is. The single source the
+ * README's "Migrating from the Probot Settings app" paragraph is pinned
+ * against. `satisfies` keeps every entry a real section key.
+ */
+export const PROBOT_PARITY_KEYS = [
+  "repository",
+  "labels",
+  "branches",
+  "collaborators",
+  "teams",
+  "milestones",
+] as const satisfies readonly SectionKey[];
+
+/**
+ * Compile-time exhaustiveness helper: `MustBeNever<Exclude<Union, Covered>>`
+ * fails to compile when the Union has a member the Covered set omits. The one
+ * definition the exhaustiveness checks in this file, orchestrate.ts, and
+ * inputs.ts all use, so the idiom cannot drift between them.
+ */
+export type MustBeNever<T extends never> = T;
+
 /** Compile-time lockstep: a SettingsFile property missing from SECTION_KEYS fails here. */
-type MustBeNever<T extends never> = T;
 type _UnlistedSection = MustBeNever<Exclude<keyof SettingsFile, SectionKey>>;

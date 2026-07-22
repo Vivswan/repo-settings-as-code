@@ -11,7 +11,7 @@ import { parseReposInput } from "../discovery/repos-input.js";
 import { dedupeTargets, type Target } from "../discovery/targets.js";
 import { applyDefaults } from "../engine/merge.js";
 import { type RepoRunResult, runForRepo, validateSettingsDoc } from "../engine/orchestrate.js";
-import { type GithubClient, isPermissionError } from "../github/api.js";
+import { type GithubClient, isPermissionError, RERUN_ADVICE } from "../github/api.js";
 import { getRepoFile } from "../github/repo-file.js";
 import type { Io } from "../io.js";
 import type { SettingsFile } from "../schema.js";
@@ -178,7 +178,7 @@ export async function runMulti(
           failTarget(
             isPermissionError(file.error)
               ? `the token was denied reading ${sourceLabel}: ${file.error.status} ${file.error.message}. Grant the PAT access to this repository (Contents: read), or remove it from the "repos" input`
-              : `reading ${sourceLabel} failed: ${file.error.status} ${file.error.message}. This is not a permission problem; re-run the workflow, and retry later if it persists`,
+              : `reading ${sourceLabel} failed: ${file.error.status} ${file.error.message}. ${RERUN_ADVICE}`,
           );
           continue;
         }

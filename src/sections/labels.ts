@@ -56,6 +56,7 @@ const ENDPOINTS = {
 
 export const labelsSection: SectionModule<"labels"> = {
   key: "labels",
+  deletesUndeclared: "deletes",
   permission,
   grant: grantFor(permission),
   endpoints: ENDPOINTS,
