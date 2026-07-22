@@ -1,4 +1,4 @@
-# repo-settings-as-code
+# Repo Settings as Code
 
 Apply declarative repository settings from `.github/settings.yml`: a loud,
 stateless replacement for the [Probot Settings app](https://github.com/repository-settings/app)
@@ -106,6 +106,9 @@ field GitHub ships tomorrow must never read as an error (see
 - Stateless, declared-keys-only: a key you do not declare is never
   touched or compared. There is no state file; resources are matched by
   their natural names.
+- Apply is convergent: re-running preserves the declared state (some
+  sections diff first and skip converged writes, others send idempotent
+  full-payload writes), and a check right after an apply reports clean.
 - Labels: declared labels are upserted (rename via `new_name`);
   undeclared labels are DELETED (Probot parity), loudly.
 - Rulesets: upserted by name with the full payload; undeclared
