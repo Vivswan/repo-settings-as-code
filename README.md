@@ -65,6 +65,22 @@ Runtime dependencies (@octokit/rest with the retry and throttling plugins,
 @actions/core, zod, yaml) are compiled into that single bundle. Run
 `bun run check` for lint + typecheck + tests + generated-artifact freshness.
 
+The end-to-end tests run the committed bundle as a real subprocess against a
+mock GitHub API, so they exercise the same `lib/index.js` a user ships, not the
+TypeScript source. `bun run test:e2e` runs the curated scenario corpus, and
+`bun run fuzz` runs seeded property fuzzing: it generates random scenarios and
+checks each run's outcome against an oracle that predicts the outcome class from
+the token mask, policy, and mode. The fuzzer is deterministic. It prints a
+master seed and a per-iteration seed for each run; a whole run reproduces with
+`FUZZ_SEED=<masterSeed> bun run fuzz`, and a single failing iteration replays
+with `bun test/e2e/fuzz.ts --seed <iterationSeed> --iterations 1`. The mock
+serves the section endpoints plus the handful of core routes the action calls
+(the repo fetch, the settings-file contents read, and `repos: "*"` discovery),
+so a request that matches no registered section or core route fails loudly
+rather than returning a made-up response. PR CI runs a diff-aware subset, scoped to the sections a pull request
+changed, and a nightly workflow runs the full fuzz and files an issue labeled
+`e2e-fuzz` on a scenario or fuzz failure with a replay command.
+
 ## Debugging
 
 Every API call the action makes is traced as a debug line: method, path,
