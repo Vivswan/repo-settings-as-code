@@ -32,6 +32,8 @@ silently.
    the drift report lists everything an apply would delete, and nothing is
    written.
 
+   <!-- x-release-please-start-version -->
+
    ```yaml
    # .github/workflows/settings.yml
    name: Apply Settings
@@ -49,10 +51,12 @@ silently.
        runs-on: ubuntu-latest
        steps:
          - uses: actions/checkout@v7
-         - uses: Vivswan/repo-settings-as-code@v1
+         - uses: Vivswan/repo-settings-as-code@v0.0.0
            with:
              token: ${{ secrets.ADMIN_TOKEN }}
    ```
+
+   <!-- x-release-please-end -->
 
 5. Run it once from the Actions tab (workflow_dispatch), review the run,
    and drop `mode: check` if you set it. From then on every push that
@@ -261,10 +265,12 @@ per-repo results as JSON.
 token needs the same per-section permissions (see the
 [Sections](#sections) table) on every target.
 
+<!-- x-release-please-start-version -->
+
 ```yaml
 # One admin repo managing the fleet
 - uses: actions/checkout@v7
-- uses: Vivswan/repo-settings-as-code@v1
+- uses: Vivswan/repo-settings-as-code@v0.0.0
   with:
     token: ${{ secrets.FLEET_TOKEN }}
     repos-dir: .github/repos
@@ -273,6 +279,8 @@ token needs the same per-section permissions (see the
       other-org/service-a
       other-org/service-b
 ```
+
+<!-- x-release-please-end -->
 
 ## Token permissions
 

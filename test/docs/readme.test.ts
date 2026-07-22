@@ -102,25 +102,29 @@ describe("README example settings.yml blocks", () => {
 });
 
 describe("README version pins", () => {
-  test("every uses: pin names the current release major", () => {
+  test("every uses: pin names the current release version", () => {
     const manifest = JSON.parse(
       readFileSync(join(ROOT, ".release-please-manifest.json"), "utf8"),
     ) as Record<string, string>;
     const config = JSON.parse(readFileSync(join(ROOT, "release-please-config.json"), "utf8")) as {
       packages: Record<string, { "initial-version"?: string }>;
     };
-    // Before the first release the manifest still reads 0.0.0; the expected
-    // major then comes from the configured initial-version. On a release PR
-    // the manifest carries the new version, so a major bump fails this test
-    // until the README's uses: pins are updated with it.
+    // The uses: pins sit inside x-release-please-start-version blocks, so
+    // every release PR rewrites them together with the manifest; this test is
+    // the tripwire for the markers rotting away. Before the first release the
+    // manifest still reads 0.0.0 and the expected version is the configured
+    // initial-version.
     const released = manifest["."] ?? "";
     const version =
       released === "0.0.0" ? (config.packages["."]?.["initial-version"] ?? released) : released;
-    const major = version.split(".")[0];
-    const pins = [...readme.matchAll(/repo-settings-as-code@v(\d+)/g)].map((m) => m[1]);
+    const pins = [...readme.matchAll(/uses: Vivswan\/repo-settings-as-code@(\S+)/g)].map(
+      (m) => m[1],
+    );
     expect(pins.length).toBeGreaterThan(0);
     for (const pin of pins) {
-      expect(pin, `README pins @v${pin}, but the current release major is v${major}`).toBe(major);
+      expect(pin, `README pins @${pin}, but the current release is v${version}`).toBe(
+        `v${version}`,
+      );
     }
   });
 });
