@@ -2,7 +2,8 @@ name: E2E Nightly
 
 on:
   schedule:
-    - cron: "17 3 * * *"
+    # 5:28 am EST, randomly chosen.
+    - cron: "28 10 * * *"
   workflow_dispatch:
     inputs:
       seed:
@@ -18,6 +19,7 @@ on:
 permissions:
   contents: read
   issues: write
+  actions: write
 
 concurrency:
   group: e2e-nightly
@@ -77,8 +79,17 @@ jobs:
           if-no-files-found: ignore
 
       - name: File an issue on failure
+        id: file-issue
         if: failure()
         env:
           GH_TOKEN: ${{ github.token }}
           FUZZ_SEED: ${{ steps.fuzz.outputs.seed }}
         run: bun .github/scripts/file-fuzz-issue.ts
+
+      # A GITHUB_TOKEN-created issue fires no triggers, so dispatch auto-assign.
+      - name: Trigger auto-assign for the filed issue
+        if: failure() && steps.file-issue.outputs.issue-number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ steps.file-issue.outputs.issue-number }}
+        run: gh workflow run auto-assign.yml -f "issue=$ISSUE_NUMBER" || echo "::warning::could not dispatch auto-assign.yml"

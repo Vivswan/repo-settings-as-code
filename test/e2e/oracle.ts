@@ -39,6 +39,7 @@ function repoMaskKeys(permission: SectionPermission): MaskKey[] {
 export function sectionGrade(
   key: SectionKey,
   mask: Partial<Record<MaskKey, MaskGrade>>,
+  orgMask: Partial<Record<MaskKey, MaskGrade>> = mask,
 ): MaskGrade {
   const permission = PERMISSION_BY_KEY[key];
   let repoGrade: MaskGrade = "none";
@@ -58,7 +59,14 @@ export function sectionGrade(
   // intact (org_members write is NOT required to write teams). Capping the grade
   // by org_members would wrongly downgrade an administration-write + members-read
   // token to read-grade.
-  const orgGrade = mask.org_members ?? "write";
+  //
+  // The org_members gate reads from `orgMask`, which differs from `mask` ONLY in
+  // multi-repo mode: the mock grades teams' org-scoped endpoints
+  // (PUT /orgs/{org}/teams/.../repos/{owner}/{repo}, which start with /orgs/ not
+  // /repos/) against the GLOBAL token mask, never the per-slug overlay. So a
+  // per-slug org_members:none does NOT gate teams; the global one does. In
+  // single-repo mode orgMask defaults to mask and this is a no-op.
+  const orgGrade = orgMask.org_members ?? "write";
   return orgGrade === "none" ? "none" : repoGrade;
 }
 
@@ -77,7 +85,7 @@ export interface SectionPrediction {
  * denial style, and its denial semantics. Mirrors the plan's rule table.
  */
 export function predictSection(key: SectionKey, meta: ScenarioMeta): SectionPrediction {
-  const grade = sectionGrade(key, meta.mask);
+  const grade = sectionGrade(key, meta.mask, meta.orgMask ?? meta.mask);
   const check = meta.mode === "check";
   const required = meta.requiredSections.includes(key);
   const semantics = DENIAL_SEMANTICS[key];

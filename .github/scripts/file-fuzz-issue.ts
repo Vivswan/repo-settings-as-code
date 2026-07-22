@@ -13,7 +13,7 @@
  * when a failure directory carries no seed of its own).
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const ROOT = join(import.meta.dir, "..", "..");
@@ -38,8 +38,11 @@ const MAX_BODY = 60_000;
  */
 const MAX_BLOCK_CHARS = 8_000;
 
+/** Runs a `gh` subcommand and returns stdout; throws on a non-zero exit. */
+export type GhRunner = (args: string[]) => Promise<string>;
+
 /** Run gh and return stdout; throws with gh's stderr on a non-zero exit. */
-async function gh(args: string[]): Promise<string> {
+const gh: GhRunner = async (args) => {
   const proc = Bun.spawn(["gh", ...args], { stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(),
@@ -50,7 +53,7 @@ async function gh(args: string[]): Promise<string> {
     throw new Error(`gh ${args.join(" ")} failed (${code}): ${stderr.trim()}`);
   }
   return stdout;
-}
+};
 
 /** The failing-scenario directories dumped under .artifacts, oldest first. */
 export function failureDirs(root: string): string[] {
@@ -151,7 +154,8 @@ export function buildBody(dirs: string[], env: NodeJS.ProcessEnv): string {
   }
 
   const url = runUrl(env);
-  const header = `Nightly e2e run on ${date} produced ${dirs.length} failing scenario(s).\n`;
+  // Count the artifact directories under .artifacts.
+  const header = `Nightly e2e run on ${date} produced ${dirs.length} failure artifact(s).\n`;
   const footer = url ? `\nRun: ${url}` : "";
   const artifactsNote =
     "\nThe full artifacts (scenario.yml, request trace, report) are attached to " +
@@ -160,7 +164,7 @@ export function buildBody(dirs: string[], env: NodeJS.ProcessEnv): string {
   // length is reserved up front so the running total stays a real character
   // budget whether or not it ends up shown. Padded for the count digits.
   const noticeReserve =
-    `\n${dirs.length} more failing scenario(s) omitted to stay under the GitHub body limit; see the attached artifacts.`
+    `\n${dirs.length} more failure artifact(s) omitted to stay under the GitHub body limit; see the attached artifacts.`
       .length;
 
   // Append per-scenario blocks while each fits the remaining budget; then stop
@@ -204,14 +208,14 @@ export function buildBody(dirs: string[], env: NodeJS.ProcessEnv): string {
   const omitted = dirs.length - shown;
   const truncation =
     omitted > 0
-      ? `\n${omitted} more failing scenario(s) omitted to stay under the GitHub body limit; see the attached artifacts.`
+      ? `\n${omitted} more failure artifact(s) omitted to stay under the GitHub body limit; see the attached artifacts.`
       : "";
   return `${header}\n${blocks.join("\n")}${truncation}${artifactsNote}${footer}`;
 }
 
 /** The number of the open issue carrying the label, or undefined when none. */
-async function openIssueNumber(): Promise<number | undefined> {
-  const json = await gh([
+async function openIssueNumber(run: GhRunner): Promise<number | undefined> {
+  const json = await run([
     "issue",
     "list",
     "--label",
@@ -227,9 +231,22 @@ async function openIssueNumber(): Promise<number | undefined> {
   return issues[0]?.number;
 }
 
-async function main(): Promise<number> {
+/** The trailing issue number from a `gh issue create` URL, or undefined. */
+export function issueNumberFromUrl(url: string): number | undefined {
+  const match = url.trim().match(/\/(\d+)\s*$/);
+  return match ? Number(match[1]) : undefined;
+}
+
+/**
+ * File the failure: comment on the open labeled issue if one exists, else create
+ * a new one. Assignment is left to the auto-assign workflow. Returns the issue
+ * number (existing or newly created) so the caller can dispatch auto-assign at
+ * it; undefined only if gh's create URL could not be parsed. `run` is injected
+ * so this is testable.
+ */
+export async function fileIssue(run: GhRunner, body: string): Promise<number | undefined> {
   // Idempotent: --force turns an existing-label create into a no-op.
-  await gh([
+  await run([
     "label",
     "create",
     LABEL,
@@ -240,16 +257,13 @@ async function main(): Promise<number> {
     "e2e fuzz failure",
   ]);
 
-  const dirs = failureDirs(ARTIFACTS);
-  const body = buildBody(dirs, process.env);
-
-  const existing = await openIssueNumber();
+  const existing = await openIssueNumber(run);
   if (existing !== undefined) {
-    await gh(["issue", "comment", String(existing), "--body", body]);
+    await run(["issue", "comment", String(existing), "--body", body]);
     console.log(`commented on existing #${existing}`);
-    return 0;
+    return existing;
   }
-  const url = await gh([
+  const url = await run([
     "issue",
     "create",
     "--label",
@@ -260,6 +274,17 @@ async function main(): Promise<number> {
     body,
   ]);
   console.log(`opened ${url.trim()}`);
+  return issueNumberFromUrl(url);
+}
+
+async function main(): Promise<number> {
+  const dirs = failureDirs(ARTIFACTS);
+  const body = buildBody(dirs, process.env);
+  const number = await fileIssue(gh, body);
+  const outputFile = process.env.GITHUB_OUTPUT;
+  if (number !== undefined && outputFile) {
+    appendFileSync(outputFile, `issue-number=${number}\n`);
+  }
   return 0;
 }
 

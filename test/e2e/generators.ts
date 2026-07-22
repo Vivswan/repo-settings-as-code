@@ -487,6 +487,14 @@ export interface ScenarioMeta {
   ownerKind: OwnerKind;
   denialStyle: DenialStyle;
   requiredSections: SectionKey[];
+  /**
+   * The GLOBAL token mask, distinct from `mask` (the effective per-slug mask)
+   * ONLY in multi-repo mode. teams' org-scoped endpoints are graded by the mock
+   * against this global mask's org_members, not the per-slug overlay, so the
+   * oracle uses it for the teams org gate. Absent (undefined) in single-repo
+   * mode, where the effective mask IS the global mask.
+   */
+  orgMask?: Partial<Record<MaskKey, MaskGrade>>;
 }
 
 /**
@@ -598,6 +606,11 @@ export function genMultiScenario(rng: Rng): { scenario: Scenario; meta: MultiSce
   const mode = rng.pick(["apply", "check"] as const);
   const policy = rng.pick(["fail", "warn"] as const);
   const denialStyle: DenialStyle = rng.pick(["fine_grained", 403] as const);
+  // The GLOBAL token mask for the run: empty here (no scenario-wide
+  // token_permissions), so every resource defaults to write. The mock grades
+  // teams' org-scoped endpoints against THIS mask, so each repo's oracle meta
+  // carries it as orgMask (see the teams org gate in sectionGrade).
+  const globalMask: Partial<Record<MaskKey, MaskGrade>> = {};
   // One repo (chosen up front) is missing its settings file, so it is skipped.
   const missingIndex = rng.int(count);
 
@@ -651,6 +664,11 @@ export function genMultiScenario(rng: Rng): { scenario: Scenario; meta: MultiSce
         ownerKind: "org",
         denialStyle,
         requiredSections: [],
+        // teams' org gate is graded by the mock against the GLOBAL mask, not this
+        // per-slug one; genMultiScenario sets no global token_permissions, so it
+        // is empty (every org_members defaults to write - teams is never gated by
+        // a per-slug org_members:none).
+        orgMask: globalMask,
       },
     });
   }

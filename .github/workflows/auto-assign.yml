@@ -4,6 +4,12 @@ name: Auto Assign
 
 on:
   workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number to assign to the owner (for issues whose creation fired no workflow)
+        required: false
+        type: string
+        default: ""
   issues:
     types: [opened]
   pull_request:
@@ -31,3 +37,4 @@ jobs:
     uses: Vivswan/repo-platform/.github/workflows/reusable-auto-assign.yml@main
     with:
       code_scanning: true
+      issue: ${{ inputs.issue || '' }}

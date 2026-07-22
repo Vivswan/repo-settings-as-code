@@ -17,6 +17,7 @@
  * independent predictDiscovery mirror).
  */
 
+import { rmSync } from "node:fs";
 import type { SectionKey } from "../../src/schema.js";
 import { genDiscoveryScenario, genMultiScenario, genScenario } from "./generators.js";
 import { predictDiscovery, predictMulti, predictOutcomes } from "./oracle.js";
@@ -464,6 +465,14 @@ async function main(): Promise<number> {
         break;
       }
     } else {
+      // The runner dumps an artifact whenever ITS expect check fails, and fuzz
+      // sets a placeholder expect.exit_code:0 - so a legitimately-exit-1
+      // iteration the ORACLE deems ok still leaves an artifact dir behind. Remove
+      // it here so .artifacts holds ONLY real fuzz failures and the nightly
+      // issue filer's count stays honest.
+      if (result.artifactDir) {
+        rmSync(result.artifactDir, { recursive: true, force: true });
+      }
       console.log(`  iter ${i} [${mode}] seed ${seed} ok`);
     }
   }

@@ -1233,8 +1233,7 @@ export function runPipeline(
       // resolve to that slug's state, so an unknown slug is the same violation
       // the repo-scoped branch raises (falling back to orgState would let a
       // buggy write silently mutate shared org state). Only the BARE org probe
-      // (no slug in the path, e.g. GET /orgs/{org}) uses orgState. Grading is
-      // always against the global mask (not per-slug).
+      // (no slug in the path, e.g. GET /orgs/{org}) uses orgState.
       if (slug && !repoState) {
         const message = `multi-repo request ${request.method} ${pathname} names no known target slug`;
         return {
@@ -1244,8 +1243,24 @@ export function runPipeline(
         };
       }
       state = repoState ?? options.multi.orgState;
-      mask = scenario.token_permissions ?? {};
       targetSlug = slug ?? "";
+      // HYBRID grading for a team-repo route: real GitHub treats administration
+      // as a REPOSITORY permission on the ADDRESSED repo (fine-grained PATs
+      // grant it per selected repo - adding a repo to a team needs admin on
+      // that repo), while org_members is org-wide. So the repo resources grade
+      // against the addressed slug's effective per-slug mask and org_members
+      // against the GLOBAL mask. This matches the oracle's orgMask model by
+      // construction. The bare org probe (no slug) has no repo resources and is
+      // permission-none anyway, so the global mask stands.
+      const global = scenario.token_permissions ?? {};
+      if (slug) {
+        mask = {
+          ...effectiveMask(global, options.multi.permissions.get(slug)),
+          org_members: global.org_members,
+        };
+      } else {
+        mask = global;
+      }
     }
   }
   if (!state) {

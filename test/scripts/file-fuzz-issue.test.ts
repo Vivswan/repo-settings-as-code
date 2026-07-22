@@ -14,7 +14,10 @@ import {
   buildBody,
   capChars,
   failureDirs,
+  fileIssue,
+  type GhRunner,
   head,
+  issueNumberFromUrl,
   replayCommand,
   runUrl,
   seedFrom,
@@ -145,11 +148,19 @@ describe("buildBody", () => {
 
   test("includes the report, scenario, run link, and artifacts note", () => {
     const body = buildBody(failureDirs(root), env);
-    expect(body).toContain("2 failing scenario(s)");
+    expect(body).toContain("2 failure artifact(s)");
     expect(body).toContain("- exit code 1 != 0");
     expect(body).toContain("```yaml");
     expect(body).toContain("Run: https://github.com/o/r/actions/runs/42");
     expect(body).toContain("e2e-artifacts");
+  });
+
+  test("counts artifact directories, phrased as artifacts not scenarios", () => {
+    // The header counts the artifact directories under .artifacts and phrases
+    // that as "failure artifact(s)", the honest name for what is counted.
+    const body = buildBody(failureDirs(root), env);
+    expect(body).toContain("failure artifact(s)");
+    expect(body).not.toContain("failing scenario(s)");
   });
 
   test("caps the body under the GitHub limit and says how many were omitted", () => {
@@ -191,5 +202,77 @@ describe("buildBody", () => {
     const body = buildBody([], env);
     expect(body).toContain("no failing-scenario artifact");
     expect(body).toContain("Run: https://github.com/o/r/actions/runs/42");
+  });
+});
+
+describe("fileIssue", () => {
+  /**
+   * A recording gh runner: captures every command and answers the issue-list
+   * query from `openNumber` (a number opens the comment path, undefined the
+   * create path).
+   */
+  function fakeGh(openNumber?: number): { run: GhRunner; calls: string[][] } {
+    const calls: string[][] = [];
+    const run: GhRunner = async (args) => {
+      calls.push(args);
+      if (args[0] === "issue" && args[1] === "list") {
+        return JSON.stringify(openNumber === undefined ? [] : [{ number: openNumber }]);
+      }
+      if (args[0] === "issue" && args[1] === "create") {
+        return "https://github.com/o/r/issues/7\n";
+      }
+      return "";
+    };
+    return { run, calls };
+  }
+
+  test("create path opens a labeled issue with the body", async () => {
+    const { run, calls } = fakeGh(undefined);
+    await fileIssue(run, "body");
+    const create = calls.find((c) => c[0] === "issue" && c[1] === "create");
+    expect(create).toBeDefined();
+    expect(create).toContain("--label");
+    expect(create?.[create.indexOf("--label") + 1]).toBe("e2e-fuzz");
+    expect(create?.[create.indexOf("--body") + 1]).toBe("body");
+  });
+
+  test("comment path comments on the existing issue, does not create a new one", async () => {
+    const { run, calls } = fakeGh(3);
+    await fileIssue(run, "body");
+    expect(calls.some((c) => c[0] === "issue" && c[1] === "comment" && c[2] === "3")).toBe(true);
+    expect(calls.some((c) => c[0] === "issue" && c[1] === "create")).toBe(false);
+  });
+
+  test("the filer performs no assignment on either path", async () => {
+    // Assignment policy lives in the auto-assign workflow, which the nightly
+    // dispatches after filing; the filer must never touch assignees.
+    for (const openNumber of [undefined, 3]) {
+      const { run, calls } = fakeGh(openNumber);
+      await fileIssue(run, "body");
+      const flat = calls.flat();
+      expect(flat).not.toContain("--assignee");
+      expect(flat).not.toContain("--add-assignee");
+      expect(calls.some((c) => c[0] === "issue" && c[1] === "edit")).toBe(false);
+    }
+  });
+
+  test("returns the created issue number (parsed from gh's create URL)", async () => {
+    const { run } = fakeGh(undefined); // fakeGh's create returns .../issues/7
+    expect(await fileIssue(run, "body")).toBe(7);
+  });
+
+  test("returns the existing issue number on the comment path", async () => {
+    const { run } = fakeGh(3);
+    expect(await fileIssue(run, "body")).toBe(3);
+  });
+});
+
+describe("issueNumberFromUrl", () => {
+  test("parses the trailing number from a gh issue URL", () => {
+    expect(issueNumberFromUrl("https://github.com/o/r/issues/42\n")).toBe(42);
+  });
+
+  test("returns undefined when the URL has no trailing number", () => {
+    expect(issueNumberFromUrl("not a url")).toBeUndefined();
   });
 });

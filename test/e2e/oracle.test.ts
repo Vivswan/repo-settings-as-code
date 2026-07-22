@@ -66,6 +66,22 @@ describe("sectionGrade", () => {
     expect(sectionGrade("teams", { administration: "read", org_members: "write" })).toBe("read");
     expect(sectionGrade("teams", { administration: "write", org_members: "write" })).toBe("write");
   });
+
+  test("teams: the org gate reads org_members from orgMask, not the per-slug mask", () => {
+    // Multi-repo regression (nightly seed 28401742): the mock grades teams'
+    // org-scoped grant endpoint against the GLOBAL mask, so a per-slug
+    // org_members:none must NOT gate teams when the global mask grants it. With
+    // an empty orgMask (org_members defaults to write) teams stays write-graded
+    // even though the per-slug mask says org_members:none.
+    expect(sectionGrade("teams", { administration: "write", org_members: "none" }, {})).toBe(
+      "write",
+    );
+    // And the orgMask's org_members:none DOES gate it (single-repo path: orgMask
+    // === mask), matching the read-gate rule above.
+    expect(sectionGrade("teams", { administration: "write" }, { org_members: "none" })).toBe(
+      "none",
+    );
+  });
 });
 
 describe("predictSection rules", () => {

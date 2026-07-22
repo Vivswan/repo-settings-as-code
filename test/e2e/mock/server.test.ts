@@ -1127,11 +1127,10 @@ describe("multi-repo mode", () => {
     expect(h.violations).toHaveLength(0);
   });
 
-  test("org endpoints grade against the GLOBAL mask, not a per-slug mask", async () => {
-    // svc-a denies administration per-slug, but the org probe (permission:
-    // none) and team-repo grading use the global mask - so a per-slug denial
-    // does not leak into the org route. Deny org_members globally to prove the
-    // team probe reads the global mask.
+  test("team-repo grading: org_members always grades against the GLOBAL mask", async () => {
+    // Hybrid grading: org_members is org-wide, so a per-slug org_members:write
+    // override must NOT loosen a global org_members:none. (The administration
+    // half - per-slug - is covered by the two tests below.)
     const h = await start(
       scenario({
         owner_kind: "org",
@@ -1145,12 +1144,74 @@ describe("multi-repo mode", () => {
         },
       }),
     );
-    // The team probe needs org_members read; the GLOBAL mask denies it, and the
-    // per-slug override must NOT apply to this org-level route.
     const res = await call(h, "GET", "/orgs/e2e-owner/teams/reviewers/repos/e2e-owner/svc-a");
     expect(res.status).toBe(404); // denied by global org_members: none
     const log = h.requests.find((r) => r.pathname.includes("/teams/reviewers/"));
     expect(log?.deniedBy).toBe("org_members");
+  });
+
+  test("team-repo grading: administration grades PER-SLUG (denied on A, allowed on B)", async () => {
+    // Hybrid grading: administration is a repository permission on the ADDRESSED
+    // repo. slug A denies it, slug B grants it; global org_members is write, so
+    // the team-repo call is denied on A and allowed on B - matching the oracle's
+    // orgMask model.
+    const h = await start(
+      scenario({
+        owner_kind: "org",
+        token_permissions: { org_members: "write" },
+        repos: {
+          "e2e-owner/svc-a": {
+            settings: {},
+            permissions: { administration: "none" },
+            live_state: { teams: { reviewers: { role_name: "write" } } },
+          },
+          "e2e-owner/svc-b": {
+            settings: {},
+            permissions: { administration: "write" },
+            live_state: { teams: { reviewers: { role_name: "write" } } },
+          },
+        },
+      }),
+    );
+    // svc-a: administration denied per-slug -> the team-repo read is denied.
+    const a = await call(h, "GET", "/orgs/e2e-owner/teams/reviewers/repos/e2e-owner/svc-a");
+    expect(a.status).toBe(404);
+    expect(h.requests.find((r) => r.pathname.endsWith("/repos/e2e-owner/svc-a"))?.deniedBy).toBe(
+      "administration",
+    );
+    // svc-b: administration granted per-slug -> allowed.
+    const b = await call(h, "GET", "/orgs/e2e-owner/teams/reviewers/repos/e2e-owner/svc-b");
+    expect(b.status).toBe(200);
+  });
+
+  test("team-repo grading: global org_members:none denies BOTH regardless of per-slug administration", async () => {
+    const h = await start(
+      scenario({
+        owner_kind: "org",
+        token_permissions: { org_members: "none" },
+        repos: {
+          "e2e-owner/svc-a": {
+            settings: {},
+            permissions: { administration: "write" },
+            live_state: { teams: { reviewers: { role_name: "write" } } },
+          },
+          "e2e-owner/svc-b": {
+            settings: {},
+            permissions: { administration: "write" },
+            live_state: { teams: { reviewers: { role_name: "write" } } },
+          },
+        },
+      }),
+    );
+    // Both repos grant administration per-slug, but the org-wide org_members is
+    // denied globally, so both team-repo calls are denied on org_members.
+    for (const slug of ["svc-a", "svc-b"]) {
+      const res = await call(h, "GET", `/orgs/e2e-owner/teams/reviewers/repos/e2e-owner/${slug}`);
+      expect(res.status).toBe(404);
+      expect(
+        h.requests.find((r) => r.pathname.endsWith(`/repos/e2e-owner/${slug}`))?.deniedBy,
+      ).toBe("org_members");
+    }
   });
 
   test("per-slug permission mask scopes a denial to one repository", async () => {
