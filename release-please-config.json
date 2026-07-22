@@ -6,7 +6,8 @@
   "packages": {
     ".": {
       "release-type": "simple",
-      "initial-version": "1.0.0"
+      "initial-version": "1.0.0",
+      "extra-files": ["README.md"]
     }
   }
 }

@@ -1,7 +1,7 @@
 /**
  * README contract tests: pin the Sections table, the schema link, the example
- * settings.yml blocks, and the migration paragraph to their single sources in
- * src/, so a prose claim cannot drift from what the code does.
+ * settings.yml blocks, the migration paragraph, and the version pins to their
+ * single sources, so a prose claim cannot drift from what the code does.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -98,6 +98,30 @@ describe("README example settings.yml blocks", () => {
       validated++;
     }
     expect(validated, "no settings.yml example block was found in the README").toBeGreaterThan(0);
+  });
+});
+
+describe("README version pins", () => {
+  test("every uses: pin names the current release major", () => {
+    const manifest = JSON.parse(
+      readFileSync(join(ROOT, ".release-please-manifest.json"), "utf8"),
+    ) as Record<string, string>;
+    const config = JSON.parse(readFileSync(join(ROOT, "release-please-config.json"), "utf8")) as {
+      packages: Record<string, { "initial-version"?: string }>;
+    };
+    // Before the first release the manifest still reads 0.0.0; the expected
+    // major then comes from the configured initial-version. On a release PR
+    // the manifest carries the new version, so a major bump fails this test
+    // until the README's uses: pins are updated with it.
+    const released = manifest["."] ?? "";
+    const version =
+      released === "0.0.0" ? (config.packages["."]?.["initial-version"] ?? released) : released;
+    const major = version.split(".")[0];
+    const pins = [...readme.matchAll(/repo-settings-as-code@v(\d+)/g)].map((m) => m[1]);
+    expect(pins.length).toBeGreaterThan(0);
+    for (const pin of pins) {
+      expect(pin, `README pins @v${pin}, but the current release major is v${major}`).toBe(major);
+    }
   });
 });
 
