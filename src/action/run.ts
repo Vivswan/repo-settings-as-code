@@ -19,10 +19,12 @@
 import { runForRepo, validateSettingsDoc, worstOf } from "../engine/orchestrate.js";
 import { GithubApi, type GithubClient, registerRedactedSlug } from "../github/api.js";
 import { createVisibilityResolver } from "../github/repo-visibility.js";
+import { deliverArtifactReport } from "../report/artifact-report.js";
 import { parseConfig } from "./inputs.js";
 import { actionsIo, annotate, setOutput } from "./io.js";
 import {
   applyMarkerInjection,
+  composeTargetReport,
   deliverReport,
   isPrivateVisibility,
   runMulti,
@@ -128,13 +130,14 @@ export async function run(overrides?: { api?: GithubClient }): Promise<number> {
   const { redacted, deliverable } = await resolveSingleRepoRedaction(api, cfg, io);
 
   // Report channel: for a redacted single-repo target proven private, deliver
-  // the full report to the target repo itself, exactly as multi mode does. The
-  // capturing sink's transcript feeds the report; the marker-label injection
-  // keeps an apply from deleting the label the report module creates.
-  const reportChannel = deliverable && cfg.privateReport === "issue";
+  // the full report to the target repo's own issue or the encrypted artifact,
+  // exactly as multi mode does. The capturing sink's transcript feeds the
+  // report; the marker-label injection (issue channel only) keeps an apply from
+  // deleting the label the report module creates.
+  const reportOn = deliverable && cfg.privateReport !== "none";
   const capture = redacted ? capturingIo(io) : null;
   const runIo = capture ? capture.io : io;
-  const injected = applyMarkerInjection(settings, reportChannel);
+  const injected = applyMarkerInjection(settings, reportOn && cfg.privateReport === "issue");
   if (injected.notice) {
     runIo.annotate("notice", injected.notice);
   }
@@ -158,24 +161,40 @@ export async function run(overrides?: { api?: GithubClient }): Promise<number> {
   // rendering uses the constant "private repository" placeholder - single-repo
   // mode has exactly one target, so no ordinal is needed and the slug never
   // reaches the warning.
-  if (reportChannel && capture) {
-    await deliverReport(
-      api,
-      {
-        adminRepo: cfg.selfSlug,
-        runUrl: cfg.runUrl,
-        mode: cfg.mode,
-        timestamp: new Date().toISOString(),
-      },
-      cfg.repo,
-      "private repository",
-      result.result,
-      result.outcomes,
-      capture.drain(),
-      cfg.mode === "check",
-      io,
-    );
-  } else if (redacted && cfg.privateReport === "issue" && !deliverable) {
+  if (reportOn && capture) {
+    const meta = {
+      adminRepo: cfg.selfSlug,
+      runUrl: cfg.runUrl,
+      mode: cfg.mode,
+      timestamp: new Date().toISOString(),
+    };
+    if (cfg.privateReport === "artifact") {
+      const { body } = composeTargetReport(
+        meta,
+        cfg.repo,
+        result.result,
+        result.outcomes,
+        capture.drain(),
+        cfg.mode === "check",
+      );
+      const delivery = await deliverArtifactReport(body, cfg.reportPublicKey);
+      if ("warning" in delivery) {
+        annotate("warning", delivery.warning);
+      }
+    } else {
+      await deliverReport(
+        api,
+        meta,
+        cfg.repo,
+        "private repository",
+        result.result,
+        result.outcomes,
+        capture.drain(),
+        cfg.mode === "check",
+        io,
+      );
+    }
+  } else if (redacted && cfg.privateReport !== "none" && !deliverable) {
     // Redacted but not proven private: the report is withheld, said once, safely.
     annotate(
       "notice",

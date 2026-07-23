@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { Decrypter, generateX25519Identity, identityToRecipient } from "age-encryption";
 import {
   applyMarkerInjection,
   redactOutcomes,
@@ -7,6 +8,11 @@ import {
 } from "../../src/action/multi.js";
 import { DEFAULT_DISCOVERY_FILTERS } from "../../src/discovery/discover.js";
 import type { Io } from "../../src/io.js";
+import {
+  ARTIFACT_FILE,
+  ARTIFACT_NAME,
+  type ArtifactUploader,
+} from "../../src/report/artifact-report.js";
 import { MockApi } from "../mock-api.js";
 
 function captureIo(): {
@@ -58,6 +64,7 @@ function cfg(overrides: Partial<Parameters<typeof runMulti>[1]> = {}) {
     // to "show" so they stay byte-identical. Redaction tests override this.
     privateRepos: "show" as const,
     privateReport: "none" as const,
+    reportPublicKey: "",
     selfSlug: "",
     runUrl: "",
     ...overrides,
@@ -705,6 +712,176 @@ describe("runMulti private-report: issue wiring", () => {
     // the parse-failure detail is in the private report body, not the public log
     expect(String(payload.body ?? "")).toContain("failed");
     expect(annotations.join("\n")).not.toContain("oops");
+  });
+});
+
+describe("runMulti private-report: artifact wiring", () => {
+  /** A capturing uploader plus the age keypair the ciphertext decrypts with. */
+  async function artifactHarness() {
+    const identity = await generateX25519Identity();
+    const recipient = await identityToRecipient(identity);
+    const uploads: Array<{ name: string; file: { name: string; data: Uint8Array } }> = [];
+    const uploader: ArtifactUploader = {
+      async upload(name, file) {
+        uploads.push({ name, file });
+      },
+    };
+    const decrypt = async (data: Uint8Array): Promise<string> => {
+      const decrypter = new Decrypter();
+      decrypter.addIdentity(identity);
+      return decrypter.decrypt(data, "text");
+    };
+    return { recipient, uploader, uploads, decrypt };
+  }
+
+  test("accumulates every deliverable target into ONE encrypted upload", async () => {
+    const { recipient, uploader, uploads, decrypt } = await artifactHarness();
+    // Two proven-private drifting targets, each carrying its own canary.
+    const api = new MockApi({
+      "GET /repos/o/a": { data: { description: "CANARY-A", private: true } },
+      "GET /repos/o/a/contents/.github/settings.yml": {
+        data: 'repository:\n  description: "WANT-A"\n',
+      },
+      "GET /repos/o/b": { data: { description: "CANARY-B", private: true } },
+      "GET /repos/o/b/contents/.github/settings.yml": {
+        data: 'repository:\n  description: "WANT-B"\n',
+      },
+    });
+    const { io, annotations, logs } = captureIo();
+    const { targets } = await runMulti(
+      api,
+      cfg({
+        reposInput: "o/a, o/b",
+        mode: "check",
+        privateRepos: "redact",
+        privateReport: "artifact",
+        reportPublicKey: recipient,
+        selfSlug: "admin/repo",
+        uploader,
+      }),
+      io,
+    );
+    expect(targets.map((t) => t.result)).toEqual(["drift", "drift"]);
+    // exactly one artifact upload for the whole run, under the fixed names
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0]?.name).toBe(ARTIFACT_NAME);
+    expect(uploads[0]?.file.name).toBe(ARTIFACT_FILE);
+    // no issue traffic under the artifact channel
+    expect(api.calls.some((c) => c.path.includes("/issues"))).toBe(false);
+    // the ONE document decrypts to both targets' full unredacted reports
+    const document = await decrypt(uploads[0]?.file.data as Uint8Array);
+    expect(document).toContain("CANARY-A");
+    expect(document).toContain("CANARY-B");
+    expect(document).toContain("o/a");
+    expect(document).toContain("o/b");
+    // and none of that reached the public surfaces
+    const publicText = [...annotations, ...logs].join("\n");
+    expect(publicText).not.toContain("CANARY-A");
+    expect(publicText).not.toContain("CANARY-B");
+    expect(publicText).not.toContain("o/a");
+    expect(publicText).not.toContain("o/b");
+  });
+
+  test("an unknown-visibility target is redacted but excluded from the upload", async () => {
+    const { recipient, uploader, uploads, decrypt } = await artifactHarness();
+    // o/known is proven private (included); o/maybe resolves unknown (excluded).
+    const api = new MockApi({
+      "GET /repos/o/known": { data: { description: "CANARY-KNOWN", private: true } },
+      "GET /repos/o/known/contents/.github/settings.yml": {
+        data: 'repository:\n  description: "WANT-KNOWN"\n',
+      },
+      "GET /repos/o/maybe": { data: { description: "CANARY-MAYBE" } },
+      "GET /repos/o/maybe/contents/.github/settings.yml": {
+        data: 'repository:\n  description: "WANT-MAYBE"\n',
+      },
+    });
+    const { io, annotations } = captureIo();
+    const { targets } = await runMulti(
+      api,
+      cfg({
+        reposInput: "o/known, o/maybe",
+        mode: "check",
+        privateRepos: "redact",
+        privateReport: "artifact",
+        reportPublicKey: recipient,
+        selfSlug: "admin/repo",
+        uploader,
+      }),
+      io,
+    );
+    // both are redacted in the public view
+    expect(targets.every((t) => t.redacted)).toBe(true);
+    // one upload, and it contains only the proven-private target
+    expect(uploads).toHaveLength(1);
+    const document = await decrypt(uploads[0]?.file.data as Uint8Array);
+    expect(document).toContain("CANARY-KNOWN");
+    expect(document).not.toContain("CANARY-MAYBE");
+    // the excluded target's withholding is announced safely, no slug
+    const withheld = annotations.find((a) => a.includes("visibility could not be verified"));
+    expect(withheld).toBeDefined();
+    expect(annotations.join("\n")).not.toContain("o/maybe");
+  });
+
+  test("no deliverable target means no upload at all", async () => {
+    const { recipient, uploader, uploads } = await artifactHarness();
+    // Only an unknown-visibility target: redacted, but nothing is deliverable.
+    const api = new MockApi({
+      "GET /repos/o/maybe": { data: { description: "SECRET" } },
+      "GET /repos/o/maybe/contents/.github/settings.yml": {
+        data: 'repository:\n  description: "WANT"\n',
+      },
+    });
+    await runMulti(
+      api,
+      cfg({
+        reposInput: "o/maybe",
+        mode: "check",
+        privateRepos: "redact",
+        privateReport: "artifact",
+        reportPublicKey: recipient,
+        selfSlug: "admin/repo",
+        uploader,
+      }),
+      captureIo().io,
+    );
+    expect(uploads).toHaveLength(0);
+  });
+
+  test("an upload failure warns safely and never changes any target result", async () => {
+    const { recipient } = await artifactHarness();
+    const uploader: ArtifactUploader = {
+      async upload() {
+        throw new Error("Unable to get the ACTIONS_RUNTIME_TOKEN env variable");
+      },
+    };
+    const api = new MockApi({
+      "GET /repos/o/priv": { data: { description: "CANARY-live", private: true } },
+      "GET /repos/o/priv/contents/.github/settings.yml": {
+        data: 'repository:\n  description: "CANARY-want"\n',
+      },
+    });
+    const { io, annotations } = captureIo();
+    const { targets } = await runMulti(
+      api,
+      cfg({
+        reposInput: "o/priv",
+        mode: "check",
+        privateRepos: "redact",
+        privateReport: "artifact",
+        reportPublicKey: recipient,
+        selfSlug: "admin/repo",
+        uploader,
+      }),
+      io,
+    );
+    // the delivery failure does not change the target's result
+    expect(targets[0]?.result).toBe("drift");
+    // one safe warning names the artifact service, never a slug or report content
+    const warning = annotations.find((a) => a.includes("could not upload the private report"));
+    expect(warning).toBeDefined();
+    expect(warning).toContain("ACTIONS_RUNTIME_TOKEN");
+    expect(annotations.join("\n")).not.toContain("o/priv");
+    expect(annotations.join("\n")).not.toContain("CANARY");
   });
 });
 

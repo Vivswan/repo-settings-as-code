@@ -30,6 +30,7 @@ import { getRepoFile } from "../github/repo-file.js";
 import { createVisibilityResolver, type RepoVisibility } from "../github/repo-visibility.js";
 import type { Io } from "../io.js";
 import { prefixedIo } from "../io.js";
+import { type ArtifactUploader, deliverArtifactReport } from "../report/artifact-report.js";
 import { composeReport, type TranscriptLine } from "../report/composer.js";
 import { deliverIssueReport, injectMarkerLabel, MARKER_LABEL } from "../report/issue-report.js";
 import type { SettingsFile } from "../schema.js";
@@ -61,10 +62,17 @@ export interface MultiConfig {
   privateRepos: PrivateReposPolicy;
   /** Where the full unredacted report for a redacted target is delivered. */
   privateReport: PrivateReportChannel;
+  /** The age recipient the artifact channel encrypts to (empty otherwise). */
+  reportPublicKey: string;
   /** GITHUB_REPOSITORY: a target equal to it is never redacted (carve-out). */
   selfSlug: string;
   /** Link to the workflow run, for the private report metadata (may be empty). */
   runUrl: string;
+  /**
+   * The artifact upload port, injected only by tests; production leaves it
+   * undefined so the artifact channel uses the real @actions/artifact uploader.
+   */
+  uploader?: ArtifactUploader;
 }
 
 /**
@@ -537,17 +545,28 @@ export async function runMulti(
   }
 
   const results: TargetOutcome[] = [];
+  // The artifact channel accumulates every deliverable target's composed report
+  // and encrypts/uploads them as ONE artifact after the loop; the issue channel
+  // delivers per target inside the loop. `{ display }` travels alongside the
+  // body only for the section heading in the concatenated document.
+  const artifactReports: Array<{ display: string; body: string }> = [];
+  const meta: ReportRunMeta = {
+    adminRepo: cfg.selfSlug,
+    runUrl: cfg.runUrl,
+    mode: cfg.mode,
+    timestamp,
+  };
   for (const target of targets) {
     const redacted = plan.isRedacted(target.slug);
     const display = plan.display(target.slug);
     // Deliver a report ONLY when the target is PROVEN private or internal.
     // Redaction fails closed (redact on unknown), but delivery fails closed the
-    // other way: posting the full private report to a repo that might actually
-    // be public would leak it, so an unknown visibility redacts publicly yet
-    // skips delivery.
+    // other way: posting or archiving the full private report for a repo that
+    // might actually be public would leak it, so an unknown visibility redacts
+    // publicly yet skips delivery. The gate is the same for both channels.
     const visibility = visibilityOf(target.slug);
-    const deliverable =
-      redacted && cfg.privateReport === "issue" && isPrivateVisibility(visibility);
+    const reportOn = redacted && cfg.privateReport !== "none";
+    const deliverable = reportOn && isPrivateVisibility(visibility);
 
     // One capture per redacted target, created BEFORE any processing so a
     // read/parse/validation failure is recorded in the report too. All target
@@ -566,9 +585,9 @@ export async function runMulti(
         defaults,
         cfg,
         redacted,
-        // Only inject the marker label when the report will actually be
-        // delivered; a target that redacts but cannot deliver needs no label.
-        injectMarker: deliverable,
+        // The marker label is an issue-channel mechanism (its report reuses the
+        // labelled issue); inject it only when the issue channel will deliver.
+        injectMarker: deliverable && cfg.privateReport === "issue",
         io,
         targetIo,
       });
@@ -577,26 +596,41 @@ export async function runMulti(
       outcome = targetFailure(io, targetIo, redacted, message, `${target.slug}: `);
     }
 
-    // ONE finalization path for every target, however it exited: deliver the
-    // report (the private mirror of the whole run, failures included), record
-    // the outcome, and emit the single public annotation for a redacted target.
+    // ONE finalization path for every target, however it exited: deliver or
+    // accumulate the report (the private mirror of the whole run, failures
+    // included), record the outcome, and emit the single public annotation for a
+    // redacted target.
     let note = outcome.note;
     if (deliverable && capture) {
-      const reportNote = await deliverReport(
-        api,
-        { adminRepo: cfg.selfSlug, runUrl: cfg.runUrl, mode: cfg.mode, timestamp },
-        target.slug,
-        display,
-        outcome.result,
-        outcome.outcomes,
-        capture.drain(),
-        cfg.mode === "check",
-        io,
-      );
-      if (reportNote) {
-        note = note ? `${note}; ${reportNote}` : reportNote;
+      const transcript = capture.drain();
+      if (cfg.privateReport === "artifact") {
+        // Accumulate now; the single encrypt+upload happens after the loop.
+        const { body } = composeTargetReport(
+          meta,
+          target.slug,
+          outcome.result,
+          outcome.outcomes,
+          transcript,
+          cfg.mode === "check",
+        );
+        artifactReports.push({ display, body });
+      } else {
+        const reportNote = await deliverReport(
+          api,
+          meta,
+          target.slug,
+          display,
+          outcome.result,
+          outcome.outcomes,
+          transcript,
+          cfg.mode === "check",
+          io,
+        );
+        if (reportNote) {
+          note = note ? `${note}; ${reportNote}` : reportNote;
+        }
       }
-    } else if (redacted && cfg.privateReport === "issue" && !deliverable) {
+    } else if (reportOn && !deliverable) {
       // Redacted but not proven private: the report is withheld, said once,
       // safely (placeholder only).
       const withheld = "visibility could not be verified; the private report was not delivered";
@@ -625,7 +659,45 @@ export async function runMulti(
       );
     }
   }
+
+  // The artifact channel uploads every accumulated report as one encrypted
+  // document after the loop. A failure is one safe warning (naming the artifact
+  // service, never a slug) and never changes any target's result.
+  await uploadArtifactReport(cfg, artifactReports, io);
+
   return { fatal: null, targets: results };
+}
+
+/**
+ * Concatenate every accumulated per-target report into one document, encrypt it
+ * to the operator's recipient, and upload it as the single workflow artifact.
+ * A no-op when the channel is not `artifact` or no report was accumulated.
+ * Delivery failure warns safely (the artifact service or missing runtime token,
+ * never a slug or report content) and leaves the run result untouched.
+ */
+async function uploadArtifactReport(
+  cfg: MultiConfig,
+  reports: Array<{ display: string; body: string }>,
+  io: Io,
+): Promise<void> {
+  if (cfg.privateReport !== "artifact" || reports.length === 0) {
+    return;
+  }
+  const document = concatArtifactReports(reports);
+  const delivery = await deliverArtifactReport(document, cfg.reportPublicKey, cfg.uploader);
+  if ("warning" in delivery) {
+    io.annotate("warning", delivery.warning);
+  }
+}
+
+/**
+ * Join accumulated per-target reports into one document, each under a heading
+ * carrying its public placeholder (the document itself is private, but the
+ * heading is the only added text and stays placeholder-keyed for consistency
+ * with the public surfaces).
+ */
+export function concatArtifactReports(reports: Array<{ display: string; body: string }>): string {
+  return reports.map((report) => `<!-- ${report.display} -->\n\n${report.body}`).join("\n\n");
 }
 
 /**
@@ -702,13 +774,40 @@ export function applyMarkerInjection(
 }
 
 /**
+ * Compose the full unredacted report document for one target. Shared by both
+ * delivery channels: the issue channel PATCHes it into the target's report
+ * issue, the artifact channel accumulates it for the encrypted upload. The
+ * `check` flag decides needsAttention alongside the result (a check-mode drift
+ * needs attention; an apply-mode drift cannot occur).
+ */
+export function composeTargetReport(
+  meta: ReportRunMeta,
+  slug: string,
+  result: RepoRunResult["result"],
+  outcomes: RepoRunResult["outcomes"],
+  transcript: TranscriptLine[],
+  check: boolean,
+): { body: string; needsAttention: boolean } {
+  const body = composeReport({
+    target: slug,
+    adminRepo: meta.adminRepo,
+    runUrl: meta.runUrl,
+    mode: meta.mode,
+    result,
+    timestamp: meta.timestamp,
+    outcomes: outcomes.map((o) => ({ key: o.key, status: o.status, detail: o.detail })),
+    transcript,
+  });
+  const needsAttention = result === "failed" || (check && result === "drift");
+  return { body, needsAttention };
+}
+
+/**
  * Compose the full unredacted report for a redacted target and deliver it to
  * the issue channel. Runs on EVERY result (the report is the private mirror of
  * the run log). Returns a safe summary-row note on delivery failure - and emits
  * one public-safe warning naming only the placeholder and the HTTP status - or
- * undefined on success; the target's result is never changed either way. The
- * `check` flag decides needsAttention alongside the result (a check-mode drift
- * needs attention; an apply-mode drift cannot occur).
+ * undefined on success; the target's result is never changed either way.
  */
 export async function deliverReport(
   api: GithubClient,
@@ -721,17 +820,14 @@ export async function deliverReport(
   check: boolean,
   io: Io,
 ): Promise<string | undefined> {
-  const body = composeReport({
-    target: slug,
-    adminRepo: meta.adminRepo,
-    runUrl: meta.runUrl,
-    mode: meta.mode,
+  const { body, needsAttention } = composeTargetReport(
+    meta,
+    slug,
     result,
-    timestamp: meta.timestamp,
-    outcomes: outcomes.map((o) => ({ key: o.key, status: o.status, detail: o.detail })),
+    outcomes,
     transcript,
-  });
-  const needsAttention = result === "failed" || (check && result === "drift");
+    check,
+  );
   const delivery = await deliverIssueReport(api, slug, body, needsAttention);
   if ("warning" in delivery) {
     io.annotate("warning", `${display}: ${delivery.warning}`);

@@ -5,10 +5,12 @@
     "": {
       "name": "repo-settings-as-code",
       "dependencies": {
+        "@actions/artifact": "^6.2.1",
         "@actions/core": "^3.0.1",
         "@octokit/plugin-retry": "^8.1.0",
         "@octokit/plugin-throttling": "^11.0.3",
         "@octokit/rest": "^22.0.1",
+        "age-encryption": "^0.3.0",
         "bottleneck": "^2.19.5",
         "yaml": "^2.8.2",
         "zod": "^4.4.3",
@@ -28,13 +30,43 @@
     },
   },
   "packages": {
+    "@actions/artifact": ["@actions/artifact@6.2.1", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@actions/artifact/-/artifact-6.2.1.tgz", { "dependencies": { "@actions/core": "^3.0.0", "@actions/github": "^9.0.0", "@actions/http-client": "^4.0.0", "@azure/storage-blob": "^12.30.0", "@octokit/core": "^7.0.6", "@octokit/plugin-request-log": "^6.0.0", "@octokit/plugin-retry": "^8.0.0", "@octokit/request": "^10.0.7", "@octokit/request-error": "^7.1.0", "@protobuf-ts/plugin": "^2.2.3-alpha.1", "@protobuf-ts/runtime": "^2.9.4", "archiver": "^7.0.1", "jwt-decode": "^4.0.0", "unzip-stream": "^0.3.1" } }, "sha1-P4E9QtCNjRBfpGAQ9s4rs14pK2Y="],
+
     "@actions/core": ["@actions/core@3.0.1", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@actions/core/-/core-3.0.1.tgz", { "dependencies": { "@actions/exec": "^3.0.0", "@actions/http-client": "^4.0.0" } }, "sha1-D02LFFJ+5R4NsGHu3CSiBsn5jCM="],
 
     "@actions/exec": ["@actions/exec@3.0.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@actions/exec/-/exec-3.0.0.tgz", { "dependencies": { "@actions/io": "^3.0.2" } }, "sha1-jDRk0g8KpAaHB3VwIdfjwBp+4gM="],
 
+    "@actions/github": ["@actions/github@9.1.1", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@actions/github/-/github-9.1.1.tgz", { "dependencies": { "@actions/http-client": "^3.0.2", "@octokit/core": "^7.0.6", "@octokit/plugin-paginate-rest": "^14.0.0", "@octokit/plugin-rest-endpoint-methods": "^17.0.0", "@octokit/request": "^10.0.7", "@octokit/request-error": "^7.1.0", "undici": "^6.23.0" } }, "sha1-uTvkw2pGzGfMlNbf0zweM7nFmm8="],
+
     "@actions/http-client": ["@actions/http-client@4.0.1", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@actions/http-client/-/http-client-4.0.1.tgz", { "dependencies": { "tunnel": "^0.0.6", "undici": "^6.23.0" } }, "sha1-IqI6diW6EybZuhVAEsqDAaJ/iKM="],
 
     "@actions/io": ["@actions/io@3.0.2", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@actions/io/-/io-3.0.2.tgz", {}, "sha1-b4myehWdEJg22YPvooOZfCO5IoQ="],
+
+    "@azure/abort-controller": ["@azure/abort-controller@2.2.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@azure/abort-controller/-/abort-controller-2.2.0.tgz", { "dependencies": { "tslib": "^2.6.2" } }, "sha1-k+DoKwGGLn6jtbaZWHGdPz/SyKw="],
+
+    "@azure/core-auth": ["@azure/core-auth@1.11.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@azure/core-auth/-/core-auth-1.11.0.tgz", { "dependencies": { "@azure/abort-controller": "^2.1.2", "@azure/core-util": "^1.13.0", "tslib": "^2.6.2" } }, "sha1-Ha7/32LRqHHSK4ZfnzFkpj6h9XU="],
+
+    "@azure/core-client": ["@azure/core-client@1.11.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@azure/core-client/-/core-client-1.11.0.tgz", { "dependencies": { "@azure/abort-controller": "^2.1.2", "@azure/core-auth": "^1.10.0", "@azure/core-rest-pipeline": "^1.22.0", "@azure/core-tracing": "^1.3.0", "@azure/core-util": "^1.13.0", "@azure/logger": "^1.3.0", "tslib": "^2.6.2" } }, "sha1-5z0JrHl33l17QVaWt+1F0/3rZ7A="],
+
+    "@azure/core-http-compat": ["@azure/core-http-compat@2.5.0", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@azure/core-http-compat/-/core-http-compat-2.5.0.tgz", { "dependencies": { "@azure/abort-controller": "^2.1.2" }, "peerDependencies": { "@azure/core-client": "^1.10.0", "@azure/core-rest-pipeline": "^1.22.0" } }, "sha1-14BmGln4pDL+yyt8b6LVgi3KHeo="],
+
+    "@azure/core-lro": ["@azure/core-lro@2.7.2", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@azure/core-lro/-/core-lro-2.7.2.tgz", { "dependencies": { "@azure/abort-controller": "^2.0.0", "@azure/core-util": "^1.2.0", "@azure/logger": "^1.0.0", "tslib": "^2.6.2" } }, "sha1-eHEFAnog5Fx3ZRqYsBpNOwG3Wgg="],
+
+    "@azure/core-paging": ["@azure/core-paging@1.7.0", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@azure/core-paging/-/core-paging-1.7.0.tgz", { "dependencies": { "tslib": "^2.6.2" } }, "sha1-WVl6L1Q4ujxsh4n8hw9p4OeFMag="],
+
+    "@azure/core-rest-pipeline": ["@azure/core-rest-pipeline@1.25.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@azure/core-rest-pipeline/-/core-rest-pipeline-1.25.0.tgz", { "dependencies": { "@azure/abort-controller": "^2.1.2", "@azure/core-auth": "^1.10.0", "@azure/core-tracing": "^1.3.0", "@azure/core-util": "^1.13.0", "@azure/logger": "^1.3.0", "@typespec/ts-http-runtime": "^0.3.4", "tslib": "^2.6.2" } }, "sha1-kupJEu27H3OV9IKaMAYxF0qoLwg="],
+
+    "@azure/core-tracing": ["@azure/core-tracing@1.4.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@azure/core-tracing/-/core-tracing-1.4.0.tgz", { "dependencies": { "tslib": "^2.6.2" } }, "sha1-1lenAOJNJW0ZXmKKeV22qMxHXqs="],
+
+    "@azure/core-util": ["@azure/core-util@1.14.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@azure/core-util/-/core-util-1.14.0.tgz", { "dependencies": { "@azure/abort-controller": "^2.1.2", "@typespec/ts-http-runtime": "^0.3.0", "tslib": "^2.6.2" } }, "sha1-fOn+V5WPEy3UIlc4VuWkXHIyuwQ="],
+
+    "@azure/core-xml": ["@azure/core-xml@1.6.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@azure/core-xml/-/core-xml-1.6.0.tgz", { "dependencies": { "fast-xml-parser": "^5.5.9", "tslib": "^2.8.1" } }, "sha1-EI8JIOG834owuffoh5ibOhIIK9k="],
+
+    "@azure/logger": ["@azure/logger@1.4.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@azure/logger/-/logger-1.4.0.tgz", { "dependencies": { "@typespec/ts-http-runtime": "^0.3.0", "tslib": "^2.6.2" } }, "sha1-PVpif+WaJ27OdIenndkq1cUIwzk="],
+
+    "@azure/storage-blob": ["@azure/storage-blob@12.33.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@azure/storage-blob/-/storage-blob-12.33.0.tgz", { "dependencies": { "@azure/abort-controller": "^2.1.2", "@azure/core-auth": "^1.9.0", "@azure/core-client": "^1.9.3", "@azure/core-http-compat": "^2.2.0", "@azure/core-lro": "^2.2.0", "@azure/core-paging": "^1.6.2", "@azure/core-rest-pipeline": "^1.19.1", "@azure/core-tracing": "^1.2.0", "@azure/core-util": "^1.11.0", "@azure/core-xml": "^1.4.5", "@azure/logger": "^1.1.4", "@azure/storage-common": "^12.4.1", "events": "^3.0.0", "tslib": "^2.8.1" } }, "sha1-EK1FhvSSJzG4t5zIa+ytp1Z6H6s="],
+
+    "@azure/storage-common": ["@azure/storage-common@12.4.1", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@azure/storage-common/-/storage-common-12.4.1.tgz", { "dependencies": { "@azure/abort-controller": "^2.1.2", "@azure/core-auth": "^1.9.0", "@azure/core-http-compat": "^2.2.0", "@azure/core-rest-pipeline": "^1.24.0", "@azure/core-tracing": "^1.2.0", "@azure/core-util": "^1.11.0", "@azure/logger": "^1.1.4", "events": "^3.3.0", "tslib": "^2.8.1" } }, "sha1-eMI6si3QTOJ7E9/omRtFtv3ts0U="],
 
     "@biomejs/biome": ["@biomejs/biome@2.5.3", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@biomejs/biome/-/biome-2.5.3.tgz", { "optionalDependencies": { "@biomejs/cli-darwin-arm64": "2.5.3", "@biomejs/cli-darwin-x64": "2.5.3", "@biomejs/cli-linux-arm64": "2.5.3", "@biomejs/cli-linux-arm64-musl": "2.5.3", "@biomejs/cli-linux-x64": "2.5.3", "@biomejs/cli-linux-x64-musl": "2.5.3", "@biomejs/cli-win32-arm64": "2.5.3", "@biomejs/cli-win32-x64": "2.5.3" }, "bin": { "biome": "bin/biome" } }, "sha1-SSprP3uJnMBgrx+4IQzwy/U2340="],
 
@@ -53,6 +85,22 @@
     "@biomejs/cli-win32-arm64": ["@biomejs/cli-win32-arm64@2.5.3", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@biomejs/cli-win32-arm64/-/cli-win32-arm64-2.5.3.tgz", { "os": "win32", "cpu": "arm64" }, "sha1-ioVJ9hwCKBWjzrmLIZZoEkw60fE="],
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.5.3", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@biomejs/cli-win32-x64/-/cli-win32-x64-2.5.3.tgz", { "os": "win32", "cpu": "x64" }, "sha1-/crvCQmxZvMtKMClL0+E5OTatj8="],
+
+    "@bufbuild/protobuf": ["@bufbuild/protobuf@2.12.1", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@bufbuild/protobuf/-/protobuf-2.12.1.tgz", {}, "sha1-ibCkrWQSulWpceEHpGtsYyb/G4o="],
+
+    "@bufbuild/protoplugin": ["@bufbuild/protoplugin@2.12.1", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@bufbuild/protoplugin/-/protoplugin-2.12.1.tgz", { "dependencies": { "@bufbuild/protobuf": "2.12.1", "@typescript/vfs": "^1.6.2", "typescript": "5.4.5" } }, "sha1-iZBiVRsFpVV4gIQVimJ9Hdl0G7I="],
+
+    "@isaacs/cliui": ["@isaacs/cliui@8.0.2", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@isaacs/cliui/-/cliui-8.0.2.tgz", { "dependencies": { "string-width": "^5.1.2", "string-width-cjs": "npm:string-width@^4.2.0", "strip-ansi": "^7.0.1", "strip-ansi-cjs": "npm:strip-ansi@^6.0.1", "wrap-ansi": "^8.1.0", "wrap-ansi-cjs": "npm:wrap-ansi@^7.0.0" } }, "sha1-s3Znt7wYHBaHgiWbq0JHT79StVA="],
+
+    "@noble/ciphers": ["@noble/ciphers@2.2.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@noble/ciphers/-/ciphers-2.2.0.tgz", {}, "sha1-hPtFrJMykl1kO4D4nOsOovIdupU="],
+
+    "@noble/curves": ["@noble/curves@2.2.0", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@noble/curves/-/curves-2.2.0.tgz", { "dependencies": { "@noble/hashes": "2.2.0" } }, "sha1-mBvjqtw7v7zbJF54zJeqb3WSRsI="],
+
+    "@noble/hashes": ["@noble/hashes@2.2.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@noble/hashes/-/hashes-2.2.0.tgz", {}, "sha1-ItodFqRplU/Oh3BV1VmQCmxztjs="],
+
+    "@noble/post-quantum": ["@noble/post-quantum@0.5.4", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@noble/post-quantum/-/post-quantum-0.5.4.tgz", { "dependencies": { "@noble/curves": "~2.0.0", "@noble/hashes": "~2.0.0" } }, "sha1-vRCVZHxh5Mj9MX+oo5d9uM0opLk="],
+
+    "@nodable/entities": ["@nodable/entities@2.2.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@nodable/entities/-/entities-2.2.0.tgz", {}, "sha1-odRamSsCJZGxwrA6d5Nck5N1tkI="],
 
     "@octokit/auth-token": ["@octokit/auth-token@6.0.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@octokit/auth-token/-/auth-token-6.0.0.tgz", {}, "sha1-sC6cCKLYk33wmiqYHyJq0hkXTFM="],
 
@@ -81,6 +129,18 @@
     "@octokit/rest": ["@octokit/rest@22.0.1", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@octokit/rest/-/rest-22.0.1.tgz", { "dependencies": { "@octokit/core": "^7.0.6", "@octokit/plugin-paginate-rest": "^14.0.0", "@octokit/plugin-request-log": "^6.0.0", "@octokit/plugin-rest-endpoint-methods": "^17.0.0" } }, "sha1-TYZsMrdrcR0/c2+RmS4rU0FjtBY="],
 
     "@octokit/types": ["@octokit/types@16.0.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@octokit/types/-/types-16.0.0.tgz", { "dependencies": { "@octokit/openapi-types": "^27.0.0" } }, "sha1-+9f6WQwu8ir4gbHXl1i/qiNNu3w="],
+
+    "@pkgjs/parseargs": ["@pkgjs/parseargs@0.11.0", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@pkgjs/parseargs/-/parseargs-0.11.0.tgz", {}, "sha1-p36nQvqyV3UUVDTrHSMoz1ATrDM="],
+
+    "@protobuf-ts/plugin": ["@protobuf-ts/plugin@2.11.1", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@protobuf-ts/plugin/-/plugin-2.11.1.tgz", { "dependencies": { "@bufbuild/protobuf": "^2.4.0", "@bufbuild/protoplugin": "^2.4.0", "@protobuf-ts/protoc": "^2.11.1", "@protobuf-ts/runtime": "^2.11.1", "@protobuf-ts/runtime-rpc": "^2.11.1", "typescript": "^3.9" }, "bin": { "protoc-gen-ts": "./bin/protoc-gen-ts", "protoc-gen-dump": "./bin/protoc-gen-dump" } }, "sha1-yBn/msoQIgnSCWQUs9IkDdJAy9s="],
+
+    "@protobuf-ts/protoc": ["@protobuf-ts/protoc@2.11.1", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@protobuf-ts/protoc/-/protoc-2.11.1.tgz", { "bin": { "protoc": "./protoc.js" } }, "sha1-Wuhqd3ys3Fjdx+OO4QenQ0KobjA="],
+
+    "@protobuf-ts/runtime": ["@protobuf-ts/runtime@2.11.1", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@protobuf-ts/runtime/-/runtime-2.11.1.tgz", {}, "sha1-7ivy+sbi2N6sDKY0cad0gVSOVVM="],
+
+    "@protobuf-ts/runtime-rpc": ["@protobuf-ts/runtime-rpc@2.11.1", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@protobuf-ts/runtime-rpc/-/runtime-rpc-2.11.1.tgz", { "dependencies": { "@protobuf-ts/runtime": "^2.11.1" } }, "sha1-pusvOEvOro0joB0LDjf68K82wXk="],
+
+    "@scure/base": ["@scure/base@2.2.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@scure/base/-/base-2.2.0.tgz", {}, "sha1-ExE3jtJH321Y+OuJQZIZZel+V0c="],
 
     "@types/bun": ["@types/bun@1.3.14", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@types/bun/-/bun-1.3.14.tgz", { "dependencies": { "bun-types": "1.3.14" } }, "sha1-vYtECRmiWHrd4xGmF6kgTzS4qMI="],
 
@@ -128,31 +188,133 @@
 
     "@typescript/typescript-win32-x64": ["@typescript/typescript-win32-x64@7.0.2", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@typescript/typescript-win32-x64/-/typescript-win32-x64-7.0.2.tgz", { "os": "win32", "cpu": "x64" }, "sha1-zzt7DWzlY12spMjgHBic3N5H7Dw="],
 
+    "@typescript/vfs": ["@typescript/vfs@1.6.4", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@typescript/vfs/-/vfs-1.6.4.tgz", { "dependencies": { "debug": "^4.4.3" }, "peerDependencies": { "typescript": "*" } }, "sha1-dUOjvZYXJ+tRyL2vw+1eD7X1bf8="],
+
+    "@typespec/ts-http-runtime": ["@typespec/ts-http-runtime@0.3.7", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@typespec/ts-http-runtime/-/ts-http-runtime-0.3.7.tgz", { "dependencies": { "http-proxy-agent": "^7.0.0", "https-proxy-agent": "^7.0.0", "tslib": "^2.6.2" } }, "sha1-mrJ1NYmDu9MLyJUM9NxX5kcGcPM="],
+
+    "abort-controller": ["abort-controller@3.0.0", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/abort-controller/-/abort-controller-3.0.0.tgz", { "dependencies": { "event-target-shim": "^5.0.0" } }, "sha1-6vVNU7YrrkE46AnKIlyEOabvs5I="],
+
+    "age-encryption": ["age-encryption@0.3.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/age-encryption/-/age-encryption-0.3.0.tgz", { "dependencies": { "@noble/ciphers": "^2.1.1", "@noble/curves": "^2.0.1", "@noble/hashes": "^2.0.1", "@noble/post-quantum": "^0.5.3", "@scure/base": "^2.0.0" } }, "sha1-ACEI5o/iPgX9oz0GwYc5xUwyf4U="],
+
+    "agent-base": ["agent-base@7.1.4", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/agent-base/-/agent-base-7.1.4.tgz", {}, "sha1-48121MVI7oldPD/Y3B9sW5Ay56g="],
+
     "ajv": ["ajv@8.20.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/ajv/-/ajv-8.20.0.tgz", { "dependencies": { "fast-deep-equal": "^3.1.3", "fast-uri": "^3.0.1", "json-schema-traverse": "^1.0.0", "require-from-string": "^2.0.2" } }, "sha1-MEs2Nq3Yi6fZNnYN1Q7OAG3qlfk="],
 
     "ajv-formats": ["ajv-formats@3.0.1", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/ajv-formats/-/ajv-formats-3.0.1.tgz", { "dependencies": { "ajv": "^8.0.0" } }, "sha1-PV3HYryhdnnDwup+kK1rdTIwlXg="],
 
+    "ansi-regex": ["ansi-regex@6.2.2", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/ansi-regex/-/ansi-regex-6.2.2.tgz", {}, "sha1-YCFu6kZNhkWXzigyAAc4oFiWUME="],
+
+    "ansi-styles": ["ansi-styles@6.2.3", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/ansi-styles/-/ansi-styles-6.2.3.tgz", {}, "sha1-wETV3MUhoHZBNHJZehrLHxA8QEE="],
+
+    "anynum": ["anynum@1.0.1", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/anynum/-/anynum-1.0.1.tgz", {}, "sha1-KqwA4I3603JsHUYuYNvC+DFlmkQ="],
+
+    "archiver": ["archiver@7.0.1", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/archiver/-/archiver-7.0.1.tgz", { "dependencies": { "archiver-utils": "^5.0.2", "async": "^3.2.4", "buffer-crc32": "^1.0.0", "readable-stream": "^4.0.0", "readdir-glob": "^1.1.2", "tar-stream": "^3.0.0", "zip-stream": "^6.0.1" } }, "sha1-ydkcNQNiBAuJJzeceqacBlUSL2E="],
+
+    "archiver-utils": ["archiver-utils@5.0.2", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/archiver-utils/-/archiver-utils-5.0.2.tgz", { "dependencies": { "glob": "^10.0.0", "graceful-fs": "^4.2.0", "is-stream": "^2.0.1", "lazystream": "^1.0.0", "lodash": "^4.17.15", "normalize-path": "^3.0.0", "readable-stream": "^4.0.0" } }, "sha1-Y7xxnZUYA+/HLPlhpW74EHYN0U0="],
+
+    "async": ["async@3.2.6", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/async/-/async-3.2.6.tgz", {}, "sha1-Gwco4Ukp1RuFtEm38G4nwRReOM4="],
+
+    "b4a": ["b4a@1.8.1", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/b4a/-/b4a-1.8.1.tgz", { "peerDependencies": { "react-native-b4a": "*" }, "optionalPeers": ["react-native-b4a"] }, "sha1-fxYzTKgBJ66yYGSiiEGsvxdIQKQ="],
+
     "balanced-match": ["balanced-match@4.0.4", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/balanced-match/-/balanced-match-4.0.4.tgz", {}, "sha1-v7EGYv7tgZaixi58aOF3IMJ0F5o="],
 
+    "bare-events": ["bare-events@2.9.1", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/bare-events/-/bare-events-2.9.1.tgz", { "peerDependencies": { "bare-abort-controller": "*" }, "optionalPeers": ["bare-abort-controller"] }, "sha1-XIZhaWY0O8sDobMVX+qyU+rb80k="],
+
+    "bare-fs": ["bare-fs@4.7.4", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/bare-fs/-/bare-fs-4.7.4.tgz", { "dependencies": { "bare-events": "^2.5.4", "bare-path": "^3.0.0", "bare-stream": "^2.6.4", "bare-url": "^2.2.2", "fast-fifo": "^1.3.2" }, "peerDependencies": { "bare-buffer": "*" }, "optionalPeers": ["bare-buffer"] }, "sha1-Q1CH1CR38Gft3zwsdG506dthd7w="],
+
+    "bare-path": ["bare-path@3.1.1", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/bare-path/-/bare-path-3.1.1.tgz", {}, "sha1-1KIHwIhgm0Zjp1VqRqlzQjmL9+I="],
+
+    "bare-stream": ["bare-stream@2.13.3", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/bare-stream/-/bare-stream-2.13.3.tgz", { "dependencies": { "b4a": "^1.8.1", "streamx": "^2.25.0", "teex": "^1.0.1" }, "peerDependencies": { "bare-abort-controller": "*", "bare-buffer": "*", "bare-events": "*" }, "optionalPeers": ["bare-abort-controller", "bare-buffer", "bare-events"] }, "sha1-9hhsfLtLv1OkVg815IsWNzulHOY="],
+
+    "bare-url": ["bare-url@2.4.5", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/bare-url/-/bare-url-2.4.5.tgz", { "dependencies": { "bare-path": "^3.0.0" } }, "sha1-UNIF+PJyTuxg/Qkbqc69Z1/KY6o="],
+
+    "base64-js": ["base64-js@1.5.1", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/base64-js/-/base64-js-1.5.1.tgz", {}, "sha1-GxtEAWClv3rUC2UPCVljSBkDkwo="],
+
     "before-after-hook": ["before-after-hook@4.0.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/before-after-hook/-/before-after-hook-4.0.0.tgz", {}, "sha1-zxRHq5Fg32pA82Idpk1v/DYFDLk="],
+
+    "binary": ["binary@0.3.0", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/binary/-/binary-0.3.0.tgz", { "dependencies": { "buffers": "~0.1.1", "chainsaw": "~0.1.0" } }, "sha1-n2BVO8XOjDOG87VTz/R0Yq3sqnk="],
 
     "bottleneck": ["bottleneck@2.19.5", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/bottleneck/-/bottleneck-2.19.5.tgz", {}, "sha1-XfC5D1n9R2VuvmPHiphBkgXK3ZE="],
 
     "brace-expansion": ["brace-expansion@5.0.7", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/brace-expansion/-/brace-expansion-5.0.7.tgz", { "dependencies": { "balanced-match": "^4.0.2" } }, "sha1-Gw5GlltHna1lr3N7SgJ5CgVJgzc="],
 
+    "buffer": ["buffer@6.0.3", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/buffer/-/buffer-6.0.3.tgz", { "dependencies": { "base64-js": "^1.3.1", "ieee754": "^1.2.1" } }, "sha1-Ks5XhFnMj74qcKqo9S7mO2p0xsY="],
+
+    "buffer-crc32": ["buffer-crc32@1.0.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/buffer-crc32/-/buffer-crc32-1.0.0.tgz", {}, "sha1-oQmTuQVQgdVTBL2f60oHLeF59AU="],
+
+    "buffers": ["buffers@0.1.1", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/buffers/-/buffers-0.1.1.tgz", {}, "sha1-skV5w77U1tOWru5tmorn9Ugqt7s="],
+
     "bun-types": ["bun-types@1.3.14", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/bun-types/-/bun-types-1.3.14.tgz", { "dependencies": { "@types/node": "*" } }, "sha1-qP4lOfxcWa5F8f3BjfyfjV6ruvQ="],
+
+    "chainsaw": ["chainsaw@0.1.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/chainsaw/-/chainsaw-0.1.0.tgz", { "dependencies": { "traverse": ">=0.3.0 <0.4" } }, "sha1-XqtQsor+WAdNDVgpE4iCi15fvJg="],
+
+    "color-convert": ["color-convert@2.0.1", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/color-convert/-/color-convert-2.0.1.tgz", { "dependencies": { "color-name": "~1.1.4" } }, "sha1-ctOmjVmMm9s68q0ehPIdiWq9TeM="],
+
+    "color-name": ["color-name@1.1.4", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/color-name/-/color-name-1.1.4.tgz", {}, "sha1-wqCah6y95pVD3m9j+jmVyCbFNqI="],
 
     "commander": ["commander@14.0.3", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/commander/-/commander-14.0.3.tgz", {}, "sha1-Ql15tI+a+C/Nnk/B6or2xewHu8I="],
 
+    "compress-commons": ["compress-commons@6.0.2", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/compress-commons/-/compress-commons-6.0.2.tgz", { "dependencies": { "crc-32": "^1.2.0", "crc32-stream": "^6.0.0", "is-stream": "^2.0.1", "normalize-path": "^3.0.0", "readable-stream": "^4.0.0" } }, "sha1-JtMSUaZrnWuiOoQGTs06anHSYJ4="],
+
     "content-type": ["content-type@2.0.0", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/content-type/-/content-type-2.0.0.tgz", {}, "sha1-L7Pt5p3/oK94ynxM51iWgGOLVt8="],
+
+    "core-util-is": ["core-util-is@1.0.3", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/core-util-is/-/core-util-is-1.0.3.tgz", {}, "sha1-pgQtNjTCsn6TKPg3uWX6yDgI24U="],
+
+    "crc-32": ["crc-32@1.2.2", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/crc-32/-/crc-32-1.2.2.tgz", { "bin": { "crc32": "bin/crc32.njs" } }, "sha1-PK01qTS4v3HyXKUkttpR+36s4v8="],
+
+    "crc32-stream": ["crc32-stream@6.0.0", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/crc32-stream/-/crc32-stream-6.0.0.tgz", { "dependencies": { "crc-32": "^1.2.0", "readable-stream": "^4.0.0" } }, "sha1-hSmjho+LJ6u5FfbDYXwPre2/lDA="],
+
+    "cross-spawn": ["cross-spawn@7.0.6", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/cross-spawn/-/cross-spawn-7.0.6.tgz", { "dependencies": { "path-key": "^3.1.0", "shebang-command": "^2.0.0", "which": "^2.0.1" } }, "sha1-ilj+ePANzXDDcEUXWd+/rwPo7p8="],
+
+    "debug": ["debug@4.4.3", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/debug/-/debug-4.4.3.tgz", { "dependencies": { "ms": "^2.1.3" } }, "sha1-xq5DLZvZZiWC/OCHCbA4xY6ePWo="],
+
+    "eastasianwidth": ["eastasianwidth@0.2.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/eastasianwidth/-/eastasianwidth-0.2.0.tgz", {}, "sha1-aWzi7Aqg5uqTo5f/zySqeEDIJ8s="],
+
+    "emoji-regex": ["emoji-regex@9.2.2", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/emoji-regex/-/emoji-regex-9.2.2.tgz", {}, "sha1-hAyIA7DYBH9P8M+WMXazLU7z7XI="],
+
+    "event-target-shim": ["event-target-shim@5.0.1", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/event-target-shim/-/event-target-shim-5.0.1.tgz", {}, "sha1-XU0+vflYPWOlMzzi3rdICrKwV4k="],
+
+    "events": ["events@3.3.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/events/-/events-3.3.0.tgz", {}, "sha1-Mala0Kkk4tLEGagTrrLE6HjqdAA="],
+
+    "events-universal": ["events-universal@1.0.1", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/events-universal/-/events-universal-1.0.1.tgz", { "dependencies": { "bare-events": "^2.7.0" } }, "sha1-tWqE/WEbZhDgotDwn4D9+THi3+Y="],
 
     "fast-deep-equal": ["fast-deep-equal@3.1.3", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz", {}, "sha1-On1WtVnWy8PrUSMlJE5hmmXGxSU="],
 
+    "fast-fifo": ["fast-fifo@1.3.2", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/fast-fifo/-/fast-fifo-1.3.2.tgz", {}, "sha1-KG4x3pbrltOKl4mYFXQLoqTzZAw="],
+
     "fast-uri": ["fast-uri@3.1.3", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/fast-uri/-/fast-uri-3.1.3.tgz", {}, "sha1-9pWkDwBqulBWMVc6ACHdshGUrRE="],
+
+    "fast-xml-builder": ["fast-xml-builder@1.3.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/fast-xml-builder/-/fast-xml-builder-1.3.0.tgz", { "dependencies": { "path-expression-matcher": "^1.6.2", "xml-naming": "^0.3.0" } }, "sha1-vISYBHlv5Hv5FQIt2Tmw/DC6RV0="],
+
+    "fast-xml-parser": ["fast-xml-parser@5.10.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/fast-xml-parser/-/fast-xml-parser-5.10.0.tgz", { "dependencies": { "@nodable/entities": "^2.2.0", "fast-xml-builder": "^1.2.0", "is-unsafe": "^2.0.0", "path-expression-matcher": "^1.6.2", "strnum": "^2.4.1", "xml-naming": "^0.3.0" }, "bin": { "fxparser": "src/cli/cli.js" } }, "sha1-jQir/k1sUenFtR9Be5lIWNvttNc="],
+
+    "foreground-child": ["foreground-child@3.3.1", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/foreground-child/-/foreground-child-3.3.1.tgz", { "dependencies": { "cross-spawn": "^7.0.6", "signal-exit": "^4.0.1" } }, "sha1-Mujp7Rtoo0l777msK2rfkqY4V28="],
 
     "glob": ["glob@13.0.6", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/glob/-/glob-13.0.6.tgz", { "dependencies": { "minimatch": "^10.2.2", "minipass": "^7.1.3", "path-scurry": "^2.0.2" } }, "sha1-B4ZmVmpCUUfMrPvS4zLetmor5x0="],
 
+    "graceful-fs": ["graceful-fs@4.2.11", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/graceful-fs/-/graceful-fs-4.2.11.tgz", {}, "sha1-QYPk6L8Iu24Fu7L30uDI9xLKQOM="],
+
+    "http-proxy-agent": ["http-proxy-agent@7.0.2", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/http-proxy-agent/-/http-proxy-agent-7.0.2.tgz", { "dependencies": { "agent-base": "^7.1.0", "debug": "^4.3.4" } }, "sha1-mosfJGhmwChQlIZYX2K48sGMJw4="],
+
+    "https-proxy-agent": ["https-proxy-agent@7.0.6", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz", { "dependencies": { "agent-base": "^7.1.2", "debug": "4" } }, "sha1-2o3+rH2hMLBcK6S1nJts1mYRprk="],
+
     "husky": ["husky@9.1.7", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/husky/-/husky-9.1.7.tgz", { "bin": { "husky": "bin.js" } }, "sha1-1Go4A10QG0anBFaoUP9CATRMCy0="],
+
+    "ieee754": ["ieee754@1.2.1", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/ieee754/-/ieee754-1.2.1.tgz", {}, "sha1-jrehCmP/8l0VpXsAFYbRd9Gw01I="],
+
+    "inherits": ["inherits@2.0.4", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/inherits/-/inherits-2.0.4.tgz", {}, "sha1-D6LGT5MpF8NDOg3tVTY6rjdBa3w="],
+
+    "is-fullwidth-code-point": ["is-fullwidth-code-point@3.0.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/is-fullwidth-code-point/-/is-fullwidth-code-point-3.0.0.tgz", {}, "sha1-8Rb4Bk/pCz94RKOJl8C3UFEmnx0="],
+
+    "is-stream": ["is-stream@2.0.1", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/is-stream/-/is-stream-2.0.1.tgz", {}, "sha1-+sHj1TuXrVqdCunO8jifWBClwHc="],
+
+    "is-unsafe": ["is-unsafe@2.0.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/is-unsafe/-/is-unsafe-2.0.0.tgz", {}, "sha1-wNzk4GdCZi3eJjYBYOQU6kh9ouk="],
+
+    "isarray": ["isarray@1.0.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/isarray/-/isarray-1.0.0.tgz", {}, "sha1-u5NdSFgsuhaMBoNJV6VKPgcSTxE="],
+
+    "isexe": ["isexe@2.0.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/isexe/-/isexe-2.0.0.tgz", {}, "sha1-6PvzdNxVb/iUehDcsFctYz8s+hA="],
+
+    "jackspeak": ["jackspeak@3.4.3", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/jackspeak/-/jackspeak-3.4.3.tgz", { "dependencies": { "@isaacs/cliui": "^8.0.2" }, "optionalDependencies": { "@pkgjs/parseargs": "^0.11.0" } }, "sha1-iDOp2Jq0rN5hiJQr0cU7Y5DtWoo="],
 
     "json-schema-traverse": ["json-schema-traverse@1.0.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/json-schema-traverse/-/json-schema-traverse-1.0.0.tgz", {}, "sha1-rnvLNlard6c7pcSb9lTzjmtoYOI="],
 
@@ -160,19 +322,75 @@
 
     "json5": ["json5@2.2.3", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/json5/-/json5-2.2.3.tgz", { "bin": { "json5": "lib/cli.js" } }, "sha1-eM1vGhm9wStz21rQxh79ZsHikoM="],
 
+    "jwt-decode": ["jwt-decode@4.0.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/jwt-decode/-/jwt-decode-4.0.0.tgz", {}, "sha1-InA1JCX9QTeFsvrxH251XFFRvUs="],
+
+    "lazystream": ["lazystream@1.0.1", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/lazystream/-/lazystream-1.0.1.tgz", { "dependencies": { "readable-stream": "^2.0.5" } }, "sha1-SUyDEGLx+UCCUexE2xy6KSQqJjg="],
+
+    "lodash": ["lodash@4.18.1", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/lodash/-/lodash-4.18.1.tgz", {}, "sha1-/ytmwfYybVlRPeJAe/iBQ5gSdxw="],
+
     "lru-cache": ["lru-cache@11.5.2", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/lru-cache/-/lru-cache-11.5.2.tgz", {}, "sha1-AOFmZckMYg+6FKPDaHMql2ST92A="],
 
     "minimatch": ["minimatch@10.2.5", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/minimatch/-/minimatch-10.2.5.tgz", { "dependencies": { "brace-expansion": "^5.0.5" } }, "sha1-vUhoegvjjtKWE5kQVgD4MglYYdE="],
 
+    "minimist": ["minimist@1.2.8", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/minimist/-/minimist-1.2.8.tgz", {}, "sha1-waRk52kzAuCCoHXO4MBXdBrEdyw="],
+
     "minipass": ["minipass@7.1.3", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/minipass/-/minipass-7.1.3.tgz", {}, "sha1-eTibTrG7LQA6m7qH1JLyvTe9xls="],
+
+    "mkdirp": ["mkdirp@0.5.6", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/mkdirp/-/mkdirp-0.5.6.tgz", { "dependencies": { "minimist": "^1.2.6" }, "bin": { "mkdirp": "bin/cmd.js" } }, "sha1-fe8D0kMtyuS6HWEURcSDlgYiVfY="],
+
+    "ms": ["ms@2.1.3", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/ms/-/ms-2.1.3.tgz", {}, "sha1-V0yBOM4dK1hh8LRFedut1gxmFbI="],
 
     "normalize-path": ["normalize-path@3.0.0", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/normalize-path/-/normalize-path-3.0.0.tgz", {}, "sha1-Dc1p/yOhybEf0JeDFmRKA4ghamU="],
 
+    "package-json-from-dist": ["package-json-from-dist@1.0.1", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/package-json-from-dist/-/package-json-from-dist-1.0.1.tgz", {}, "sha1-TxRxoBCCeob5TP2bByfjbSZ95QU="],
+
+    "path-expression-matcher": ["path-expression-matcher@1.6.2", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/path-expression-matcher/-/path-expression-matcher-1.6.2.tgz", {}, "sha1-VnxzwHGX6dzvJOkO3NxXEFZZkWg="],
+
+    "path-key": ["path-key@3.1.1", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/path-key/-/path-key-3.1.1.tgz", {}, "sha1-WB9q3mWMu6ZaDTOA3ndTKVBU83U="],
+
     "path-scurry": ["path-scurry@2.0.2", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/path-scurry/-/path-scurry-2.0.2.tgz", { "dependencies": { "lru-cache": "^11.0.0", "minipass": "^7.1.2" } }, "sha1-a+DQ7gKhDZ4N56mLrmXhgskGH4U="],
+
+    "process": ["process@0.11.10", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/process/-/process-0.11.10.tgz", {}, "sha1-czIwDoQBYb2j5podHZGn1LwW8YI="],
+
+    "process-nextick-args": ["process-nextick-args@2.0.1", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/process-nextick-args/-/process-nextick-args-2.0.1.tgz", {}, "sha1-eCDZsWEgzFXKmud5JoCufbptf+I="],
+
+    "readable-stream": ["readable-stream@4.7.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/readable-stream/-/readable-stream-4.7.0.tgz", { "dependencies": { "abort-controller": "^3.0.0", "buffer": "^6.0.3", "events": "^3.3.0", "process": "^0.11.10", "string_decoder": "^1.3.0" } }, "sha1-ztvYoRRsE9//jasUBoAo1YwVrJE="],
+
+    "readdir-glob": ["readdir-glob@1.1.3", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/readdir-glob/-/readdir-glob-1.1.3.tgz", { "dependencies": { "minimatch": "^5.1.0" } }, "sha1-w9gx9R9ee/pi+i/75LUIxkDwlYQ="],
 
     "require-from-string": ["require-from-string@2.0.2", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/require-from-string/-/require-from-string-2.0.2.tgz", {}, "sha1-iaf92TgmEmcxjq/hT5wy5ZjDaQk="],
 
+    "safe-buffer": ["safe-buffer@5.2.1", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/safe-buffer/-/safe-buffer-5.2.1.tgz", {}, "sha1-Hq+fqb2x/dTsdfWPnNtOa3gn7sY="],
+
     "safe-stable-stringify": ["safe-stable-stringify@2.5.0", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/safe-stable-stringify/-/safe-stable-stringify-2.5.0.tgz", {}, "sha1-TKL444XygxxDKnGbEIo7969Cod0="],
+
+    "shebang-command": ["shebang-command@2.0.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/shebang-command/-/shebang-command-2.0.0.tgz", { "dependencies": { "shebang-regex": "^3.0.0" } }, "sha1-zNCvT4g1+9wmW4JGGq8MNmY/NOo="],
+
+    "shebang-regex": ["shebang-regex@3.0.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/shebang-regex/-/shebang-regex-3.0.0.tgz", {}, "sha1-rhbxZE2HPsrYQ7AwexQzYtTEIXI="],
+
+    "signal-exit": ["signal-exit@4.1.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/signal-exit/-/signal-exit-4.1.0.tgz", {}, "sha1-lSGIwcvVRgcOLdIND0HArgUwywQ="],
+
+    "streamx": ["streamx@2.28.0", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/streamx/-/streamx-2.28.0.tgz", { "dependencies": { "events-universal": "^1.0.0", "fast-fifo": "^1.3.2", "text-decoder": "^1.1.0" } }, "sha1-A1q1YFe37SIRtR1TLmlz8PmfvxE="],
+
+    "string-width": ["string-width@5.1.2", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/string-width/-/string-width-5.1.2.tgz", { "dependencies": { "eastasianwidth": "^0.2.0", "emoji-regex": "^9.2.2", "strip-ansi": "^7.0.1" } }, "sha1-FPja7G2B5yIdKjV+Zoyrc728p5Q="],
+
+    "string-width-cjs": ["string-width@4.2.3", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/string-width/-/string-width-4.2.3.tgz", { "dependencies": { "emoji-regex": "^8.0.0", "is-fullwidth-code-point": "^3.0.0", "strip-ansi": "^6.0.1" } }, "sha1-JpxxF9J7Ba0uU2gwqOyJXvnG0BA="],
+
+    "string_decoder": ["string_decoder@1.3.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/string_decoder/-/string_decoder-1.3.0.tgz", { "dependencies": { "safe-buffer": "~5.2.0" } }, "sha1-QvEUWUpGzxqOMLCoT1bHjD7awh4="],
+
+    "strip-ansi": ["strip-ansi@7.2.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/strip-ansi/-/strip-ansi-7.2.0.tgz", { "dependencies": { "ansi-regex": "^6.2.2" } }, "sha1-0iomlSKDamJ6+NBLXD/Sx/o+MuM="],
+
+    "strip-ansi-cjs": ["strip-ansi@6.0.1", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/strip-ansi/-/strip-ansi-6.0.1.tgz", { "dependencies": { "ansi-regex": "^5.0.1" } }, "sha1-nibGPTD1NEPpSJSVshBdN7Z6hdk="],
+
+    "strnum": ["strnum@2.4.1", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/strnum/-/strnum-2.4.1.tgz", { "dependencies": { "anynum": "^1.0.1" } }, "sha1-hUF/aDETut6g/n4XInZ2+In/flg="],
+
+    "tar-stream": ["tar-stream@3.2.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/tar-stream/-/tar-stream-3.2.0.tgz", { "dependencies": { "b4a": "^1.6.4", "bare-fs": "^4.5.5", "fast-fifo": "^1.2.0", "streamx": "^2.15.0" } }, "sha1-DQBk2bZ+o8n1q94VXjX6qw3zdZE="],
+
+    "teex": ["teex@1.0.1", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/teex/-/teex-1.0.1.tgz", { "dependencies": { "streamx": "^2.12.5" } }, "sha1-uPpyRe+Ojv+oB4KBlGyFq3gKCxI="],
+
+    "text-decoder": ["text-decoder@1.2.7", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/text-decoder/-/text-decoder-1.2.7.tgz", { "dependencies": { "b4a": "^1.6.4" } }, "sha1-XQc6mnS5wKnSjfrcq5a2BK9X2Lo="],
+
+    "traverse": ["traverse@0.3.9", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/traverse/-/traverse-0.3.9.tgz", {}, "sha1-cXuPIgzAu3tE5AUUwisui7xw2Lk="],
 
     "ts-json-schema-generator": ["ts-json-schema-generator@2.9.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/ts-json-schema-generator/-/ts-json-schema-generator-2.9.0.tgz", { "dependencies": { "@types/json-schema": "^7.0.15", "commander": "^14.0.3", "glob": "^13.0.6", "json5": "^2.2.3", "normalize-path": "^3.0.0", "safe-stable-stringify": "^2.5.0", "tslib": "^2.8.1", "typescript": "^5.9.3" }, "bin": { "ts-json-schema-generator": "bin/ts-json-schema-generator.js" } }, "sha1-zCuZ2w5k7p7miYyMdJBTN1Nu+fw="],
 
@@ -188,14 +406,80 @@
 
     "universal-user-agent": ["universal-user-agent@7.0.3", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/universal-user-agent/-/universal-user-agent-7.0.3.tgz", {}, "sha1-wFhwpYElotwAQx8t+BWnf+aXNr4="],
 
+    "unzip-stream": ["unzip-stream@0.3.4", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/unzip-stream/-/unzip-stream-0.3.4.tgz", { "dependencies": { "binary": "^0.3.0", "mkdirp": "^0.5.1" } }, "sha1-tFdnVQYYCc8hC3ds8miI1qeCPq0="],
+
+    "util-deprecate": ["util-deprecate@1.0.2", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/util-deprecate/-/util-deprecate-1.0.2.tgz", {}, "sha1-RQ1Nyfpw3nMnYvvS1KKJgUGaDM8="],
+
+    "which": ["which@2.0.2", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/which/-/which-2.0.2.tgz", { "dependencies": { "isexe": "^2.0.0" }, "bin": { "node-which": "./bin/node-which" } }, "sha1-fGqN0KY2oDJ+ELWckobu6T8/UbE="],
+
+    "wrap-ansi": ["wrap-ansi@8.1.0", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/wrap-ansi/-/wrap-ansi-8.1.0.tgz", { "dependencies": { "ansi-styles": "^6.1.0", "string-width": "^5.0.1", "strip-ansi": "^7.0.1" } }, "sha1-VtwiNo7lcPrOG0mBmXXZuaXq0hQ="],
+
+    "wrap-ansi-cjs": ["wrap-ansi@7.0.0", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/wrap-ansi/-/wrap-ansi-7.0.0.tgz", { "dependencies": { "ansi-styles": "^4.0.0", "string-width": "^4.1.0", "strip-ansi": "^6.0.0" } }, "sha1-Z+FFz/UQpqaYS98RUpEdadLrnkM="],
+
+    "xml-naming": ["xml-naming@0.3.0", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/xml-naming/-/xml-naming-0.3.0.tgz", {}, "sha1-RsHhi/4oWEeZgt0qzPNNFudJ7aI="],
+
     "yaml": ["yaml@2.9.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/yaml/-/yaml-2.9.0.tgz", { "bin": { "yaml": "./bin.mjs" } }, "sha1-eCdK/ZNZih391hMN9qVm3vy/mqQ="],
+
+    "zip-stream": ["zip-stream@6.0.1", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/zip-stream/-/zip-stream-6.0.1.tgz", { "dependencies": { "archiver-utils": "^5.0.0", "compress-commons": "^6.0.2", "readable-stream": "^4.0.0" } }, "sha1-4UG5MO1gzK9df6nIJg4NF0iiu/s="],
 
     "zod": ["zod@4.4.3", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/zod/-/zod-4.4.3.tgz", {}, "sha1-toDxcohdGLvr8hqDTqJeVaG781Y="],
 
+    "@actions/github/@actions/http-client": ["@actions/http-client@3.0.2", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@actions/http-client/-/http-client-3.0.2.tgz", { "dependencies": { "tunnel": "^0.0.6", "undici": "^6.23.0" } }, "sha1-PbnIOvnSnVGsjDC0W8F/cBS+sbI="],
+
+    "@bufbuild/protoplugin/typescript": ["typescript@5.4.5", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/typescript/-/typescript-5.4.5.tgz", { "bin": { "tsc": "./bin/tsc", "tsserver": "./bin/tsserver" } }, "sha1-QszvLFcf29D2cYsdH15uXvAG9hE="],
+
+    "@noble/post-quantum/@noble/curves": ["@noble/curves@2.0.1", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@noble/curves/-/curves-2.0.1.tgz", { "dependencies": { "@noble/hashes": "2.0.1" } }, "sha1-ZLqL1ehWSgKUJlVgJRVkbfHNs60="],
+
+    "@noble/post-quantum/@noble/hashes": ["@noble/hashes@2.0.1", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@noble/hashes/-/hashes-2.0.1.tgz", {}, "sha1-/BqSgGHRIysKUrt1Q5PDelIWyJ4="],
+
+    "@protobuf-ts/plugin/typescript": ["typescript@3.9.10", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/typescript/-/typescript-3.9.10.tgz", { "bin": { "tsc": "./bin/tsc", "tsserver": "./bin/tsserver" } }, "sha1-cPORCselHta+952ngAaQsZv3eLg="],
+
+    "archiver-utils/glob": ["glob@10.5.0", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/glob/-/glob-10.5.0.tgz", { "dependencies": { "foreground-child": "^3.1.0", "jackspeak": "^3.1.2", "minimatch": "^9.0.4", "minipass": "^7.1.2", "package-json-from-dist": "^1.0.0", "path-scurry": "^1.11.1" }, "bin": { "glob": "./dist/esm/bin.mjs" } }, "sha1-jsA1WRnNMzjChCiiPU8k7MX+c4w="],
+
     "bun-types/@types/node": ["@types/node@26.1.1", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@types/node/-/node-26.1.1.tgz", { "dependencies": { "undici-types": "~8.3.0" } }, "sha1-utdY1gHpfWz0V9IE7najX8570Rk="],
+
+    "lazystream/readable-stream": ["readable-stream@2.3.8", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/readable-stream/-/readable-stream-2.3.8.tgz", { "dependencies": { "core-util-is": "~1.0.0", "inherits": "~2.0.3", "isarray": "~1.0.0", "process-nextick-args": "~2.0.0", "safe-buffer": "~5.1.1", "string_decoder": "~1.1.1", "util-deprecate": "~1.0.1" } }, "sha1-kRJegEK7obmIf0k0X2J3Anzovps="],
+
+    "readdir-glob/minimatch": ["minimatch@5.1.9", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/minimatch/-/minimatch-5.1.9.tgz", { "dependencies": { "brace-expansion": "^2.0.1" } }, "sha1-EpPvFdsAmLOUVA6Pn3RPn9qN7ks="],
+
+    "string-width-cjs/emoji-regex": ["emoji-regex@8.0.0", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/emoji-regex/-/emoji-regex-8.0.0.tgz", {}, "sha1-6Bj9ac5cz8tARZT4QpY79TFkzDc="],
+
+    "string-width-cjs/strip-ansi": ["strip-ansi@6.0.1", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/strip-ansi/-/strip-ansi-6.0.1.tgz", { "dependencies": { "ansi-regex": "^5.0.1" } }, "sha1-nibGPTD1NEPpSJSVshBdN7Z6hdk="],
+
+    "strip-ansi-cjs/ansi-regex": ["ansi-regex@5.0.1", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/ansi-regex/-/ansi-regex-5.0.1.tgz", {}, "sha1-CCyyyJyf6GWaMRpTvWpNxTAdswQ="],
 
     "ts-json-schema-generator/typescript": ["typescript@5.9.3", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/typescript/-/typescript-5.9.3.tgz", { "bin": { "tsc": "./bin/tsc", "tsserver": "./bin/tsserver" } }, "sha1-W09Z4VMQqxeiFvXWz1PuR27eZw8="],
 
+    "wrap-ansi-cjs/ansi-styles": ["ansi-styles@4.3.0", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/ansi-styles/-/ansi-styles-4.3.0.tgz", { "dependencies": { "color-convert": "^2.0.1" } }, "sha1-7dgDYornHATIWuegkG7a00tkiTc="],
+
+    "wrap-ansi-cjs/string-width": ["string-width@4.2.3", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/string-width/-/string-width-4.2.3.tgz", { "dependencies": { "emoji-regex": "^8.0.0", "is-fullwidth-code-point": "^3.0.0", "strip-ansi": "^6.0.1" } }, "sha1-JpxxF9J7Ba0uU2gwqOyJXvnG0BA="],
+
+    "wrap-ansi-cjs/strip-ansi": ["strip-ansi@6.0.1", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/strip-ansi/-/strip-ansi-6.0.1.tgz", { "dependencies": { "ansi-regex": "^5.0.1" } }, "sha1-nibGPTD1NEPpSJSVshBdN7Z6hdk="],
+
+    "archiver-utils/glob/minimatch": ["minimatch@9.0.9", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/minimatch/-/minimatch-9.0.9.tgz", { "dependencies": { "brace-expansion": "^2.0.2" } }, "sha1-mwy5/LeAh/b9fqur4lEcTT1gV04="],
+
+    "archiver-utils/glob/path-scurry": ["path-scurry@1.11.1", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/path-scurry/-/path-scurry-1.11.1.tgz", { "dependencies": { "lru-cache": "^10.2.0", "minipass": "^5.0.0 || ^6.0.2 || ^7.0.0" } }, "sha1-eWCmaIiFlKByCxKpEdGnQqufEdI="],
+
     "bun-types/@types/node/undici-types": ["undici-types@8.3.0", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/undici-types/-/undici-types-8.3.0.tgz", {}, "sha1-ROn8nzJEZIzeo15Pm7LWgelBCAk="],
+
+    "lazystream/readable-stream/safe-buffer": ["safe-buffer@5.1.2", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/safe-buffer/-/safe-buffer-5.1.2.tgz", {}, "sha1-mR7GnSluAxN0fVm9/St0XDX4go0="],
+
+    "lazystream/readable-stream/string_decoder": ["string_decoder@1.1.1", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/string_decoder/-/string_decoder-1.1.1.tgz", { "dependencies": { "safe-buffer": "~5.1.0" } }, "sha1-nPFhG6YmhdcDCunkujQUnDrwP8g="],
+
+    "readdir-glob/minimatch/brace-expansion": ["brace-expansion@2.1.2", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/brace-expansion/-/brace-expansion-2.1.2.tgz", { "dependencies": { "balanced-match": "^1.0.0" } }, "sha1-C7oicf631Fiw0xrRNiWqpHVEMeI="],
+
+    "string-width-cjs/strip-ansi/ansi-regex": ["ansi-regex@5.0.1", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/ansi-regex/-/ansi-regex-5.0.1.tgz", {}, "sha1-CCyyyJyf6GWaMRpTvWpNxTAdswQ="],
+
+    "wrap-ansi-cjs/string-width/emoji-regex": ["emoji-regex@8.0.0", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/emoji-regex/-/emoji-regex-8.0.0.tgz", {}, "sha1-6Bj9ac5cz8tARZT4QpY79TFkzDc="],
+
+    "wrap-ansi-cjs/strip-ansi/ansi-regex": ["ansi-regex@5.0.1", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/ansi-regex/-/ansi-regex-5.0.1.tgz", {}, "sha1-CCyyyJyf6GWaMRpTvWpNxTAdswQ="],
+
+    "archiver-utils/glob/minimatch/brace-expansion": ["brace-expansion@2.1.2", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/brace-expansion/-/brace-expansion-2.1.2.tgz", { "dependencies": { "balanced-match": "^1.0.0" } }, "sha1-C7oicf631Fiw0xrRNiWqpHVEMeI="],
+
+    "archiver-utils/glob/path-scurry/lru-cache": ["lru-cache@10.4.3", "https://ms-feed-12.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/lru-cache/-/lru-cache-10.4.3.tgz", {}, "sha1-QQ/IoXtw5ZgBPfJXwkRrfzOD8Rk="],
+
+    "readdir-glob/minimatch/brace-expansion/balanced-match": ["balanced-match@1.0.2", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/balanced-match/-/balanced-match-1.0.2.tgz", {}, "sha1-6D46fj8wCzTLnYf2FfoMvzV2kO4="],
+
+    "archiver-utils/glob/minimatch/brace-expansion/balanced-match": ["balanced-match@1.0.2", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/balanced-match/-/balanced-match-1.0.2.tgz", {}, "sha1-6D46fj8wCzTLnYf2FfoMvzV2kO4="],
   }
 }

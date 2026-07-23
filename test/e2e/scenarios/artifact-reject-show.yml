@@ -1,0 +1,21 @@
+# Config rejection: a delivering report channel with private-repos: show. A
+# report is only ever composed for a REDACTED target, so pairing any delivering
+# channel with show (which redacts nothing) would silently deliver nothing.
+# artifact is the channel under test here; the show-exclusivity check fires
+# before the key is even resolved, so a valid report-public-key does not save it.
+name: artifact-reject-show
+settings: {}
+inputs:
+  mode: apply
+  private_repos: show
+  private_report: artifact
+  report_public_key: "age1wshulnlu6mpa4rx54w6xs9kscqw7uqem3fh748xsrfyqusgmfv2qfca3qt"
+expect:
+  exit_code: 1
+  result: failed
+  stdout_contains:
+    - 'the "private-report" input delivers reports only for redacted targets, but "private-repos" is "show"'
+    - "Set private-repos: redact, or set private-report: none"
+  never:
+    - "GET /repos/{repo}"
+    - "GET /repos/{repo}/contents"

@@ -1,0 +1,21 @@
+# Config rejection: report-public-key supplied with a channel that never uses it.
+# The key only applies to private-report: artifact; setting it under issue (or
+# none) would silently do nothing, so parseConfig rejects the run and names the
+# channel it was set under. issue is the interesting case (a real delivering
+# channel that still has no use for an age recipient).
+name: artifact-reject-key-wrong-channel
+settings: {}
+inputs:
+  mode: apply
+  private_repos: redact
+  private_report: issue
+  report_public_key: "age1wshulnlu6mpa4rx54w6xs9kscqw7uqem3fh748xsrfyqusgmfv2qfca3qt"
+expect:
+  exit_code: 1
+  result: failed
+  stdout_contains:
+    - 'the "report-public-key" input only applies to private-report: artifact, but the channel is "issue"'
+    - "Remove report-public-key, or set private-report: artifact"
+  never:
+    - "GET /repos/{repo}"
+    - "GET /repos/{repo}/contents"

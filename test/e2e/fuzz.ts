@@ -400,10 +400,17 @@ async function multiRepoFuzzIteration(seed: number): Promise<IterationResult> {
     if (canaries.length > 0) {
       const shown = await runScenario({
         ...scenario,
-        // Drop private_report too: `issue` + `show` is rejected at config parse
-        // (show redacts nothing), which would make the counterfactual run fail to
-        // start and falsely read as "no canary surfaced".
-        inputs: { ...scenario.inputs, private_repos: "show", private_report: "none" },
+        // Drop the whole report config: a delivering channel (`issue` or
+        // `artifact`) + `show` is rejected at config parse (show redacts
+        // nothing), and a leftover report_public_key without private-report:
+        // artifact is rejected too. Either rejection would make the
+        // counterfactual fail to start and falsely read as "no canary surfaced".
+        inputs: {
+          ...scenario.inputs,
+          private_repos: "show",
+          private_report: "none",
+          report_public_key: undefined,
+        },
       });
       const rendered = [
         stripDebugLines(stripMaskLines(shown.stdout)),
@@ -453,6 +460,39 @@ async function multiRepoFuzzIteration(seed: number): Promise<IterationResult> {
     }
   }
 
+  // ARTIFACT CHANNEL ASSERTION: under private-report: artifact, every redacted
+  // target's report is accumulated and uploaded as ONE age-encrypted workflow
+  // artifact. There is no readable delivered body in the harness (the upload
+  // fails safely: ACTIONS_RUNTIME_TOKEN is absent), so there is no positive
+  // canary-in-body check here - the leak invariant above already proves the
+  // report plaintext reached no PUBLIC surface, which is the property that
+  // matters. Two things must hold: the artifact channel never touches the issue
+  // routes (that is the issue channel's job), and when a report was actually
+  // composed (a redacted target delivered), the run emitted the ONE safe warning
+  // naming the artifact service - never a slug or the report plaintext.
+  if (meta.privateReport === "artifact") {
+    const issueWrites = report.requests.filter(
+      (r) => r.method !== "GET" && /\/issues(\/|$|\?)/.test(r.pathname),
+    );
+    if (issueWrites.length > 0) {
+      const sample = issueWrites.map((r) => `${r.method} ${r.pathname}`).join(", ");
+      problems.push(`artifact channel wrote to the issue routes: ${sample}`);
+    }
+    const composed = meta.repos.some((r) => reportDelivers(r));
+    // The upload is accumulated into ONE artifact after the whole loop, so a
+    // composed report yields EXACTLY ONE safe upload-failure warning - never one
+    // per target. Count the warning lines so a per-target repeated-warning
+    // regression (or a silent zero) fails here.
+    const uploadWarnings = report.stdout
+      .split("\n")
+      .filter((line) => line.includes("could not upload the private report artifact")).length;
+    if (composed && uploadWarnings !== 1) {
+      problems.push(
+        `artifact channel composed a report but emitted ${uploadWarnings} upload-failure warning(s), expected exactly 1`,
+      );
+    }
+  }
+
   return {
     ok: problems.length === 0,
     failure: problems.length > 0 ? problems.join("; ") : undefined,
@@ -462,12 +502,14 @@ async function multiRepoFuzzIteration(seed: number): Promise<IterationResult> {
 }
 
 /**
- * Whether a redacted target's private report DEFINITELY delivers, so its canary
- * must appear in the report issue body. Only asserted for the fully-granted
- * (empty per-repo mask) forced-private target: it has a settings file, Issues
- * write, and Contents read, so the issue channel always succeeds. Other redacted
- * targets may have Issues denied (a safe warning, no body), so they are not
- * asserted - the leak invariant already covers them.
+ * Whether a redacted target's private report DEFINITELY composes and delivers.
+ * Only true for the fully-granted (empty per-repo mask) forced-private target: it
+ * has a settings file, Issues write, and Contents read, so its report is always
+ * composed. Under the issue channel that means its canary must appear in the
+ * report ISSUE body; under the artifact channel it means a report was composed,
+ * so the safe upload-failure warning must fire. Other redacted targets may have
+ * Issues denied (a safe warning, no body), so they are not asserted - the leak
+ * invariant already covers them.
  */
 function reportDelivers(repo: MultiRepoMeta): boolean {
   return repo.redacted && repo.meta !== null && Object.keys(repo.meta.mask).length === 0;

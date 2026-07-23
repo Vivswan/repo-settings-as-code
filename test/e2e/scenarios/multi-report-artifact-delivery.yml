@@ -1,0 +1,69 @@
+# The artifact report channel age-encrypts every redacted target's full report
+# and uploads it as ONE workflow artifact. In the harness there is no
+# ACTIONS_RUNTIME_TOKEN (that only exists on a real runner), so the upload fails
+# gracefully: the run stays GREEN, the target's own result is untouched (it still
+# drifts on its own merits), and the action emits ONE safe warning naming the
+# artifact service - never a slug, a canary, or the composed report plaintext.
+#
+# svc-artifact is proven private (private visibility, administration:read lets the
+# visibility probe succeed) and drifts in check mode on an undeclared live label
+# (ARTIFACTLEAK-sentinel). Under private-report: artifact with a valid age
+# recipient, the report is composed and handed to the encrypt+upload path. The
+# leak invariant holds on every public surface: the real slug, the private
+# sentinel, and the report body never appear in the summary, on stdout, on
+# stderr, or in any output value. No issue is ever written (the artifact channel
+# does not touch the issue routes).
+name: multi-report-artifact-delivery
+settings: {}
+inputs:
+  mode: check
+  private_repos: redact
+  private_report: artifact
+  report_public_key: "age1wshulnlu6mpa4rx54w6xs9kscqw7uqem3fh748xsrfyqusgmfv2qfca3qt"
+repos:
+  e2e-owner/svc-artifact:
+    settings:
+      labels:
+        - name: declared
+          color: "00ff00"
+    live_state:
+      repo:
+        private: true
+        visibility: private
+      labels:
+        - name: declared
+          color: "00ff00"
+        - name: ARTIFACTLEAK-sentinel
+          color: "abcdef"
+    permissions:
+      issues: write
+      contents: read
+      administration: read
+expect:
+  # Check-mode drift fails the run on its own; the artifact upload failure is a
+  # warning and does NOT change that. (The point under test is that the run's
+  # result is decided by the target, not the auxiliary delivery.)
+  exit_code: 1
+  result: drift
+  repos_result:
+    "private repository #1": drift
+  summary_contains:
+    - "private repository #1"
+  # The safe warning about the artifact service is emitted (the runtime token is
+  # absent in the harness). It names the service and the remedy, never a slug.
+  stdout_contains:
+    - "could not upload the private report artifact"
+    - "set private-report: none if it persists"
+  # The leak invariant: the real slug, the private sentinel, and any report body
+  # detail appear on NO public surface. leaks_nowhere runs the whole-surface
+  # checkLeaks primitive (summary + stdout + stderr, mask lines stripped, + every
+  # output value), so the composed plaintext is proven not to print ANYWHERE - not
+  # just in the summary or on stdout, but also on stderr and in the outputs.
+  leaks_nowhere:
+    - "svc-artifact"
+    - "ARTIFACTLEAK-sentinel"
+  # The artifact channel never touches the issue routes: no report issue is
+  # created or updated for the target.
+  never:
+    - "POST /repos/e2e-owner/svc-artifact/issues"
+    - "POST /repos/e2e-owner/svc-artifact/labels"

@@ -68,7 +68,14 @@ export const InputsSchema = z
     required_sections: z.string().optional(),
     sections: z.string().optional(),
     private_repos: z.enum(["redact", "show"]).optional(),
-    private_report: z.enum(["none", "issue"]).optional(),
+    private_report: z.enum(["none", "issue", "artifact"]).optional(),
+    /**
+     * The age recipient the `artifact` channel encrypts the report to,
+     * forwarded as INPUT_REPORT-PUBLIC-KEY. A config-rejection scenario sets a
+     * malformed value on purpose; a delivery scenario sets a valid generated
+     * recipient (see ARTIFACT_TEST_RECIPIENT in the runner).
+     */
+    report_public_key: z.string().optional(),
   })
   .strict();
 
@@ -112,6 +119,17 @@ export const ExpectSchema = z
      * both land on stdout.
      */
     stdout_lacks: z.array(z.string()).optional(),
+    /**
+     * Substrings that must appear on NO publicly-readable surface at all: the
+     * step summary, stdout, stderr (both with the `::add-mask::` lines stripped),
+     * AND every action output value. This is the whole-surface leak invariant -
+     * the same checkLeaks primitive the fuzzer applies - for a scenario that
+     * needs to prove a slug or sentinel leaked NOWHERE, not just from one named
+     * surface. Prefer this over listing the same needle in summary_lacks AND
+     * stdout_lacks; reserve those two for a string that is allowed on one surface
+     * but forbidden on another.
+     */
+    leaks_nowhere: z.array(z.string()).optional(),
     /**
      * The private-report issue channel's delivery to one target repo. The runner
      * inspects the recorded issue create/patch requests for that slug:

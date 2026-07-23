@@ -8,8 +8,14 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
+import {
+  DEFAULT_PRIVATE_REPOS,
+  PRIVATE_REPORT_CHANNELS,
+  REDACTED_DETAIL,
+} from "../../src/action/redact.js";
 import { validateSettingsDoc } from "../../src/engine/orchestrate.js";
 import type { Io } from "../../src/io.js";
+import { ARTIFACT_FILE, ARTIFACT_NAME } from "../../src/report/artifact-report.js";
 import { PROBOT_PARITY_KEYS, SECTION_KEYS } from "../../src/schema.js";
 import { SECTIONS } from "../../src/sections/registry.js";
 import { SPECIAL_KEYS } from "../../src/sections/repository.js";
@@ -167,6 +173,52 @@ describe("README migration paragraph", () => {
       extra,
       `README migration parity clause claims parity for non-parity section(s): ${extra.join(", ")}`,
     ).toEqual([]);
+  });
+});
+
+describe("README Private repositories section", () => {
+  const section = sectionLines(readme, "Private repositories").join("\n");
+
+  test("names every private-report channel the code accepts", () => {
+    // A channel added to PRIVATE_REPORT_CHANNELS but never documented (or a
+    // documented channel the code dropped) fails here.
+    for (const channel of PRIVATE_REPORT_CHANNELS) {
+      expect(
+        section.includes(`\`private-report: ${channel}\``) || channel === "none",
+        `the Private repositories section does not document the "${channel}" channel`,
+      ).toBe(true);
+    }
+    // `none` is the default (it delivers nothing), so it is named as the input
+    // default rather than as a delivering channel; assert it appears at all.
+    expect(section.includes("none")).toBe(true);
+  });
+
+  test("states the default redaction policy and the placeholder/detail constants", () => {
+    expect(section).toContain(`\`private-repos: ${DEFAULT_PRIVATE_REPOS}\` (the default)`);
+    expect(section).toContain("private repository #N");
+    expect(section).toContain(REDACTED_DETAIL);
+  });
+
+  test("pins the artifact names and the age keygen/decrypt commands", () => {
+    expect(section).toContain(ARTIFACT_NAME);
+    expect(section).toContain(ARTIFACT_FILE);
+    expect(section).toContain("age-keygen -o key.txt");
+    expect(section).toContain(`age -d -i key.txt ${ARTIFACT_FILE}`);
+  });
+
+  test("documents the issue-channel PAT grant", () => {
+    // The issue channel needs Issues read+write on every target; the grant
+    // prose mirrors grantFor(ISSUE_REPORT_PERMISSION).
+    expect(section).toContain('`"Issues"` (read and write)');
+  });
+
+  test("states the delivery accuracy caveats the review pinned", () => {
+    // Delivery is gated on PROVEN private/internal, not merely redacted.
+    expect(section.toLowerCase()).toContain("private or internal");
+    // The artifact channel does not work on GitHub Enterprise Server.
+    expect(section).toContain("GitHub Enterprise Server");
+    // A downloaded artifact is a ZIP; the docs give an extraction path.
+    expect(section).toContain("gh run download");
   });
 });
 

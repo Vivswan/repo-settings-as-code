@@ -1,0 +1,23 @@
+# Config rejection: private-report: artifact with no report-public-key. The age
+# recipient is the one thing the artifact channel cannot run without (there is
+# nothing to encrypt to), so parseConfig rejects the run up front - before any
+# API contact - with the age-keygen bootstrap hint. Exit 1, result failed, and
+# the error names the exact remedy verbatim.
+name: artifact-reject-no-key
+settings: {}
+inputs:
+  mode: apply
+  private_repos: redact
+  private_report: artifact
+expect:
+  exit_code: 1
+  result: failed
+  stdout_contains:
+    - 'private-report: artifact needs a "report-public-key" input'
+    - 'Generate a keypair with "age-keygen -o key.txt"'
+    - 'set report-public-key to the printed "age1..." recipient (safe to commit)'
+  # The rejection is at config parse, before the client is built: nothing reaches
+  # the mock. Pin that no repo read (the first request any run would make) fired.
+  never:
+    - "GET /repos/{repo}"
+    - "GET /repos/{repo}/contents"

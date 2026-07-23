@@ -42,6 +42,20 @@ const HOSTILE_NAMES = [
 
 const HEX_COLORS = ["d73a4a", "a2eeef", "ededed", "0e8a16", "ffffff", "000000"] as const;
 
+/**
+ * A fixed, valid age recipient for the `artifact` private-report channel:
+ * enough for the action's config validation to accept the key and for the
+ * encrypter to produce ciphertext. Generated once with age-encryption's own
+ * generateX25519Identity/identityToRecipient (runner.test.ts re-validates it
+ * against src's parseRecipient so it cannot silently rot), then pinned so
+ * scenarios and the fuzzer share one hermetic recipient. The matching identity
+ * is never needed: the harness never decrypts (the artifact upload fails with a
+ * safe warning because the runner token is absent), it only proves the run
+ * stays green and leaks nothing when a real key is configured.
+ */
+export const ARTIFACT_TEST_RECIPIENT =
+  "age1wshulnlu6mpa4rx54w6xs9kscqw7uqem3fh748xsrfyqusgmfv2qfca3qt";
+
 /** Fixed ISO due dates: a pool, never Date.now, so generation stays deterministic. */
 const DUE_DATES = ["2026-01-15T00:00:00Z", "2026-06-30T00:00:00Z", "2026-12-31T00:00:00Z"] as const;
 
@@ -612,10 +626,12 @@ export interface MultiScenarioMeta {
   privateRepos: "redact" | "show";
   /**
    * The `private-report` channel: `issue` delivers the full report to each
-   * redacted target's own repo, `none` sends nothing. Only ever `issue` under
-   * redact (the config rejects issue + show).
+   * redacted target's own repo; `artifact` age-encrypts the report and uploads
+   * it as a workflow artifact (which fails with a safe warning in the harness,
+   * where the runner token is absent); `none` sends nothing. Only ever `issue`
+   * or `artifact` under redact (the config rejects a delivering channel + show).
    */
-  privateReport: "none" | "issue";
+  privateReport: "none" | "issue" | "artifact";
   /** GITHUB_REPOSITORY: a target whose slug equals it is never redacted. */
   selfSlug: string;
   /**
@@ -646,10 +662,14 @@ export function genMultiScenario(rng: Rng): { scenario: Scenario; meta: MultiSce
   // leak invariant from it.
   const privateRepos = rng.pick(["redact", "show"] as const);
   // The private-report channel. `issue` delivers the full report to each
-  // redacted target's own repo; it is only valid under redact (the config
-  // rejects issue + show, since show redacts nothing), so it is picked only
-  // then. Randomized so the fuzzer covers delivery, reuse, and denial.
-  const privateReport = privateRepos === "redact" ? rng.pick(["none", "issue"] as const) : "none";
+  // redacted target's own repo; `artifact` age-encrypts every report into one
+  // workflow artifact (which fails with a safe warning in the harness, where the
+  // runner token is absent). Both are only valid under redact (the config rejects
+  // a delivering channel + show, since show redacts nothing), so they are picked
+  // only then. Randomized so the fuzzer covers delivery, reuse, denial, and the
+  // artifact upload-attempt path.
+  const privateReport =
+    privateRepos === "redact" ? rng.pick(["none", "issue", "artifact"] as const) : "none";
   // The admin repo the runner runs as (GITHUB_REPOSITORY); a target whose slug
   // equals it is never redacted (the self carve-out). Kept in sync with
   // runner.ts's REPO_SLUG.
@@ -881,6 +901,10 @@ export function genMultiScenario(rng: Rng): { scenario: Scenario; meta: MultiSce
       on_missing_permission: policy,
       private_repos: privateRepos,
       ...(privateReport !== "none" ? { private_report: privateReport } : {}),
+      // The artifact channel needs a valid age recipient; the config rejects it
+      // without one (and rejects a key set for any other channel), so forward the
+      // fixed test recipient exactly when the channel is artifact.
+      ...(privateReport === "artifact" ? { report_public_key: ARTIFACT_TEST_RECIPIENT } : {}),
     },
     denial_style: denialStyle,
     owner_kind: "org",

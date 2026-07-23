@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { generateX25519Identity, identityToRecipient } from "age-encryption";
 import { run } from "../../src/action/run.js";
 import { MockApi } from "../mock-api.js";
 
@@ -70,6 +71,7 @@ describe("run in multi-repo mode (env glue)", () => {
     "GITHUB_REPOSITORY",
     "INPUT_PRIVATE-REPOS",
     "INPUT_PRIVATE-REPORT",
+    "INPUT_REPORT-PUBLIC-KEY",
   ];
   const saved = new Map(ENV_KEYS.map((k) => [k, process.env[k]]));
 
@@ -383,5 +385,84 @@ describe("run in multi-repo mode (env glue)", () => {
     // no issue/label traffic: the report was withheld
     expect(api.calls.some((c) => c.path.includes("/issues"))).toBe(false);
     expect(api.calls.some((c) => c.method === "POST" && c.path.endsWith("/labels"))).toBe(false);
+  });
+
+  test("private-report: artifact without report-public-key is a hard config error", async () => {
+    setDiscoveryEnv();
+    process.env.INPUT_REPOSITORY = "o/r";
+    process.env["INPUT_SETTINGS-FILE"] = "test/fixtures/single.yml";
+    process.env["INPUT_PRIVATE-REPOS"] = "redact";
+    process.env["INPUT_PRIVATE-REPORT"] = "artifact";
+    delete process.env["INPUT_REPORT-PUBLIC-KEY"];
+    const api = new MockApi({});
+    expect(await run({ api: api })).toBe(1);
+    // rejected at parse, before any API call
+    expect(api.calls).toHaveLength(0);
+  });
+
+  test("private-report: artifact with a malformed report-public-key is a hard config error", async () => {
+    setDiscoveryEnv();
+    process.env.INPUT_REPOSITORY = "o/r";
+    process.env["INPUT_SETTINGS-FILE"] = "test/fixtures/single.yml";
+    process.env["INPUT_PRIVATE-REPOS"] = "redact";
+    process.env["INPUT_PRIVATE-REPORT"] = "artifact";
+    process.env["INPUT_REPORT-PUBLIC-KEY"] = "age1notavalidkey";
+    const api = new MockApi({});
+    expect(await run({ api: api })).toBe(1);
+    expect(api.calls).toHaveLength(0);
+  });
+
+  test("report-public-key supplied without the artifact channel is a hard config error", async () => {
+    const recipient = await identityToRecipient(await generateX25519Identity());
+    setDiscoveryEnv();
+    process.env.INPUT_REPOSITORY = "o/r";
+    process.env["INPUT_SETTINGS-FILE"] = "test/fixtures/single.yml";
+    process.env["INPUT_PRIVATE-REPOS"] = "redact";
+    process.env["INPUT_PRIVATE-REPORT"] = "issue";
+    process.env["INPUT_REPORT-PUBLIC-KEY"] = recipient;
+    const api = new MockApi({});
+    expect(await run({ api: api })).toBe(1);
+    expect(api.calls).toHaveLength(0);
+  });
+
+  test("private-report: artifact combined with private-repos: show is a hard config error", async () => {
+    const recipient = await identityToRecipient(await generateX25519Identity());
+    setDiscoveryEnv();
+    process.env.INPUT_REPOSITORY = "o/r";
+    process.env["INPUT_SETTINGS-FILE"] = "test/fixtures/single.yml";
+    process.env["INPUT_PRIVATE-REPOS"] = "show";
+    process.env["INPUT_PRIVATE-REPORT"] = "artifact";
+    process.env["INPUT_REPORT-PUBLIC-KEY"] = recipient;
+    const api = new MockApi({});
+    expect(await run({ api: api })).toBe(1);
+    expect(api.calls).toHaveLength(0);
+  });
+
+  test("single-repo artifact channel redacts and attempts delivery without changing the result", async () => {
+    // The production uploader has no ACTIONS_RUNTIME_TOKEN under test, so the
+    // upload attempt fails - which must degrade to a safe warning, never a crash
+    // and never a changed result. The public summary stays redacted throughout.
+    const recipient = await identityToRecipient(await generateX25519Identity());
+    setDiscoveryEnv();
+    delete process.env.INPUT_REPOS;
+    process.env.INPUT_REPOSITORY = "o/priv";
+    process.env.GITHUB_REPOSITORY = "admin/repo";
+    process.env["INPUT_SETTINGS-FILE"] = "test/fixtures/single.yml";
+    process.env["INPUT_PRIVATE-REPOS"] = "redact";
+    process.env["INPUT_PRIVATE-REPORT"] = "artifact";
+    process.env["INPUT_REPORT-PUBLIC-KEY"] = recipient;
+    process.env.INPUT_MODE = "check";
+    const summaryFile = `${process.env.TMPDIR ?? "/tmp"}/sac-test-single-artifact-${process.pid}.md`;
+    await Bun.write(summaryFile, "");
+    process.env.GITHUB_STEP_SUMMARY = summaryFile;
+    // has_wiki drifts (single.yml wants false); the target is proven private.
+    const api = new MockApi({ "GET /repos/o/priv": { data: { has_wiki: true, private: true } } });
+    expect(await run({ api: api })).toBe(1); // check-mode drift exits 1, unchanged by delivery
+    // no issue traffic on the artifact channel
+    expect(api.calls.some((c) => c.path.includes("/issues"))).toBe(false);
+    // the public summary stays redacted
+    const summary = await Bun.file(summaryFile).text();
+    expect(summary).not.toContain("o/priv");
+    expect(summary).toContain("details hidden");
   });
 });

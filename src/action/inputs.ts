@@ -16,6 +16,7 @@ import {
 } from "../discovery/discover.js";
 import { SLUG_RE } from "../discovery/targets.js";
 import { DEFAULT_API_VERSION } from "../github/api.js";
+import { parseRecipient } from "../report/artifact-report.js";
 import { type MustBeNever, SECTION_KEYS } from "../schema.js";
 import {
   DEFAULT_PRIVATE_REPORT,
@@ -67,6 +68,7 @@ export const INPUT_NAMES = [
   "defaults-file",
   "private-repos",
   "private-report",
+  "report-public-key",
 ] as const;
 
 export function input(name: (typeof INPUT_NAMES)[number]): string {
@@ -122,6 +124,40 @@ export function quoteList(names: string[]): string {
   return names.map((name) => `"${name}"`).join(", ");
 }
 
+/**
+ * Resolve and validate the `report-public-key` input against the chosen
+ * channel. The key is the age recipient the `artifact` channel encrypts to, so
+ * it is required exactly when the channel is `artifact` and rejected otherwise
+ * (a key set for `none`/`issue` would silently do nothing). A supplied key is
+ * validated through the age library at parse time, so a malformed recipient
+ * fails the run before any API work rather than at upload. Returns the trimmed
+ * key (empty for the non-artifact channels) or a loud error.
+ */
+function resolveReportPublicKey(channel: PrivateReportChannel): string | { error: string } {
+  const key = input("report-public-key");
+  if (channel !== "artifact") {
+    if (key) {
+      return {
+        error: `the "report-public-key" input only applies to private-report: artifact, but the channel is "${channel}", so the key would never be used. Remove report-public-key, or set private-report: artifact`,
+      };
+    }
+    return "";
+  }
+  if (!key) {
+    return {
+      error:
+        'private-report: artifact needs a "report-public-key" input: the age recipient every report is encrypted to. Generate a keypair with "age-keygen -o key.txt", keep key.txt secret, and set report-public-key to the printed "age1..." recipient (safe to commit)',
+    };
+  }
+  const parsed = parseRecipient(key);
+  if (!parsed.ok) {
+    return {
+      error: `the "report-public-key" input is not a valid age recipient: ${parsed.error}. It must be an "age1..." public key from "age-keygen" (the recipient line, not the AGE-SECRET-KEY identity)`,
+    };
+  }
+  return key;
+}
+
 /** The inputs shared by both modes. */
 export interface CommonConfig {
   token: string;
@@ -134,6 +170,12 @@ export interface CommonConfig {
   privateRepos: PrivateReposPolicy;
   /** Where the full unredacted report for a redacted target is delivered. */
   privateReport: PrivateReportChannel;
+  /**
+   * The age recipient the `artifact` channel encrypts every report to. Empty
+   * for the other channels (parse rejects a value supplied without the artifact
+   * channel), a validated `age1...` recipient when the channel is `artifact`.
+   */
+  reportPublicKey: string;
   /**
    * The workflow's own repository (GITHUB_REPOSITORY), read once here so the
    * run flows stay env-free. A target equal to this slug is never redacted:
@@ -239,6 +281,10 @@ export function parseConfig(): { config: RunConfig } | { error: string } {
         'the "private-report" input delivers reports only for redacted targets, but "private-repos" is "show", so nothing is redacted and no report would ever be sent. Set private-repos: redact, or set private-report: none',
     };
   }
+  const reportPublicKey = resolveReportPublicKey(privateReport);
+  if (typeof reportPublicKey !== "string") {
+    return { error: reportPublicKey.error };
+  }
   const serverUrl = process.env.GITHUB_SERVER_URL ?? "";
   const runId = process.env.GITHUB_RUN_ID ?? "";
   const runUrl =
@@ -254,6 +300,7 @@ export function parseConfig(): { config: RunConfig } | { error: string } {
     apiVersion,
     privateRepos,
     privateReport,
+    reportPublicKey,
     selfSlug: githubRepository,
     runUrl,
   };

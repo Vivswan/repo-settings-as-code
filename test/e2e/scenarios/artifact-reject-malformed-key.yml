@@ -1,0 +1,22 @@
+# Config rejection: private-report: artifact with a malformed report-public-key.
+# The key is validated through the age library at parse time (parseRecipient), so
+# a value that is not a real age recipient fails the run before any API work
+# rather than at upload. The error names the age-keygen recipient line and warns
+# against pasting the AGE-SECRET-KEY identity by mistake.
+name: artifact-reject-malformed-key
+settings: {}
+inputs:
+  mode: apply
+  private_repos: redact
+  private_report: artifact
+  # Not a valid age recipient: looks age-ish but is not a real age1 public key.
+  report_public_key: "age1-not-a-real-recipient"
+expect:
+  exit_code: 1
+  result: failed
+  stdout_contains:
+    - 'the "report-public-key" input is not a valid age recipient'
+    - 'It must be an "age1..." public key from "age-keygen" (the recipient line, not the AGE-SECRET-KEY identity)'
+  never:
+    - "GET /repos/{repo}"
+    - "GET /repos/{repo}/contents"

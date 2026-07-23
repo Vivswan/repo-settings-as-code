@@ -217,6 +217,9 @@ function childEnv(scenario: Scenario, dir: string, apiUrl: string): NodeJS.Proce
   if (inputs.private_report) {
     env["INPUT_PRIVATE-REPORT"] = inputs.private_report;
   }
+  if (inputs.report_public_key) {
+    env["INPUT_REPORT-PUBLIC-KEY"] = inputs.report_public_key;
+  }
 
   // Multi-repo mode: the presence of `repos` or `discovery` switches the action
   // into its multi-repo path. GITHUB_REPOSITORY stays the admin repo; INPUT_REPOS
@@ -616,6 +619,23 @@ export async function runScenario(
       if (maskedStdout.includes(needle)) {
         failures.push(`stdout must not contain: ${needle}`);
       }
+    }
+    // 7b-ii. Whole-surface leak invariant: leaks_nowhere runs the SAME checkLeaks
+    // primitive the fuzzer uses, so a needle listed here is proven absent from the
+    // summary, stdout, stderr (mask lines stripped), AND every output value at
+    // once - the full "no public surface" guarantee, not just one named channel.
+    if (exp.leaks_nowhere && exp.leaks_nowhere.length > 0) {
+      failures.push(
+        ...checkLeaks(
+          {
+            summary: first.summary,
+            stdout: first.stdout,
+            stderr: first.stderr,
+            outputs: first.outputs,
+          },
+          exp.leaks_nowhere,
+        ),
+      );
     }
     // requests_contain may assert on a query string, so match the full form.
     const fullLog = handle.requests.map((r) => renderRequest(r, true));

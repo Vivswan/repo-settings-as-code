@@ -4,6 +4,7 @@ import type { Io } from "../../src/io.js";
 import { SECTION_KEYS, type SectionKey } from "../../src/schema.js";
 import { sectionShape } from "../../src/sections/registry.js";
 import {
+  ARTIFACT_TEST_RECIPIENT,
   genLiveState,
   genMultiScenario,
   genScenario,
@@ -249,10 +250,13 @@ describe("genMultiScenario", () => {
     expect(sawShown).toBe(true);
   });
 
-  test("private_report is only 'issue' under redact, and the input echoes the meta", () => {
-    // The config rejects private-report: issue + private-repos: show, so the
-    // generator picks issue only under redact. Both channels are exercised.
+  test("private_report is only a delivering channel under redact, and the input echoes the meta", () => {
+    // The config rejects a delivering channel (issue or artifact) + private-repos:
+    // show, so the generator picks them only under redact. The artifact channel
+    // also forwards a valid report-public-key; the other channels forward none.
+    // Every channel is exercised across the seed range.
     let sawIssue = false;
+    let sawArtifact = false;
     let sawNone = false;
     for (let i = 0; i < 300; i++) {
       const { scenario, meta } = genMultiScenario(new Rng(i));
@@ -260,13 +264,24 @@ describe("genMultiScenario", () => {
         sawIssue = true;
         expect(meta.privateRepos).toBe("redact");
         expect(scenario.inputs?.private_report).toBe("issue");
+        // The issue channel needs no age recipient.
+        expect(scenario.inputs?.report_public_key).toBeUndefined();
+      } else if (meta.privateReport === "artifact") {
+        sawArtifact = true;
+        expect(meta.privateRepos).toBe("redact");
+        expect(scenario.inputs?.private_report).toBe("artifact");
+        // The artifact channel MUST carry a valid recipient, or the config rejects
+        // the run before it starts (a vacuous fuzz iteration).
+        expect(scenario.inputs?.report_public_key).toBe(ARTIFACT_TEST_RECIPIENT);
       } else {
         sawNone = true;
-        // `none` is the default, so the input is left unset.
+        // `none` is the default, so the input is left unset - and no key either.
         expect(scenario.inputs?.private_report).toBeUndefined();
+        expect(scenario.inputs?.report_public_key).toBeUndefined();
       }
     }
     expect(sawIssue).toBe(true);
+    expect(sawArtifact).toBe(true);
     expect(sawNone).toBe(true);
   });
 

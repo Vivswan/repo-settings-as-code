@@ -23,10 +23,12 @@ export type PrivateReposPolicy = (typeof PRIVATE_REPOS_POLICIES)[number];
 /**
  * The `private-report` channel values. `none` delivers nothing; `issue` posts
  * the full unredacted report to the private target repo itself (the one
- * GitHub-ACL-private channel a public run has). The `artifact` channel is a
- * later slice, so the enum grows then. The single source its type derives from.
+ * GitHub-ACL-private channel a public run has); `artifact` uploads every
+ * redacted target's report as one age-encrypted workflow artifact, for readers
+ * who hold the key but no GitHub access to the targets. The single source its
+ * type derives from.
  */
-export const PRIVATE_REPORT_CHANNELS = ["none", "issue"] as const;
+export const PRIVATE_REPORT_CHANNELS = ["none", "issue", "artifact"] as const;
 
 /** Default `private-report`, pinned against action.yml by the contract test. */
 export const DEFAULT_PRIVATE_REPORT = "none";

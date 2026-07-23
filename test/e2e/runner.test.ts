@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { parseRecipient } from "../../src/report/artifact-report.js";
+import { ARTIFACT_TEST_RECIPIENT } from "./generators.js";
 import {
   checkLeaks,
   forbiddenPresent,
@@ -8,6 +10,16 @@ import {
   stripDebugLines,
   stripMaskLines,
 } from "./runner.js";
+
+describe("ARTIFACT_TEST_RECIPIENT", () => {
+  test("is a valid age recipient the action's config validation accepts", () => {
+    // The artifact scenarios pin this constant as the report-public-key; if it
+    // ever stops parsing, every artifact-delivery scenario would silently fall
+    // into the config-rejection path instead. Pin it against the same validator
+    // the action uses at config parse.
+    expect(parseRecipient(ARTIFACT_TEST_RECIPIENT)).toEqual({ ok: true });
+  });
+});
 
 describe("parseGithubOutput", () => {
   test("reads simple name=value lines", () => {

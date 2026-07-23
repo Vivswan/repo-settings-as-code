@@ -187,7 +187,7 @@ rulesets:
 | `token` | `github.token` | Token for the API calls (see [Token permissions](#token-permissions)) |
 | `repository` | current repo | Target `owner/name` (single-repo mode only) |
 | `settings-file` | `.github/settings.yml` | Settings file path (single-repo mode only) |
-| `mode` | `apply` | `apply` mutates; `check` reports drift and exits 1 on any, writing nothing |
+| `mode` | `apply` | `apply` mutates; `check` reports drift and exits 1 on any, making no settings changes (a private report may still be delivered) |
 | `on-missing-permission` | `fail` | `warn` skips sections the token cannot access (partial success) |
 | `required-sections` | (empty) | Sections that must fully apply even under `warn` |
 | `sections` | (all declared) | Comma-separated allowlist of sections to process |
@@ -196,7 +196,8 @@ rulesets:
 | `repos-dir` | (empty) | Multi-repo central mode: directory of per-repo settings files in this repo |
 | `defaults-file` | (empty) | YAML merged under every multi-repo target's settings (multi-repo mode only) |
 | `private-repos` | `redact` | `redact` hides private and internal targets from public logs, summary, and outputs; `show` reveals them |
-| `private-report` | `none` | `issue` delivers each redacted target's full report to a reused issue on that target repository; rejected with `private-repos: show` |
+| `private-report` | `none` | `issue` delivers each redacted target's full report to a reused issue on that target repository; `artifact` uploads all reports as one age-encrypted workflow artifact; rejected with `private-repos: show` |
+| `report-public-key` | (empty) | The `age1...` recipient the `artifact` channel encrypts reports to; required with `private-report: artifact`, rejected otherwise |
 | `visibility` | `all` | Discovery-only: keep `public`, `private`, or `internal` repositories |
 | `archived` | `skip` | Discovery-only: `skip`, `include`, or `only` archived repositories |
 | `forks` | `include` | Discovery-only: `include`, `exclude`, or `only` forks |
@@ -207,7 +208,9 @@ rulesets:
 Outputs: `result` (`applied` / `partial` / `clean` / `drift` / `failed`;
 worst-of across targets in multi-repo mode, where `skipped` can also
 appear), `skipped-sections`, and `repos-result` (multi-repo mode: a JSON
-map of `owner/name` to `{result, source, skippedSections}`).
+map of `owner/name` to `{result, source, skippedSections}`). A redacted
+private target is keyed by its `private repository #N` placeholder instead of
+its slug; see [Private repositories](#private-repositories).
 
 ## Multi-repo mode
 
@@ -286,6 +289,158 @@ token needs the same per-section permissions (see the
 ```
 
 <!-- x-release-please-end -->
+
+## Private repositories
+
+GitHub Actions has no log-level access control. Run logs, step summaries, and
+uploaded artifacts inherit the repository's visibility, so a public admin repo
+managing a private target would print that target's slug, its live settings,
+and its API error bodies where anyone can read them. The only GitHub-ACL-private
+channel a public run has is another repository the token can reach.
+
+To stop the leak, `private-repos: redact` (the default) hides every private or
+internal target from the public view. The target's slug becomes a
+`private repository #N` placeholder, its live values and error bodies become
+`hidden (private repository)`, and each slug is registered with the runner's
+secret masker so it cannot resurface in a stray log line. The visibility check
+fails closed: a repository the probe cannot prove public is redacted anyway. A
+target equal to `GITHUB_REPOSITORY` is never redacted, because a repository
+acting on itself discloses nothing new. Set `private-repos: show` only when the
+run's own logs are already private.
+
+The decision comes down to the policy and what the visibility probe finds:
+
+| Condition | Redacted? |
+|---|---|
+| `private-repos: show` | no, everything is revealed |
+| target is `GITHUB_REPOSITORY` (self) | no, the carve-out applies |
+| probe proves the target public | no |
+| probe proves the target private or internal | yes |
+| probe cannot determine visibility | yes, redaction fails closed |
+
+### What a redacted run still shows
+
+Redaction hides values, not the shape of the outcome. The public surfaces still
+carry the safe skeleton of each target. The step summary shows, per target, the
+overall result (`applied`, `partial`, `clean`, `drift`, `failed`, `skipped`),
+each section's key and status, and the HTTP status code on a failed or skipped
+section; the `repos-result` output carries `{result, source, skippedSections}`
+per target, keyed by the placeholder. These are closed enumerations and numeric
+codes, safe to show, and enough to tell whether the fleet is healthy and which
+section broke. What they never carry is the slug, a live setting, a desired
+setting, or an API error message.
+
+### Seeing the full detail
+
+Three ways to read the unredacted detail, in rough order of convenience:
+
+- Run from a context whose logs are already private. Move the workflow into the
+  target repository itself (the self carve-out gives full logs safely), or keep
+  the admin repo private and set `private-repos: show`.
+- Reproduce locally. The action is a plain Node bundle, so the same PAT and the
+  same inputs reproduce the run on your machine, where the logs stay local. A
+  shell variable name cannot contain a hyphen, so pass the hyphenated inputs
+  through `env`:
+
+  ```bash
+  env INPUT_TOKEN=<your-pat> 'INPUT_REPOSITORY=owner/name' 'INPUT_PRIVATE-REPOS=show' \
+    node lib/index.js
+  ```
+
+  Every input maps to an `INPUT_<NAME>` variable, uppercased with dashes kept
+  (so `private-repos` is `INPUT_PRIVATE-REPOS`).
+- Have the run deliver a private report, described next.
+
+### Delivering a private report
+
+`private-report` sends the full unredacted report for each redacted target
+through a channel whose access control is not the public run. It defaults to
+`private-report: none`, which delivers nothing. Any other channel applies only
+to redacted targets, and only to those the visibility probe proves private or
+internal: an unknown visibility is redacted from the public view but excluded
+from delivery, so the report never reaches a repository that might be public.
+It is rejected alongside `private-repos: show`. The report mirrors the run's
+log, so it is written on every run, `mode: check` included, and a delivery
+failure only warns; it never changes the target's or the run's result.
+
+`private-report: issue` posts each target's report to a reused issue on that
+target repository, where the repository's own access control protects it. The
+action finds the issue by a marker label, replaces the body every run, and
+opens the issue when the target fails or drifts and closes it when the target
+is healthy. This needs the PAT to hold `"Issues"` (read and write) on every
+target repository, on top of the section permissions. Prefer this channel
+unless your readers lack GitHub access to the targets.
+
+`private-report: artifact` concatenates the report for every proven-private
+target into one document, encrypts it to an age recipient, and uploads it as the
+workflow artifact `settings-as-code-private-report` (file
+`private-report.md.age`). Use it when the people who need the report cannot be
+given repository access, since the archive travels with the run rather than
+living in the target repo. This channel needs the Actions artifact service, so
+it does not work on GitHub Enterprise Server (the `@actions/artifact` client has
+no GHES backend): there the run warns and uploads nothing. Access control here
+is key possession, so the key setup matters:
+
+- Generate a keypair on your own machine. The private key must never touch
+  GitHub:
+
+  ```bash
+  age-keygen -o key.txt
+  ```
+
+  `key.txt` holds the secret identity; keep it off GitHub. The command also
+  prints the public recipient (`age1...`), which is safe to commit.
+- Pass that recipient as `report-public-key`. It is required when
+  `private-report` is `artifact` and rejected otherwise; a malformed recipient
+  fails the run at startup.
+- Download and decrypt. The browser "Download" button gives a ZIP; unzip it,
+  then decrypt with the identity file (or use `gh run download`, which extracts
+  the artifact for you):
+
+  ```bash
+  gh run download <run-id> -n settings-as-code-private-report
+  age -d -i key.txt private-report.md.age
+  ```
+
+One caveat weighs against this channel: the ciphertext is downloadable by
+anyone during the artifact's retention window, and copies persist after that.
+If the age key is ever compromised, every archived run it encrypted becomes
+readable retroactively. The `issue` channel has no such standing exposure.
+
+### What redaction does and does not protect
+
+Redaction protects the target's live state and its errors. It does not
+retroactively hide a name you already published. In a public admin repo, the
+names in the `repos` input and the paths and contents of `repos-dir` files are
+already public, so redaction there is limited:
+
+| Target source | What is public regardless | What redaction protects |
+|---|---|---|
+| `repos` explicit list | the target name | live state, desired state, errors |
+| `repos-dir` central file | the target name and the desired settings in the committed file | live state, errors |
+| `repos: "*"` discovery | nothing | the name, live state, desired state, and errors |
+
+Only `repos: "*"` discovery gives a target true non-disclosure, because its
+name never appears in a committed file or input. For the other two sources, the
+name is self-disclosed the moment you commit the workflow.
+
+The visibility probe drives two decisions that fail closed in opposite
+directions. Redaction fails closed toward hiding: a target the probe cannot
+prove public is redacted. Delivery fails closed toward silence: a report is
+sent only when the probe proves the target private or internal, so an unknown
+visibility redacts the public view yet withholds the private report rather than
+risk posting it to a repository that might be public.
+
+A closing point on escape hatches: on a public repository, an unencrypted
+artifact or a debug log is not a private channel. Both inherit the run's public
+visibility. That is the whole reason the artifact channel encrypts, and the
+reason redaction cannot be waved away with `ACTIONS_STEP_DEBUG`.
+
+None of this requires a dedicated account. If you already run the fleet under a
+machine user, it happens to fit well here: you can scope its PAT to least
+privilege, point `repos: "*"` discovery at only what it owns, and get bot-named
+authorship on the report issues. That is a convenience, not a prerequisite; a
+personal PAT with the right permissions works the same way.
 
 ## Token permissions
 

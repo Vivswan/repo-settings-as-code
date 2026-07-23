@@ -28,7 +28,9 @@ inputs:
     required: false
     default: .github/settings.yml
   mode:
-    description: apply (mutate) or check (report drift, exit 1 on any, no writes).
+    description: >-
+      apply (mutate) or check (report drift, exit 1 on any). check makes no
+      settings changes, though a private report may still be delivered.
     required: false
     default: apply
   on-missing-permission:
@@ -137,16 +139,32 @@ inputs:
     default: redact
   private-report:
     description: >-
-      none (default) or issue. Under issue, the full unredacted report for
-      each redacted target is delivered as a reused, marker-labelled issue on
-      that target repository itself (the one GitHub-private channel a public
-      run has): the body is replaced every run, and the issue is opened when
-      the target fails or drifts and closed when it is healthy. Applies only
-      to redacted targets, so it is rejected alongside private-repos: show.
-      Report delivery writes even in mode: check, and its failure never
-      changes the run's result.
+      none (default), issue, or artifact. Delivers the full unredacted report
+      only for redacted targets the visibility probe proves private or internal
+      (an unknown visibility is redacted but excluded from delivery). Under
+      issue, each such target's report is delivered as a reused, marker-labelled
+      issue on that target repository itself (the one GitHub-private channel a
+      public run has): the body is replaced every run, and the issue is opened
+      when the target fails or drifts and closed when it is healthy. Under
+      artifact, those reports are concatenated, age-encrypted to
+      report-public-key, and uploaded as one workflow artifact
+      (settings-as-code-private-report) for readers who hold the key but no
+      GitHub access to the targets; the artifact channel needs the Actions
+      artifact service, so on GitHub Enterprise Server it warns and uploads
+      nothing. Applies only to redacted targets, so it is rejected alongside
+      private-repos: show. Report delivery writes even in mode: check, and its
+      failure never changes the run's result.
     required: false
     default: none
+  report-public-key:
+    description: >-
+      The age recipient (an "age1..." public key) the artifact channel encrypts
+      every report to; safe to commit in the workflow. Generate a keypair with
+      "age-keygen -o key.txt", keep key.txt secret, and decrypt a downloaded
+      artifact with "age -d -i key.txt private-report.md.age". Required when
+      private-report is artifact and rejected otherwise.
+    required: false
+    default: ""
 
 outputs:
   result:
