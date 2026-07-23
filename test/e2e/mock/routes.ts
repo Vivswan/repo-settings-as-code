@@ -11,6 +11,7 @@
  * handler (or leaving a stale handler behind) fails loudly at construction.
  */
 
+import { ISSUE_REPORT_PERMISSION, MARKER_LABEL } from "../../../src/report/issue-report.js";
 import type { SectionKey } from "../../../src/schema.js";
 import {
   endpointKind,
@@ -337,6 +338,12 @@ const HANDLERS: Record<string, Handler> = {
   "labels.list": ({ state, query }) => ok(slicePage(state.labels, query)),
   "labels.create": ({ state, body }) => {
     const payload = asObject(body);
+    // A duplicate name answers 422, matching GitHub. The labels SECTION never
+    // POSTs a duplicate (it PATCHes an existing label), so this only fires for
+    // the private-report marker-label ensure-create, which tolerates the 422.
+    if (findLabel(state, String(payload.name))) {
+      return { status: 422, body: { message: "Validation Failed" } };
+    }
     const label: Json = {
       id: state.nextId++,
       node_id: `MDU6TGFiZWw${state.nextId}`,
@@ -668,7 +675,7 @@ const HANDLERS: Record<string, Handler> = {
   "milestones.list": ({ state, query }) => ok(slicePage(state.milestones, query)),
   "milestones.create": ({ state, body }) => {
     const payload = asObject(body);
-    const number = nextMilestoneNumber(state);
+    const number = nextNumber(state.milestones);
     const milestone: Json = {
       id: state.nextId++,
       number,
@@ -713,11 +720,9 @@ function findLabel(state: MockState, name: string): Json | undefined {
   return state.labels.find((l) => labelName(l) === name.toLowerCase());
 }
 
-function nextMilestoneNumber(state: MockState): number {
-  let max = 0;
-  for (const milestone of state.milestones) {
-    max = Math.max(max, Number(milestone.number) || 0);
-  }
+/** The next 1-based `number` for a list keyed by a numeric `number` field. */
+function nextNumber(items: Json[]): number {
+  const max = items.reduce((acc, item) => Math.max(acc, Number(item.number) || 0), 0);
   return max + 1;
 }
 
@@ -1063,6 +1068,281 @@ function contentsSlug(pathname: string): string | null {
   return match ? decodeURIComponent(match[1] ?? "") : null;
 }
 
+// --- Private-report issue channel (core paths, not a section) --------------
+//
+// The issue channel delivers the full unredacted report as an issue on the
+// target repo. Its routes are NOT section endpoints (report delivery is
+// infrastructure that writes even in check mode); they are served inline before
+// section matching, exactly like the contents fetch, and gated on the Issues
+// permission per ISSUE_REPORT_PERMISSION. GET /user is the fallback creator
+// scan and is a user-level call, so it is ungated. The marker-label POST goes
+// through the existing labels.create section route (Issues-gated, 422 on
+// duplicate), so it is not modeled here.
+
+/** The token user GET /user reports; the report module reads only `login`. */
+const TOKEN_USER_LOGIN = "e2e-token-user";
+
+/** A repo's proven visibility from its mock state (defaults public via the fixture). */
+function visibilityOfState(state: MockState | undefined): string {
+  const repo = state?.repo ?? {};
+  if (typeof repo.visibility === "string") {
+    return repo.visibility;
+  }
+  return repo.private === true ? "private" : "public";
+}
+
+/**
+ * Whether the action could PROVE this slug's visibility - the precondition for
+ * report delivery. Discovery-supplied slugs need no probe (their visibility came
+ * from /user/repos), so they are always provable. An explicit target is probed
+ * with one administration-gated repository.get; the probe fails to "unknown"
+ * (and delivery is skipped) when administration is denied, or when a fault on
+ * repository.get exhausts the probe's retry budget. Modeling this - rather than
+ * reading the fixture visibility alone - is what lets the mock reject a delivery
+ * the action could never have made.
+ */
+function probeCanProveVisibility(
+  slug: string,
+  scenario: Scenario,
+  multi: MultiMockState | undefined,
+  faults: FaultOption[] | undefined,
+): boolean {
+  const discovered = (multi?.discoveryPool ?? []).some(
+    (repo) => String(repo.full_name).toLowerCase() === slug.toLowerCase(),
+  );
+  if (discovered) {
+    return true;
+  }
+  const mask = effectiveMask(scenario.token_permissions ?? {}, multi?.permissions.get(slug));
+  if (!grantsAtLeast(mask, "administration", "read")) {
+    return false;
+  }
+  const probeFault = faults?.find((f) => f.key === "repository.get");
+  if (probeFault && (probeFault.times ?? 1) >= PROBE_RETRY_BUDGET) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Whether a slug is a report-DELIVERY target this run: the report channel is
+ * `issue`, redaction is on, the slug is not the admin repo, its FIXTURE
+ * visibility is private or internal, AND the action could actually PROVE that
+ * visibility (see probeCanProveVisibility). This mirrors the action's delivery
+ * rule exactly - deliver only when PROVEN private/internal, so a probe the
+ * scenario denies or faults resolves "unknown" and delivery is skipped. The mock
+ * serves the issue-channel routes for a slug only when this holds; report
+ * traffic to any other slug (public, non-redacted, OR unknown-because-unprovable)
+ * falls through to the normal barrier and section matching, so an accidental or
+ * regressed delivery is caught loudly.
+ */
+function isReportDeliveryTarget(
+  slug: string,
+  scenario: Scenario,
+  multi: MultiMockState | undefined,
+  faults: FaultOption[] | undefined,
+): boolean {
+  if (scenario.inputs?.private_report !== "issue") {
+    return false;
+  }
+  if ((scenario.inputs?.private_repos ?? "redact") !== "redact") {
+    return false;
+  }
+  if (slug.toLowerCase() === ADMIN_SLUG) {
+    return false;
+  }
+  const visibility = visibilityOfState(multi ? multi.repos.get(slug) : undefined);
+  if (visibility !== "private" && visibility !== "internal") {
+    return false;
+  }
+  return probeCanProveVisibility(slug, scenario, multi, faults);
+}
+
+/** The report issue's html_url, so the run summary can link it. */
+function issueUrl(slug: string, number: number): string {
+  return `https://github.com/${slug}/issues/${number}`;
+}
+
+/** True when this issue object matches the list query's labels/creator/state filters. */
+function issueMatchesQuery(issue: Json, query: Record<string, string>): boolean {
+  if (query.state && query.state !== "all" && String(issue.state) !== query.state) {
+    return false;
+  }
+  if (query.creator) {
+    const login = (issue.user as { login?: unknown } | undefined)?.login;
+    if (login !== query.creator) {
+      return false;
+    }
+  }
+  if (query.labels) {
+    const wanted = query.labels.split(",");
+    const have = Array.isArray(issue.labels)
+      ? (issue.labels as Json[]).map((l) => String((l as { name?: unknown }).name ?? l))
+      : [];
+    if (!wanted.every((w) => have.includes(w))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Expand a label name into the object shape the issues list returns. */
+function labelObject(name: string): Json {
+  return { name, color: "0e2a47", default: false };
+}
+
+/**
+ * Resolve and Issues-gate an issue-channel request for a slug. Returns the
+ * granted repo state on success, or a ready-to-send response (unknown-slug
+ * violation or permission denial) the caller returns early. Shared by the
+ * marker-label and issue routes so the resolve-then-grade guard is written once.
+ */
+type IssueTargetResult =
+  | { state: MockState }
+  | { response: MockResponse; deniedBy?: MaskKey; violation?: string };
+
+function gradeIssueTarget(
+  method: string,
+  pathname: string,
+  slug: string,
+  level: "read" | "write",
+  scenario: Scenario,
+  multi: MultiMockState | undefined,
+  singleState: MockState | undefined,
+): IssueTargetResult {
+  const repoState = multi ? multi.repos.get(slug) : singleState;
+  if (!repoState) {
+    const message = `issue-report request ${method} ${pathname} names no known target slug`;
+    return { response: violationResponse(message), violation: message };
+  }
+  const mask = effectiveMask(scenario.token_permissions ?? {}, multi?.permissions.get(slug));
+  // Grade against the report module's DECLARED permission (single-sourced),
+  // not a hard-coded "issues", so a change to ISSUE_REPORT_PERMISSION flows here.
+  const grading = gradeRequirement(mask, { permission: ISSUE_REPORT_PERMISSION, kind: level });
+  if (!grading.allowed) {
+    return { response: denialResponse(scenario.denial_style, level), deniedBy: grading.deniedBy };
+  }
+  return { state: repoState };
+}
+
+/**
+ * Serve the private-report issue routes against a repo's `issues` state:
+ *   - GET /user                                      -> the token user (ungated)
+ *   - GET  /repos/{o}/{r}/issues                      -> list (Issues: read)
+ *   - POST /repos/{o}/{r}/issues                      -> create (Issues: write)
+ *   - PATCH /repos/{o}/{r}/issues/{issue_number}      -> update (Issues: write)
+ * Returns null when the path is not an issue-channel route, so the caller falls
+ * through to section matching. Permission denials set `deniedBy` (so the
+ * OpenAPI validator skips them and the runner sees the denial).
+ */
+function handleIssueReport(
+  method: string,
+  pathname: string,
+  query: Record<string, string>,
+  body: unknown,
+  scenario: Scenario,
+  multi: MultiMockState | undefined,
+  state: MockState | undefined,
+  faults: FaultOption[] | undefined,
+): { response: MockResponse; deniedBy?: MaskKey; violation?: string } | null {
+  // GET /user is the fallback creator scan - served only when the run enables
+  // the issue channel at all (otherwise it is not report traffic and falls
+  // through to a loud no-route violation).
+  if (matchesTemplate("/user", pathname)) {
+    if (method !== "GET" || scenario.inputs?.private_report !== "issue") {
+      return null;
+    }
+    return { response: ok({ login: TOKEN_USER_LOGIN, id: 1, type: "User" }) };
+  }
+  // The marker-label ensure-create is report infrastructure (it writes even in
+  // check mode), so it is served here - BEFORE the check-mode barrier - rather
+  // than through the labels.create section route. The bypass is SCOPED: it fires
+  // only for the marker label name AND only for a slug that is a report-delivery
+  // target this run. A marker POST to any other slug (e.g. a buggy labels-section
+  // write of the injected marker in check mode) falls through to the section
+  // route and hits the normal check-mode barrier / gating.
+  const labelsMatch = pathname.match(/^\/repos\/([^/]+\/[^/]+)\/labels$/);
+  if (labelsMatch && method === "POST" && asObject(body).name === MARKER_LABEL) {
+    const slug = decodeURIComponent(labelsMatch[1] ?? "");
+    if (!isReportDeliveryTarget(slug, scenario, multi, faults)) {
+      return null;
+    }
+    const target = gradeIssueTarget(method, pathname, slug, "write", scenario, multi, state);
+    if (!("state" in target)) {
+      return target;
+    }
+    if (findLabel(target.state, MARKER_LABEL)) {
+      return { response: { status: 422, body: { message: "Validation Failed" } } };
+    }
+    const payload = asObject(body);
+    const label: Json = {
+      id: target.state.nextId++,
+      name: MARKER_LABEL,
+      color: payload.color ?? "ededed",
+      default: false,
+      description: payload.description ?? null,
+    };
+    target.state.labels.push(label);
+    return { response: { status: 201, body: label } };
+  }
+  const issuesMatch = pathname.match(/^\/repos\/([^/]+\/[^/]+)\/issues(?:\/(\d+))?$/);
+  if (!issuesMatch) {
+    return null;
+  }
+  const slug = decodeURIComponent(issuesMatch[1] ?? "");
+  // Scope the issue-route bypass to a report-delivery target: issue traffic to a
+  // public/non-redacted slug (accidental delivery) is not served here and falls
+  // through to a loud no-route violation at section matching.
+  if (!isReportDeliveryTarget(slug, scenario, multi, faults)) {
+    return null;
+  }
+  const issueNumber = issuesMatch[2] ? Number(issuesMatch[2]) : undefined;
+  const level: "read" | "write" = method === "GET" ? "read" : "write";
+  const target = gradeIssueTarget(method, pathname, slug, level, scenario, multi, state);
+  if (!("state" in target)) {
+    return target;
+  }
+  const repoState = target.state;
+  if (method === "GET" && issueNumber === undefined) {
+    const matched = repoState.issues.filter((issue) => issueMatchesQuery(issue, query));
+    return { response: ok(slicePage(matched, query)) };
+  }
+  if (method === "POST" && issueNumber === undefined) {
+    const payload = asObject(body);
+    const number = nextNumber(repoState.issues);
+    const labels = Array.isArray(payload.labels)
+      ? payload.labels.map((l) => labelObject(String(l)))
+      : [];
+    const issue: Json = {
+      number,
+      title: payload.title ?? "",
+      body: payload.body ?? "",
+      state: "open",
+      labels,
+      user: { login: TOKEN_USER_LOGIN, id: 1, type: "User" },
+      html_url: issueUrl(slug, number),
+    };
+    repoState.issues.push(issue);
+    return { response: { status: 201, body: issue } };
+  }
+  if (method === "PATCH" && issueNumber !== undefined) {
+    const issue = repoState.issues.find((i) => Number(i.number) === issueNumber);
+    if (!issue) {
+      return { response: { status: 404, body: { message: "Not Found" } } };
+    }
+    const payload = asObject(body);
+    if (payload.body !== undefined) {
+      issue.body = payload.body;
+    }
+    if (payload.state !== undefined) {
+      issue.state = payload.state;
+    }
+    return { response: ok(issue) };
+  }
+  const message = `unexpected ${method} on ${pathname}`;
+  return { response: violationResponse(message), violation: message };
+}
+
 /**
  * The admin repo the e2e runner runs as (its GITHUB_REPOSITORY). Kept in sync
  * with runner.ts's REPO_SLUG. The redaction self carve-out never probes this
@@ -1259,6 +1539,32 @@ export function runPipeline(
     return { response, log: { ...baseLog, status: response.status } };
   }
 
+  // 3b2. Private-report issue channel (GET /user, the issues list/create/patch).
+  // Served inline, before section matching, because report delivery is
+  // infrastructure that writes even in check mode - so it must NOT pass through
+  // the check-mode write barrier below. Gated on the Issues permission.
+  const issueReport = handleIssueReport(
+    request.method,
+    pathname,
+    request.query,
+    request.body,
+    scenario,
+    options.multi,
+    options.state,
+    options.faults,
+  );
+  if (issueReport) {
+    return {
+      response: issueReport.response,
+      log: {
+        ...baseLog,
+        status: issueReport.response.status,
+        ...(issueReport.deniedBy ? { deniedBy: issueReport.deniedBy } : {}),
+      },
+      ...(issueReport.violation ? { violation: issueReport.violation } : {}),
+    };
+  }
+
   // 3c. Section endpoints.
   const matched = matchEndpoint(request.method, pathname);
   if (!matched) {
@@ -1434,14 +1740,20 @@ export function runPipeline(
       // probeAbsent-tolerant endpoint) reads as "resource absent" and the
       // section legitimately proceeds, so it must not arm the barrier.
       //
-      // The redaction visibility probe is EXEMPT (isVisibilityProbe): it is the
-      // FIRST repository.get for the repo, issued before the target loop to
-      // decide redaction, not a section read. Arming on it would false-flag the
-      // repository section's own legitimate write-then-403 under warn. A LATER
-      // repository.get (the section's check-mode read) is not the probe and arms
-      // like any other section read, so genuine denied-read-then-write coverage
-      // is preserved.
-      if (!isVisibilityProbe && !toleratedStatuses(endpoint).includes(response.status)) {
+      // Two categories are EXEMPT because their denied read is not a
+      // section-abort read:
+      //   - the redaction visibility probe (isVisibilityProbe): the FIRST
+      //     repository.get for a repo, issued before the target loop to decide
+      //     redaction. A LATER repository.get (the section's check-mode read) is
+      //     not the probe and arms like any other section read.
+      //   - an ADVISORY read (endpoint.advisory, single-sourced from the endpoint
+      //     declaration, e.g. branches.branchProbe): the engine ignores any
+      //     non-404 status and proceeds to its write anyway, so a denied advisory
+      //     read does not mean the section should have aborted.
+      // Genuine denied-read-then-write coverage is preserved: every non-advisory
+      // section read still arms.
+      const exempt = isVisibilityProbe || endpoint.advisory === true;
+      if (!exempt && !toleratedStatuses(endpoint).includes(response.status)) {
         options.deniedReadSections.add(barrierKey);
       }
     }

@@ -69,6 +69,7 @@ describe("run in multi-repo mode (env glue)", () => {
     "GITHUB_STEP_SUMMARY",
     "GITHUB_REPOSITORY",
     "INPUT_PRIVATE-REPOS",
+    "INPUT_PRIVATE-REPORT",
   ];
   const saved = new Map(ENV_KEYS.map((k) => [k, process.env[k]]));
 
@@ -315,5 +316,72 @@ describe("run in multi-repo mode (env glue)", () => {
     // and no visibility probe: the self carve-out skips it (only the engine GET)
     const gets = api.calls.filter((c) => c.method === "GET" && c.path === "/repos/o/self");
     expect(gets).toHaveLength(1);
+  });
+
+  test("private-report != none combined with private-repos: show is a hard config error", async () => {
+    setDiscoveryEnv();
+    process.env.INPUT_REPOSITORY = "o/r";
+    process.env["INPUT_SETTINGS-FILE"] = "test/fixtures/single.yml";
+    process.env["INPUT_PRIVATE-REPOS"] = "show";
+    process.env["INPUT_PRIVATE-REPORT"] = "issue";
+    const api = new MockApi({});
+    expect(await run({ api: api })).toBe(1);
+    // rejected at config parse, before any API call
+    expect(api.calls).toHaveLength(0);
+  });
+
+  test("single-repo cross-repo redacted target delivers a report to its own issue", async () => {
+    setDiscoveryEnv();
+    delete process.env.INPUT_REPOS;
+    process.env.INPUT_REPOSITORY = "o/priv";
+    process.env.GITHUB_REPOSITORY = "admin/repo";
+    process.env["INPUT_SETTINGS-FILE"] = "test/fixtures/single.yml";
+    process.env["INPUT_PRIVATE-REPOS"] = "redact";
+    process.env["INPUT_PRIVATE-REPORT"] = "issue";
+    process.env.INPUT_MODE = "check";
+    const summaryFile = `${process.env.TMPDIR ?? "/tmp"}/sac-test-single-report-${process.pid}.md`;
+    await Bun.write(summaryFile, "");
+    process.env.GITHUB_STEP_SUMMARY = summaryFile;
+    const ISSUE_TITLE = "[automated] settings-as-code: private settings report";
+    // has_wiki drifts (single.yml wants false); the report captures that.
+    const api = new MockApi({
+      "GET /repos/o/priv": { data: { has_wiki: true, private: true } },
+      "POST /repos/o/priv/labels": { error: { status: 422, message: "exists", body: "" } },
+      "GET /repos/o/priv/issues?state=all&labels=settings-as-code-report&per_page=100": {
+        data: [{ number: 3, title: ISSUE_TITLE, html_url: "https://github.com/o/priv/issues/3" }],
+      },
+      "PATCH /repos/o/priv/issues/3": { data: { number: 3 } },
+    });
+    expect(await run({ api: api })).toBe(1); // check-mode drift exits 1
+    const patch = api.calls.find(
+      (c) => c.method === "PATCH" && c.path === "/repos/o/priv/issues/3",
+    );
+    const payload = (patch?.payload ?? {}) as { body?: unknown; state?: unknown };
+    const body = String(payload.body ?? "");
+    expect(body).toContain("o/priv"); // the report is unredacted (it is private)
+    expect(body).toContain("## Transcript");
+    expect(payload.state).toBe("open"); // drift needs attention
+    // the public summary stays redacted
+    const summary = await Bun.file(summaryFile).text();
+    expect(summary).not.toContain("o/priv");
+    expect(summary).toContain("details hidden");
+  });
+
+  test("single-repo unknown visibility redacts but does NOT deliver the report", async () => {
+    setDiscoveryEnv();
+    delete process.env.INPUT_REPOS;
+    process.env.INPUT_REPOSITORY = "o/maybe";
+    process.env.GITHUB_REPOSITORY = "admin/repo";
+    process.env["INPUT_SETTINGS-FILE"] = "test/fixtures/single.yml";
+    process.env["INPUT_PRIVATE-REPOS"] = "redact";
+    process.env["INPUT_PRIVATE-REPORT"] = "issue";
+    process.env.INPUT_MODE = "check";
+    delete process.env.GITHUB_STEP_SUMMARY;
+    // repo GET body has neither private nor visibility -> unknown -> redact, no deliver
+    const api = new MockApi({ "GET /repos/o/maybe": { data: { has_wiki: true } } });
+    expect(await run({ api: api })).toBe(1); // drift exits 1
+    // no issue/label traffic: the report was withheld
+    expect(api.calls.some((c) => c.path.includes("/issues"))).toBe(false);
+    expect(api.calls.some((c) => c.method === "POST" && c.path.endsWith("/labels"))).toBe(false);
   });
 });

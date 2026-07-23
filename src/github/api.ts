@@ -147,6 +147,28 @@ function redactMessage(message: string): string {
 }
 
 /**
+ * Build a throttling-plugin rate-limit callback. The primary and secondary
+ * limits are handled identically - trace the (redacted) request, then retry
+ * while the wait is within the cap and attempts remain - differing only in the
+ * log `label`, so one factory keeps them from drifting.
+ */
+function throttleCallback(
+  label: string,
+): (
+  retryAfter: number,
+  options: { method: string; url: string },
+  octokit: unknown,
+  retryCount: number,
+) => boolean {
+  return (retryAfter, options, _octokit, retryCount) => {
+    debugLog(
+      `${label} on ${options.method} ${redactTracePath(options.url).path}; retry ${retryCount + 1}/${MAX_RETRIES} after ${retryAfter}s`,
+    );
+    return retryAfter <= MAX_RETRY_WAIT_S && retryCount < MAX_RETRIES;
+  };
+}
+
+/**
  * The `log` implementation passed to Octokit. Octokit-core and its retry and
  * throttling plugins log every request line - method, URL, status - through
  * this sink; the default sink is `console`, which writes those lines (carrying
@@ -204,11 +226,39 @@ export class GithubApi implements GithubClient {
     token: string,
     private readonly baseUrl = process.env.GITHUB_API_URL ?? "https://api.github.com",
     private readonly apiVersion = DEFAULT_API_VERSION,
-    // Test knob for e2e retry scenarios: RETRY_BASE_MS scales the plugin
-    // waits so backoff can run in milliseconds. Non-finite or non-positive
-    // values fall back to the production default.
-    retryBaseMs = testRetryBaseMs() ?? 1000,
+    // Test knob override: an explicit value forces the RETRY_BASE_MS scale
+    // (used by unit tests that construct the client directly); left undefined,
+    // the knob is read once from the environment below.
+    retryBaseMsOverride?: number,
   ) {
+    // Read the test knob ONCE. `retryBaseMs` scales the plugin waits (1000 =
+    // real seconds in production, small under RETRY_BASE_MS). `underTestKnob`
+    // is true when the environment sets the knob - the two derive from the one
+    // read so it is never consulted twice.
+    const envKnob = testRetryBaseMs();
+    const retryBaseMs = retryBaseMsOverride ?? envKnob ?? 1000;
+    const underTestKnob = envKnob !== undefined;
+    // The throttling plugin routes every request through Bottleneck's job
+    // scheduler, which paces mutations (its "write" limiter) at 1000ms and adds
+    // real per-request latency even at minTime 0 - correct for a real fleet run,
+    // but it makes a many-request TEST run wait out tens of seconds. So the
+    // plugin is disabled under the knob. Its ONE job the retry plugin does not
+    // otherwise cover - 429/secondary-limit RETRY - is restored below so a
+    // transient 429 still RECOVERS under the knob (only the recovery outcome
+    // matters to tests). The retry TIMING differs from production and that is
+    // acceptable: see the doNotRetry note.
+    const throttleEnabled = !underTestKnob;
+    // Client errors are never retried (permission 403/404s, payload 422s), so
+    // the retry plugin's doNotRetry excludes only 408 among the 4xx. Under the
+    // test knob it ALSO excludes 429: with the throttling plugin off, the retry
+    // plugin becomes the 429 recovery path. Note the retry plugin IGNORES the
+    // Retry-After header and backs off quadratically - attempt n waits
+    // (n^2 * retryBaseMs) - so under the knob a 429 recovers on a quadratic
+    // delay, not the header's value. Production is unchanged: 429 stays in
+    // doNotRetry and the throttling plugin paces it, honoring Retry-After.
+    const doNotRetry = Array.from({ length: 100 }, (_, i) => 400 + i).filter(
+      (s) => s !== 408 && !(underTestKnob && s === 429),
+    );
     this.octokit = new ActionOctokit({
       auth: token,
       baseUrl: this.baseUrl,
@@ -222,37 +272,30 @@ export class GithubApi implements GithubClient {
       // can run in milliseconds; 1000 = real seconds in production. Each
       // plugin reads the value from its own options section.
       request: { retryAfterBaseValue: retryBaseMs },
-      // Client errors must never be retried (permission 403/404s, payload
-      // 422s, and 429/secondary 403s belong to the throttling plugin), so
-      // the retry plugin handles only 5xx, network failures, and 408.
       retry: {
-        doNotRetry: Array.from({ length: 100 }, (_, i) => 400 + i).filter((s) => s !== 408),
+        doNotRetry,
         retries: MAX_RETRIES,
         retryAfterBaseValue: retryBaseMs,
       },
       throttle: {
+        // Disabled under the test knob (see throttleEnabled above) so a
+        // many-request test run does not wait out Bottleneck's per-request
+        // scheduling; always enabled in production.
+        enabled: throttleEnabled,
         retryAfterBaseValue: retryBaseMs,
-        // The plugin paces mutating requests through a "write" limiter whose
-        // 1000ms gap retryAfterBaseValue does not reach; supply the same
-        // limiter with the gap on the retryBaseMs scale, so every plugin
-        // wait shrinks together under the test knob (1000 = real seconds).
+        // The plugin paces mutating requests through a "write" limiter with a
+        // 1000ms production gap (real seconds between writes). Only used when the
+        // plugin is enabled, i.e. in production, where retryBaseMs is 1000.
         write: new Bottleneck.Group({
           id: "octokit-write",
           maxConcurrent: 1,
           minTime: retryBaseMs,
         }),
-        onRateLimit: (retryAfter, options, _octokit, retryCount) => {
-          debugLog(
-            `rate limit on ${options.method} ${redactTracePath(options.url).path}; retry ${retryCount + 1}/${MAX_RETRIES} after ${retryAfter}s`,
-          );
-          return retryAfter <= MAX_RETRY_WAIT_S && retryCount < MAX_RETRIES;
-        },
-        onSecondaryRateLimit: (retryAfter, options, _octokit, retryCount) => {
-          debugLog(
-            `secondary rate limit on ${options.method} ${redactTracePath(options.url).path}; retry ${retryCount + 1}/${MAX_RETRIES} after ${retryAfter}s`,
-          );
-          return retryAfter <= MAX_RETRY_WAIT_S && retryCount < MAX_RETRIES;
-        },
+        // Both rate-limit callbacks are identical but for the log label; one
+        // factory keeps them in lockstep. The traced URL is redacted so a
+        // rate-limited private-repo request cannot leak its slug.
+        onRateLimit: throttleCallback("rate limit"),
+        onSecondaryRateLimit: throttleCallback("secondary rate limit"),
       },
     });
   }

@@ -610,6 +610,12 @@ export interface MultiScenarioMeta {
   policy: "fail" | "warn";
   /** The `private-repos` policy the run was generated under (redact or show). */
   privateRepos: "redact" | "show";
+  /**
+   * The `private-report` channel: `issue` delivers the full report to each
+   * redacted target's own repo, `none` sends nothing. Only ever `issue` under
+   * redact (the config rejects issue + show).
+   */
+  privateReport: "none" | "issue";
   /** GITHUB_REPOSITORY: a target whose slug equals it is never redacted. */
   selfSlug: string;
   /**
@@ -639,6 +645,11 @@ export function genMultiScenario(rng: Rng): { scenario: Scenario; meta: MultiSce
   // the fuzzer covers both, and the oracle predicts the placeholder keys and the
   // leak invariant from it.
   const privateRepos = rng.pick(["redact", "show"] as const);
+  // The private-report channel. `issue` delivers the full report to each
+  // redacted target's own repo; it is only valid under redact (the config
+  // rejects issue + show, since show redacts nothing), so it is picked only
+  // then. Randomized so the fuzzer covers delivery, reuse, and denial.
+  const privateReport = privateRepos === "redact" ? rng.pick(["none", "issue"] as const) : "none";
   // The admin repo the runner runs as (GITHUB_REPOSITORY); a target whose slug
   // equals it is never redacted (the self carve-out). Kept in sync with
   // runner.ts's REPO_SLUG.
@@ -865,7 +876,12 @@ export function genMultiScenario(rng: Rng): { scenario: Scenario; meta: MultiSce
     name: `fuzz-multi-${rng.seed}`,
     tiers: ["mock"],
     settings: {},
-    inputs: { mode, on_missing_permission: policy, private_repos: privateRepos },
+    inputs: {
+      mode,
+      on_missing_permission: policy,
+      private_repos: privateRepos,
+      ...(privateReport !== "none" ? { private_report: privateReport } : {}),
+    },
     denial_style: denialStyle,
     owner_kind: "org",
     repos: repos as Scenario["repos"],
@@ -879,6 +895,7 @@ export function genMultiScenario(rng: Rng): { scenario: Scenario; meta: MultiSce
       mode,
       policy,
       privateRepos,
+      privateReport,
       selfSlug,
       milestonesOptOutSlug: optedOutSlug,
     },

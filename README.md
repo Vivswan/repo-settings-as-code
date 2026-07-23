@@ -196,6 +196,7 @@ rulesets:
 | `repos-dir` | (empty) | Multi-repo central mode: directory of per-repo settings files in this repo |
 | `defaults-file` | (empty) | YAML merged under every multi-repo target's settings (multi-repo mode only) |
 | `private-repos` | `redact` | `redact` hides private and internal targets from public logs, summary, and outputs; `show` reveals them |
+| `private-report` | `none` | `issue` delivers each redacted target's full report to a reused issue on that target repository; rejected with `private-repos: show` |
 | `visibility` | `all` | Discovery-only: keep `public`, `private`, or `internal` repositories |
 | `archived` | `skip` | Discovery-only: `skip`, `include`, or `only` archived repositories |
 | `forks` | `include` | Discovery-only: `include`, `exclude`, or `only` forks |

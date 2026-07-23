@@ -21,6 +21,19 @@ export const DEFAULT_PRIVATE_REPOS = "redact";
 export type PrivateReposPolicy = (typeof PRIVATE_REPOS_POLICIES)[number];
 
 /**
+ * The `private-report` channel values. `none` delivers nothing; `issue` posts
+ * the full unredacted report to the private target repo itself (the one
+ * GitHub-ACL-private channel a public run has). The `artifact` channel is a
+ * later slice, so the enum grows then. The single source its type derives from.
+ */
+export const PRIVATE_REPORT_CHANNELS = ["none", "issue"] as const;
+
+/** Default `private-report`, pinned against action.yml by the contract test. */
+export const DEFAULT_PRIVATE_REPORT = "none";
+
+export type PrivateReportChannel = (typeof PRIVATE_REPORT_CHANNELS)[number];
+
+/**
  * The note appended to every redacted line: it names the two escape hatches
  * (opt out, or run from a context where the target's own logs are private).
  */
@@ -79,13 +92,11 @@ export function planRedaction(
   }
   for (const slug of extraPrivateSlugs) {
     const key = slug.toLowerCase();
-    if (key === self || placeholders.has(key)) {
+    if (key === self || masked.has(key)) {
       continue;
     }
     // Discovery-filtered privates are masked but never placeholdered.
-    if (!masked.has(key)) {
-      masked.set(key, slug);
-    }
+    masked.set(key, slug);
   }
 
   return {

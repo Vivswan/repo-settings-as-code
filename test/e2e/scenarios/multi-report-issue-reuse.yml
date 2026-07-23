@@ -1,0 +1,67 @@
+# Report reuse: one issue per repo, forever. svc-reuse already has the report
+# issue (seeded in live_state with the marker label), so this run finds it by the
+# marker label and UPDATES it in place - a PATCH, never a second POST. The body
+# is replaced with the fresh report (still carrying the sentinel), and because a
+# healthy check run (clean) needs no attention, the issue is closed. Proves the
+# find-by-label reuse path: no duplicate issue is ever created.
+name: multi-report-issue-reuse
+settings: {}
+inputs:
+  mode: check
+  private_report: issue
+repos:
+  e2e-owner/svc-reuse:
+    settings:
+      labels:
+        - name: declared
+          color: "00ff00"
+        - name: settings-as-code-report
+          color: "0e2a47"
+          description: "managed by settings-as-code private reporting - do not remove"
+    live_state:
+      repo:
+        private: true
+        visibility: private
+      labels:
+        - name: declared
+          color: "00ff00"
+        - name: settings-as-code-report
+          color: "0e2a47"
+          description: "managed by settings-as-code private reporting - do not remove"
+      issues:
+        - number: 7
+          title: "[automated] settings-as-code: private settings report"
+          body: "OLD REPORT BODY"
+          state: open
+          labels:
+            - name: settings-as-code-report
+          user:
+            login: e2e-token-user
+          html_url: "https://github.com/e2e-owner/svc-reuse/issues/7"
+    permissions:
+      issues: write
+      contents: read
+      administration: read
+expect:
+  exit_code: 0
+  result: clean
+  repos_result:
+    "private repository #1": clean
+  summary_lacks:
+    - "svc-reuse"
+  stdout_lacks:
+    - "svc-reuse"
+  # The existing issue is reused: zero creates, the body replaced via PATCH, and
+  # a healthy run closes it.
+  issue_report:
+    slug: e2e-owner/svc-reuse
+    created_count: 0
+    state: closed
+    lookup_by_label: true
+    body_contains:
+      - "e2e-owner/svc-reuse"
+  # No new issue POST; the PATCH updates the existing one.
+  never:
+    - "POST /repos/e2e-owner/svc-reuse/issues"
+  requests_contain:
+    - "PATCH /repos/e2e-owner/svc-reuse/issues/7"

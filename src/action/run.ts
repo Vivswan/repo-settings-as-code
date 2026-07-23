@@ -21,10 +21,46 @@ import { GithubApi, type GithubClient, registerRedactedSlug } from "../github/ap
 import { createVisibilityResolver } from "../github/repo-visibility.js";
 import { parseConfig } from "./inputs.js";
 import { actionsIo, annotate, setOutput } from "./io.js";
-import { runMulti, toPublicView } from "./multi.js";
+import {
+  applyMarkerInjection,
+  deliverReport,
+  isPrivateVisibility,
+  runMulti,
+  toPublicView,
+} from "./multi.js";
 import { capturingIo, REDACTED_NOTE } from "./redact.js";
 import { readSettingsFile } from "./settings-read.js";
 import { writeMultiSummary, writeRedactedSummary, writeSummary } from "./summary.js";
+
+/**
+ * Decide redaction and report delivery for a single-repo target, masking and
+ * registering its slug when redacted. A target is redacted only under the
+ * redact policy, when it is a DIFFERENT repository than the workflow's own (the
+ * self carve-out leaks nothing), and when the visibility probe does not prove it
+ * public (redaction fails closed). Report DELIVERY fails closed the other way:
+ * `deliverable` is true only when the probe PROVES the repo private or internal,
+ * so an unknown visibility redacts but never posts the private report to a repo
+ * that might be public.
+ */
+async function resolveSingleRepoRedaction(
+  api: GithubClient,
+  cfg: { privateRepos: string; repo: string; selfSlug: string },
+  io: { mask(value: string): void },
+): Promise<{ redacted: boolean; deliverable: boolean }> {
+  if (cfg.privateRepos !== "redact") {
+    return { redacted: false, deliverable: false };
+  }
+  if (cfg.repo.toLowerCase() === cfg.selfSlug.toLowerCase()) {
+    return { redacted: false, deliverable: false };
+  }
+  const visibility = await createVisibilityResolver(api)(cfg.repo);
+  if (visibility === "public") {
+    return { redacted: false, deliverable: false };
+  }
+  io.mask(cfg.repo);
+  registerRedactedSlug(cfg.repo);
+  return { redacted: true, deliverable: isPrivateVisibility(visibility) };
+}
 
 /** Execute the action; returns the process exit code. */
 export async function run(overrides?: { api?: GithubClient }): Promise<number> {
@@ -87,29 +123,66 @@ export async function run(overrides?: { api?: GithubClient }): Promise<number> {
     return fail(invalid);
   }
 
-  const isSelf = cfg.repo.toLowerCase() === cfg.selfSlug.toLowerCase();
-  let redacted = false;
-  if (cfg.privateRepos === "redact" && !isSelf) {
-    const visibility = await createVisibilityResolver(api)(cfg.repo);
-    redacted = visibility !== "public";
-    if (redacted) {
-      io.mask(cfg.repo);
-      registerRedactedSlug(cfg.repo);
-    }
+  // Decide redaction and whether the private report can be delivered (only when
+  // the target is PROVEN private/internal), masking the slug when redacted.
+  const { redacted, deliverable } = await resolveSingleRepoRedaction(api, cfg, io);
+
+  // Report channel: for a redacted single-repo target proven private, deliver
+  // the full report to the target repo itself, exactly as multi mode does. The
+  // capturing sink's transcript feeds the report; the marker-label injection
+  // keeps an apply from deleting the label the report module creates.
+  const reportChannel = deliverable && cfg.privateReport === "issue";
+  const capture = redacted ? capturingIo(io) : null;
+  const runIo = capture ? capture.io : io;
+  const injected = applyMarkerInjection(settings, reportChannel);
+  if (injected.notice) {
+    runIo.annotate("notice", injected.notice);
   }
 
   const result = await runForRepo(
     api,
     {
       repo: cfg.repo,
-      settings,
+      settings: injected.settings,
       mode: cfg.mode,
       onMissingPermission: cfg.onMissingPermission,
       requiredSections: cfg.requiredSections,
       onlySections: cfg.onlySections,
     },
-    redacted ? capturingIo(io).io : io,
+    runIo,
   );
+
+  // Deliver the private report from the unredacted outcomes and the captured
+  // transcript. This runs on EVERY result (the report mirrors the run log),
+  // including a preflight failure, and its own failure only warns. The public
+  // rendering uses the constant "private repository" placeholder - single-repo
+  // mode has exactly one target, so no ordinal is needed and the slug never
+  // reaches the warning.
+  if (reportChannel && capture) {
+    await deliverReport(
+      api,
+      {
+        adminRepo: cfg.selfSlug,
+        runUrl: cfg.runUrl,
+        mode: cfg.mode,
+        timestamp: new Date().toISOString(),
+      },
+      cfg.repo,
+      "private repository",
+      result.result,
+      result.outcomes,
+      capture.drain(),
+      cfg.mode === "check",
+      io,
+    );
+  } else if (redacted && cfg.privateReport === "issue" && !deliverable) {
+    // Redacted but not proven private: the report is withheld, said once, safely.
+    annotate(
+      "notice",
+      "private repository: visibility could not be verified; the private report was not delivered",
+    );
+  }
+
   if (result.preflightDenied.length > 0) {
     return fail(
       redacted

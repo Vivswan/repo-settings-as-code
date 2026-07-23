@@ -30,10 +30,13 @@ import { getRepoFile } from "../github/repo-file.js";
 import { createVisibilityResolver, type RepoVisibility } from "../github/repo-visibility.js";
 import type { Io } from "../io.js";
 import { prefixedIo } from "../io.js";
+import { composeReport, type TranscriptLine } from "../report/composer.js";
+import { deliverIssueReport, injectMarkerLabel, MARKER_LABEL } from "../report/issue-report.js";
 import type { SettingsFile } from "../schema.js";
 import { DEFAULT_SETTINGS_FILE, quoteList } from "./inputs.js";
 import {
   capturingIo,
+  type PrivateReportChannel,
   type PrivateReposPolicy,
   planRedaction,
   REDACTED_DETAIL,
@@ -56,8 +59,12 @@ export interface MultiConfig {
   discoveryFiltersSet: string[];
   /** Whether to hide private/internal targets from the public view. */
   privateRepos: PrivateReposPolicy;
+  /** Where the full unredacted report for a redacted target is delivered. */
+  privateReport: PrivateReportChannel;
   /** GITHUB_REPOSITORY: a target equal to it is never redacted (carve-out). */
   selfSlug: string;
+  /** Link to the workflow run, for the private report metadata (may be empty). */
+  runUrl: string;
 }
 
 /**
@@ -147,6 +154,206 @@ export function toPublicView(target: TargetOutcome): PublicTargetView {
   };
 }
 
+/** True when a resolved visibility PROVES the repo private or internal. */
+export function isPrivateVisibility(visibility: RepoVisibility): boolean {
+  return visibility === "private" || visibility === "internal";
+}
+
+/**
+ * One target's normalized end state: the engine result plus the section keys a
+ * redacted target's public annotation names (failed sections with codes, drift
+ * sections). `note` carries a per-target message for skips/failures.
+ */
+interface TargetResult {
+  result: RepoRunResult["result"];
+  outcomes: RepoRunResult["outcomes"];
+  skippedSections: string[];
+  note?: string;
+  /** Failed section keys with their HTTP codes, for the safe public annotation. */
+  failedSections: string[];
+  /** Drifted section keys, for the safe public annotation. */
+  driftSections: string[];
+}
+
+/**
+ * Record a processing failure that happened before the engine ran. The rich
+ * message is captured for the private report (via `targetIo`, the capturing
+ * sink for a redacted target - the report is safe). A PLAIN target also gets
+ * the rich public annotation here; a REDACTED target's single public
+ * annotation is emitted once by emitRedactedResult in the finalizer, so this
+ * stays silent publicly for it.
+ */
+function targetFailure(
+  io: Io,
+  targetIo: Io,
+  redacted: boolean,
+  richMessage: string,
+  plainLabel: string,
+): TargetResult {
+  if (redacted) {
+    targetIo.log(`failed: ${richMessage}`);
+  } else {
+    io.annotate("error", `${plainLabel}${richMessage}`);
+  }
+  return {
+    result: "failed",
+    outcomes: [],
+    skippedSections: [],
+    note: redacted ? REDACTED_NOTE : richMessage,
+    failedSections: [],
+    driftSections: [],
+  };
+}
+
+/**
+ * Process one target end to end and return its normalized outcome. Guard-clause
+ * style: each failure (read, missing file, parse, validation, preflight, crash)
+ * returns early. ALL output goes through `targetIo` (the capturing sink for a
+ * redacted target), so a failure's text lands in the private report too.
+ */
+async function processTarget(ctx: {
+  api: GithubClient;
+  target: Target;
+  defaults: SettingsFile;
+  cfg: MultiConfig;
+  redacted: boolean;
+  injectMarker: boolean;
+  io: Io;
+  targetIo: Io;
+}): Promise<TargetResult> {
+  const { api, target, defaults, cfg, redacted, injectMarker, targetIo } = ctx;
+  // Failures render generically for a redacted target (no private detail) and
+  // richly otherwise; the rich text is captured for the private report.
+  const fail = (richMessage: string): TargetResult =>
+    targetFailure(ctx.io, targetIo, redacted, richMessage, `${target.slug}: `);
+
+  const read = await readTargetSettings(api, target);
+  if ("error" in read) {
+    return fail(read.error);
+  }
+  if ("missing" in read) {
+    const richSkip = `skipped - the repository has no ${DEFAULT_SETTINGS_FILE} on its default branch. Add the file to manage it, or remove ${target.slug} from the "repos" input`;
+    if (redacted) {
+      // The generic public "skipped" line is emitted once by the finalizer;
+      // capture the reason for the report.
+      targetIo.log(richSkip);
+    } else {
+      ctx.io.annotate("notice", `${target.slug}: ${richSkip}`);
+    }
+    return {
+      result: "skipped",
+      outcomes: [],
+      skippedSections: [],
+      note: redacted ? REDACTED_NOTE : `no ${DEFAULT_SETTINGS_FILE} on the default branch`,
+      failedSections: [],
+      driftSections: [],
+    };
+  }
+
+  const parsed = parseSettingsDoc(read.raw);
+  if ("error" in parsed) {
+    return fail(`cannot parse ${read.sourceLabel}: ${parsed.error}. Fix the YAML in that file`);
+  }
+
+  const { settings: merged, disabled } = applyDefaults(defaults, parsed.settings);
+  const injected = applyMarkerInjection(merged, injectMarker);
+  const settings = injected.settings;
+  if (injected.notice) {
+    targetIo.annotate("notice", injected.notice);
+  }
+  for (const key of disabled) {
+    targetIo.annotate(
+      "notice",
+      `section "${key}" is set to null in ${read.sourceLabel}, which opts this repository out of that defaults-file section`,
+    );
+  }
+
+  // validateSettingsDoc emits through its sink and names sourceLabel (the slug
+  // for remote targets). A redacted target routes it through the capturing sink
+  // so its warnings land in the report, not the public log; a plain target uses
+  // the raw io, keeping validation warnings unprefixed as before.
+  const invalid = validateSettingsDoc(
+    settings,
+    read.sourceLabel,
+    cfg.onlySections,
+    redacted ? targetIo : ctx.io,
+  );
+  if (invalid) {
+    return fail(invalid);
+  }
+
+  const run = await runForRepo(
+    api,
+    {
+      repo: target.slug,
+      settings,
+      mode: cfg.mode,
+      onMissingPermission: cfg.onMissingPermission,
+      requiredSections: cfg.requiredSections,
+      onlySections: cfg.onlySections,
+    },
+    targetIo,
+  );
+  let note: string | undefined;
+  if (run.preflightDenied.length > 0) {
+    if (redacted) {
+      // The engine's preflight lines were captured; the single public
+      // annotation is the finalizer's generic "failed" line.
+      note = REDACTED_NOTE;
+    } else {
+      note = `preflight denied ${run.preflightDenied.length} section(s); nothing was applied to this repository`;
+      ctx.io.annotate(
+        "error",
+        `${target.slug}: preflight failed: the token cannot access ${run.preflightDenied.length} section(s), so nothing was applied to this repository. Grant the permissions named above, or set on-missing-permission: warn`,
+      );
+    }
+  }
+  return {
+    result: run.result,
+    outcomes: run.outcomes,
+    skippedSections: run.skippedSections,
+    note,
+    failedSections: run.outcomes
+      .filter((o) => o.status === "failed")
+      .map((o) => (o.httpStatus !== undefined ? `${o.key} (${o.httpStatus})` : o.key)),
+    driftSections: run.outcomes.filter((o) => o.status === "drift").map((o) => o.key),
+  };
+}
+
+/**
+ * Read a target's raw settings: from the checked-in central file, or from the
+ * target repo's own default-branch settings.yml. Returns `{raw, sourceLabel}`,
+ * `{missing: true}` when a remote target has no file, or `{error}` on failure.
+ */
+async function readTargetSettings(
+  api: GithubClient,
+  target: Target,
+): Promise<{ raw: string; sourceLabel: string } | { missing: true } | { error: string }> {
+  if (target.source === "central") {
+    const sourceLabel = target.filePath ?? target.origin;
+    try {
+      return { raw: readFileSync(target.filePath ?? "", "utf8"), sourceLabel };
+    } catch (error) {
+      return {
+        error: `cannot read settings from ${sourceLabel}: ${String(error)}. Fix the file, or delete it to stop managing this repository`,
+      };
+    }
+  }
+  const sourceLabel = `${target.slug}:${DEFAULT_SETTINGS_FILE}`;
+  const file = await getRepoFile(api, target.slug, DEFAULT_SETTINGS_FILE);
+  if ("missing" in file) {
+    return { missing: true };
+  }
+  if ("error" in file) {
+    return {
+      error: isPermissionError(file.error)
+        ? `the token was denied reading ${sourceLabel}: ${file.error.status} ${file.error.message}. Grant the PAT access to this repository (Contents: read), or remove it from the "repos" input`
+        : `reading ${sourceLabel} failed: ${file.error.status} ${file.error.message}. ${RERUN_ADVICE}`,
+    };
+  }
+  return { raw: file.content, sourceLabel };
+}
+
 /**
  * Multi-repo orchestration. Config-level problems (bad defaults file, no
  * targets, duplicate definitions, discovery failure) return `fatal` before
@@ -158,7 +365,9 @@ export async function runMulti(
   cfg: MultiConfig,
   io: Io,
 ): Promise<{ fatal: string | null; targets: TargetOutcome[] }> {
-  const none: TargetOutcome[] = [];
+  // One timestamp for the whole run, so every target's report shares it and the
+  // pure composer never reaches for Date.now itself.
+  const timestamp = new Date().toISOString();
 
   // Central-resolution warnings are buffered so nothing emits before the
   // redaction mask is registered. Every exit path - fatal or not - flushes
@@ -179,7 +388,7 @@ export async function runMulti(
   };
   const fail = (message: string): { fatal: string; targets: TargetOutcome[] } => {
     flushWarnings();
-    return { fatal: message, targets: none };
+    return { fatal: message, targets: [] };
   };
 
   let defaults: SettingsFile = {};
@@ -261,32 +470,36 @@ export async function runMulti(
 
   // Resolve visibility for every distinct target slug before the plan: use
   // the discovery-supplied value when present, else one probe. Skipped
-  // entirely under `show` and for the self slug. Fail closed: only "public"
-  // avoids redaction, so an unknown (probe failed/denied) target is hidden.
+  // entirely under `show` and for the self slug. The resolved visibility (not
+  // just a boolean) drives TWO decisions: redaction fails closed (redact unless
+  // proven public), but report DELIVERY fails closed the other way (deliver only
+  // when proven private or internal) - an unknown must never post a private
+  // report to a repo that might be public.
   const resolveVisibility = createVisibilityResolver(api);
   const orderedSlugs = [...central, ...remote].map((t) => t.slug);
-  const isPrivate = new Map<string, boolean>();
+  const visibilityBySlug = new Map<string, RepoVisibility>();
   if (redact) {
     for (const slug of orderedSlugs) {
       const key = slug.toLowerCase();
-      if (isPrivate.has(key)) {
+      if (visibilityBySlug.has(key)) {
         continue;
       }
       if (key === self) {
-        isPrivate.set(key, false);
+        visibilityBySlug.set(key, "public");
         continue;
       }
       const known = knownVisibility.get(key);
-      const visibility = known ?? (await resolveVisibility(slug));
-      isPrivate.set(key, visibility !== "public");
+      visibilityBySlug.set(key, known ?? (await resolveVisibility(slug)));
     }
   }
+  const visibilityOf = (slug: string): RepoVisibility =>
+    visibilityBySlug.get(slug.toLowerCase()) ?? "public";
 
   const plan: RedactionPlan = redact
     ? planRedaction(
         orderedSlugs,
         filteredPrivateSlugs,
-        (slug) => isPrivate.get(slug.toLowerCase()) ?? false,
+        (slug) => visibilityOf(slug) !== "public",
         cfg.selfSlug,
       )
     : { isRedacted: () => false, display: (slug) => slug, maskedSlugs: [] };
@@ -327,182 +540,202 @@ export async function runMulti(
   for (const target of targets) {
     const redacted = plan.isRedacted(target.slug);
     const display = plan.display(target.slug);
+    // Deliver a report ONLY when the target is PROVEN private or internal.
+    // Redaction fails closed (redact on unknown), but delivery fails closed the
+    // other way: posting the full private report to a repo that might actually
+    // be public would leak it, so an unknown visibility redacts publicly yet
+    // skips delivery.
+    const visibility = visibilityOf(target.slug);
+    const deliverable =
+      redacted && cfg.privateReport === "issue" && isPrivateVisibility(visibility);
 
-    /**
-     * Emit a target failure. A plain target keeps today's rich message
-     * byte-identically; a redacted target gets a generic line naming no
-     * private detail. Both push the same failed TargetOutcome shell.
-     */
-    const failTarget = (richMessage: string, note?: string): void => {
-      if (redacted) {
-        io.annotate("error", `${display}: failed. ${REDACTED_NOTE}`);
-      } else {
-        io.annotate("error", `${target.slug}: ${richMessage}`);
-      }
-      results.push({
-        slug: target.slug,
-        source: target.source,
-        origin: target.origin,
-        result: "failed",
-        outcomes: [],
-        skippedSections: [],
-        note: redacted ? REDACTED_NOTE : (note ?? richMessage),
-        display,
-        redacted,
-      });
-    };
+    // One capture per redacted target, created BEFORE any processing so a
+    // read/parse/validation failure is recorded in the report too. All target
+    // output - notices, engine lines, failure text - flows through targetIo.
+    const capture = redacted ? capturingIo(prefixedIo(io, `${display}: `)) : null;
+    const targetIo = capture ? capture.io : prefixedIo(io, `${target.slug}: `);
 
+    // A crash mid-processing (e.g. a network error that escaped tryRequest)
+    // never stops the rest of the fleet; it becomes this target's failure and
+    // still flows through the one finalizer below (so its report is delivered).
+    let outcome: TargetResult;
     try {
-      let raw: string;
-      let sourceLabel: string;
-      if (target.source === "central") {
-        sourceLabel = target.filePath ?? target.origin;
-        try {
-          raw = readFileSync(target.filePath ?? "", "utf8");
-        } catch (error) {
-          failTarget(
-            `cannot read settings from ${sourceLabel}: ${String(error)}. Fix the file, or delete it to stop managing this repository`,
-          );
-          continue;
-        }
-      } else {
-        sourceLabel = `${target.slug}:${DEFAULT_SETTINGS_FILE}`;
-        const file = await getRepoFile(api, target.slug, DEFAULT_SETTINGS_FILE);
-        if ("missing" in file) {
-          const richSkip = `skipped - the repository has no ${DEFAULT_SETTINGS_FILE} on its default branch. Add the file to manage it, or remove ${target.slug} from the "repos" input`;
-          io.annotate(
-            "notice",
-            redacted ? `${display}: skipped. ${REDACTED_NOTE}` : `${target.slug}: ${richSkip}`,
-          );
-          results.push({
-            slug: target.slug,
-            source: target.source,
-            origin: target.origin,
-            result: "skipped",
-            outcomes: [],
-            skippedSections: [],
-            note: redacted ? REDACTED_NOTE : `no ${DEFAULT_SETTINGS_FILE} on the default branch`,
-            display,
-            redacted,
-          });
-          continue;
-        }
-        if ("error" in file) {
-          failTarget(
-            isPermissionError(file.error)
-              ? `the token was denied reading ${sourceLabel}: ${file.error.status} ${file.error.message}. Grant the PAT access to this repository (Contents: read), or remove it from the "repos" input`
-              : `reading ${sourceLabel} failed: ${file.error.status} ${file.error.message}. ${RERUN_ADVICE}`,
-          );
-          continue;
-        }
-        raw = file.content;
-      }
-
-      const parsed = parseSettingsDoc(raw);
-      if ("error" in parsed) {
-        failTarget(`cannot parse ${sourceLabel}: ${parsed.error}. Fix the YAML in that file`);
-        continue;
-      }
-
-      const { settings, disabled } = applyDefaults(defaults, parsed.settings);
-      // Section-level notices carry no private live values (they name the
-      // section key and the source file only), but a redacted target's source
-      // label is its own slug, so route them through the capturing sink too.
-      const targetIo = redacted
-        ? capturingIo(prefixedIo(io, `${display}: `)).io
-        : prefixedIo(io, `${target.slug}: `);
-      for (const key of disabled) {
-        targetIo.annotate(
-          "notice",
-          `section "${key}" is set to null in ${sourceLabel}, which opts this repository out of that defaults-file section`,
-        );
-      }
-      // validateSettingsDoc emits through io directly and names sourceLabel
-      // (the slug for remote targets), so give it the capturing sink for a
-      // redacted target and translate its error to a generic failure line.
-      const invalid = validateSettingsDoc(
-        settings,
-        sourceLabel,
-        cfg.onlySections,
-        redacted ? capturingIo(io).io : io,
-      );
-      if (invalid) {
-        failTarget(invalid);
-        continue;
-      }
-
-      const run = await runForRepo(
+      outcome = await processTarget({
         api,
-        {
-          repo: target.slug,
-          settings,
-          mode: cfg.mode,
-          onMissingPermission: cfg.onMissingPermission,
-          requiredSections: cfg.requiredSections,
-          onlySections: cfg.onlySections,
-        },
-        targetIo,
-      );
-      let note: string | undefined;
-      if (run.preflightDenied.length > 0) {
-        if (redacted) {
-          note = REDACTED_NOTE;
-          io.annotate("error", `${display}: preflight failed. ${REDACTED_NOTE}`);
-        } else {
-          note = `preflight denied ${run.preflightDenied.length} section(s); nothing was applied to this repository`;
-          io.annotate(
-            "error",
-            `${target.slug}: preflight failed: the token cannot access ${run.preflightDenied.length} section(s), so nothing was applied to this repository. Grant the permissions named above, or set on-missing-permission: warn`,
-          );
-        }
-      }
-      results.push({
-        slug: target.slug,
-        source: target.source,
-        origin: target.origin,
-        result: run.result,
-        outcomes: run.outcomes,
-        skippedSections: run.skippedSections,
-        note,
-        display,
+        target,
+        defaults,
+        cfg,
         redacted,
+        // Only inject the marker label when the report will actually be
+        // delivered; a target that redacts but cannot deliver needs no label.
+        injectMarker: deliverable,
+        io,
+        targetIo,
       });
-      // For a redacted target, the engine's per-section lines were captured;
-      // emit ONE generic annotation summarizing the result, safe codes only.
-      if (redacted) {
-        emitRedactedSummary(io, display, run);
-      }
     } catch (error) {
-      // One repo's unexpected crash never stops the rest of the fleet.
       const message = error instanceof Error ? error.message : String(error);
-      failTarget(message);
+      outcome = targetFailure(io, targetIo, redacted, message, `${target.slug}: `);
+    }
+
+    // ONE finalization path for every target, however it exited: deliver the
+    // report (the private mirror of the whole run, failures included), record
+    // the outcome, and emit the single public annotation for a redacted target.
+    let note = outcome.note;
+    if (deliverable && capture) {
+      const reportNote = await deliverReport(
+        api,
+        { adminRepo: cfg.selfSlug, runUrl: cfg.runUrl, mode: cfg.mode, timestamp },
+        target.slug,
+        display,
+        outcome.result,
+        outcome.outcomes,
+        capture.drain(),
+        cfg.mode === "check",
+        io,
+      );
+      if (reportNote) {
+        note = note ? `${note}; ${reportNote}` : reportNote;
+      }
+    } else if (redacted && cfg.privateReport === "issue" && !deliverable) {
+      // Redacted but not proven private: the report is withheld, said once,
+      // safely (placeholder only).
+      const withheld = "visibility could not be verified; the private report was not delivered";
+      io.annotate("notice", `${display}: ${withheld}`);
+      note = note ? `${note}; ${withheld}` : withheld;
+    }
+
+    results.push({
+      slug: target.slug,
+      source: target.source,
+      origin: target.origin,
+      result: outcome.result,
+      outcomes: outcome.outcomes,
+      skippedSections: outcome.skippedSections,
+      note,
+      display,
+      redacted,
+    });
+    if (redacted) {
+      emitRedactedResult(
+        io,
+        display,
+        outcome.result,
+        outcome.failedSections,
+        outcome.driftSections,
+      );
     }
   }
   return { fatal: null, targets: results };
 }
 
 /**
- * The single generic annotation a redacted target gets after its run, its
- * level chosen by result: a failed run names the failed section keys and
- * their HTTP codes (safe closed values only); a check-mode drift warns; a
- * skipped run notices; a healthy run says nothing.
+ * The single generic annotation a redacted target gets, its level chosen by
+ * result: a failed run names the failed section keys and their HTTP codes (safe
+ * closed values only); a check-mode drift warns; a skipped run notices; a
+ * healthy run says nothing. The section lists are precomputed so no private
+ * detail reaches this public surface.
  */
-function emitRedactedSummary(io: Io, display: string, run: RepoRunResult): void {
-  if (run.result === "failed") {
-    const failed = run.outcomes
-      .filter((o) => o.status === "failed")
-      .map((o) => (o.httpStatus !== undefined ? `${o.key} (${o.httpStatus})` : o.key));
-    const sections = failed.length > 0 ? ` - ${failed.join(", ")}` : "";
+function emitRedactedResult(
+  io: Io,
+  display: string,
+  result: RepoRunResult["result"],
+  failedSections: string[],
+  driftSections: string[],
+): void {
+  if (result === "failed") {
+    const sections = failedSections.length > 0 ? ` - ${failedSections.join(", ")}` : "";
     io.annotate("error", `${display}: failed${sections}. ${REDACTED_NOTE}`);
     return;
   }
-  if (run.result === "drift") {
-    const drifted = run.outcomes.filter((o) => o.status === "drift").map((o) => o.key);
-    const sections = drifted.length > 0 ? ` - ${drifted.join(", ")}` : "";
+  if (result === "drift") {
+    const sections = driftSections.length > 0 ? ` - ${driftSections.join(", ")}` : "";
     io.annotate("warning", `${display}: drift${sections}. ${REDACTED_NOTE}`);
     return;
   }
-  if (run.result === "skipped") {
+  if (result === "skipped") {
     io.annotate("notice", `${display}: skipped. ${REDACTED_NOTE}`);
   }
+}
+
+/** The run metadata a private report needs, minus the per-target fields. */
+export interface ReportRunMeta {
+  /** The admin repository the workflow ran in (GITHUB_REPOSITORY / selfSlug). */
+  adminRepo: string;
+  /** Link to the workflow run (may be empty on local runs). */
+  runUrl: string;
+  /** "apply" or "check". */
+  mode: string;
+  /** ISO timestamp captured once at the run's start, passed in (never Date.now here). */
+  timestamp: string;
+}
+
+/**
+ * Apply the marker-label injection for the issue report channel and describe
+ * the change. When `on` is false (the channel is off, or the target is not
+ * redacted) the settings pass through untouched with no notice. Otherwise
+ * injectMarkerLabel appends the report's marker label if the settings declare a
+ * labels section and it is absent (or refuses a rename that would move the
+ * marker away). The notice is returned rather than emitted, so the caller can
+ * route it through the target's capturing sink (the private report).
+ */
+export function applyMarkerInjection(
+  settings: SettingsFile,
+  on: boolean,
+): { settings: SettingsFile; notice?: string } {
+  if (!on) {
+    return { settings };
+  }
+  const injection = injectMarkerLabel(settings);
+  if (injection.renameRefused) {
+    return {
+      settings: injection.settings,
+      notice: `refused to rename the "${MARKER_LABEL}" marker label: private reporting reuses its issue by that exact name, so the rename was dropped`,
+    };
+  }
+  if (!injection.injected) {
+    return { settings: injection.settings };
+  }
+  return {
+    settings: injection.settings,
+    notice: `added the "${MARKER_LABEL}" marker label to the managed labels so private reporting can reuse its issue; it is managed like any declared label`,
+  };
+}
+
+/**
+ * Compose the full unredacted report for a redacted target and deliver it to
+ * the issue channel. Runs on EVERY result (the report is the private mirror of
+ * the run log). Returns a safe summary-row note on delivery failure - and emits
+ * one public-safe warning naming only the placeholder and the HTTP status - or
+ * undefined on success; the target's result is never changed either way. The
+ * `check` flag decides needsAttention alongside the result (a check-mode drift
+ * needs attention; an apply-mode drift cannot occur).
+ */
+export async function deliverReport(
+  api: GithubClient,
+  meta: ReportRunMeta,
+  slug: string,
+  display: string,
+  result: RepoRunResult["result"],
+  outcomes: RepoRunResult["outcomes"],
+  transcript: TranscriptLine[],
+  check: boolean,
+  io: Io,
+): Promise<string | undefined> {
+  const body = composeReport({
+    target: slug,
+    adminRepo: meta.adminRepo,
+    runUrl: meta.runUrl,
+    mode: meta.mode,
+    result,
+    timestamp: meta.timestamp,
+    outcomes: outcomes.map((o) => ({ key: o.key, status: o.status, detail: o.detail })),
+    transcript,
+  });
+  const needsAttention = result === "failed" || (check && result === "drift");
+  const delivery = await deliverIssueReport(api, slug, body, needsAttention);
+  if ("warning" in delivery) {
+    io.annotate("warning", `${display}: ${delivery.warning}`);
+    return delivery.warning;
+  }
+  return undefined;
 }

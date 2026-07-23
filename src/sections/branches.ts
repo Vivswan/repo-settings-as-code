@@ -54,6 +54,7 @@ const ENDPOINTS = {
     route: "GET /repos/{owner}/{repo}/branches/{branch}",
     statuses: { 200: "the branch exists", 404: "no such branch" },
     permission: { repo: ["contents"] },
+    advisory: true,
   },
 } as const satisfies Record<string, EndpointDecl>;
 
@@ -80,14 +81,14 @@ export const branchesSection: SectionModule<"branches"> = {
         const probe = await probeAbsent(ctx, this, ENDPOINTS.getProtection, {
           params: { branch: branch.name },
         });
-        const isProtected = !("missing" in probe);
+        if ("missing" in probe) {
+          continue;
+        }
         if (ctx.check) {
-          if (isProtected) {
-            result.drift.push(
-              `branches[${branch.name}]: protected live but the settings file declares protection: null; apply will remove the protection`,
-            );
-          }
-        } else if (isProtected) {
+          result.drift.push(
+            `branches[${branch.name}]: protected live but the settings file declares protection: null; apply will remove the protection`,
+          );
+        } else {
           await call(ctx, this, ENDPOINTS.removeProtection, { params: { branch: branch.name } });
           result.changes.push(`removed protection from "${branch.name}"`);
         }

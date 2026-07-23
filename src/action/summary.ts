@@ -39,13 +39,21 @@ function outcomeRows(outcomes: OutcomeRow[]): string[] {
   return rows;
 }
 
-export function writeSummary(outcomes: SectionOutcome[], mode: string): void {
+/**
+ * The shared write frame: resolve GITHUB_STEP_SUMMARY, skip when it is unset
+ * (local/test runs), and append the built lines. `build` runs only when there
+ * is a file to write, so a caller never assembles a summary that is discarded.
+ */
+function writeSummaryFile(build: () => string[]): void {
   const file = process.env.GITHUB_STEP_SUMMARY;
   if (!file) {
     return;
   }
-  const lines = [`## repo-settings-as-code (${mode})`, "", ...outcomeRows(outcomes)];
-  appendFileSync(file, `${lines.join("\n")}\n`);
+  appendFileSync(file, `${build().join("\n")}\n`);
+}
+
+export function writeSummary(outcomes: SectionOutcome[], mode: string): void {
+  writeSummaryFile(() => [`## repo-settings-as-code (${mode})`, "", ...outcomeRows(outcomes)]);
 }
 
 /**
@@ -61,44 +69,37 @@ export function writeRedactedSummary(
   mode: string,
   result: RepoResult,
 ): void {
-  const file = process.env.GITHUB_STEP_SUMMARY;
-  if (!file) {
-    return;
-  }
-  const lines = [
+  writeSummaryFile(() => [
     `## repo-settings-as-code (${mode})`,
     "",
     `:${STATUS_ICON[result]}: ${result} - ${REDACTED_NOTE}`,
     "",
     ...outcomeRows(redactOutcomes(outcomes)),
-  ];
-  appendFileSync(file, `${lines.join("\n")}\n`);
+  ]);
 }
 
 export function writeMultiSummary(views: PublicTargetView[], mode: string): void {
-  const file = process.env.GITHUB_STEP_SUMMARY;
-  if (!file) {
-    return;
-  }
-  const lines = [
-    `## repo-settings-as-code (${mode}, ${views.length} repositories)`,
-    "",
-    "| Repository | Source | Result |",
-    "|---|---|---|",
-  ];
-  for (const view of views) {
-    lines.push(
-      `| ${summaryCell(view.display)} | ${view.source} | :${STATUS_ICON[view.result]}: ${view.result} |`,
-    );
-  }
-  for (const view of views) {
-    lines.push("", `### ${summaryCell(view.display)} (${view.result})`, "");
-    if (view.note) {
-      lines.push(summaryCell(view.note), "");
+  writeSummaryFile(() => {
+    const lines = [
+      `## repo-settings-as-code (${mode}, ${views.length} repositories)`,
+      "",
+      "| Repository | Source | Result |",
+      "|---|---|---|",
+    ];
+    for (const view of views) {
+      lines.push(
+        `| ${summaryCell(view.display)} | ${view.source} | :${STATUS_ICON[view.result]}: ${view.result} |`,
+      );
     }
-    if (view.outcomes.length > 0) {
-      lines.push(...outcomeRows(view.outcomes));
+    for (const view of views) {
+      lines.push("", `### ${summaryCell(view.display)} (${view.result})`, "");
+      if (view.note) {
+        lines.push(summaryCell(view.note), "");
+      }
+      if (view.outcomes.length > 0) {
+        lines.push(...outcomeRows(view.outcomes));
+      }
     }
-  }
-  appendFileSync(file, `${lines.join("\n")}\n`);
+    return lines;
+  });
 }

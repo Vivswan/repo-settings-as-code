@@ -1,0 +1,44 @@
+# Report delivery permission-denied. svc-denied is a private target whose only
+# managed section is `repository` (administration-gated), which reads clean in
+# check mode - so the target's own run is healthy. The token is denied Issues,
+# which the private-report issue channel needs, so delivery degrades to a SAFE
+# warning: it names the HTTP status and generic advice only, never the slug, and
+# creates NO issue. Critically, the report failure does not change the target's
+# result (still clean) - report delivery is auxiliary.
+name: multi-report-permission-denied
+settings: {}
+inputs:
+  mode: check
+  private_report: issue
+repos:
+  e2e-owner/svc-denied:
+    settings:
+      repository:
+        has_issues: true
+    live_state:
+      repo:
+        private: true
+        visibility: private
+        has_issues: true
+    permissions:
+      issues: none
+      contents: read
+      administration: read
+expect:
+  exit_code: 0
+  result: clean
+  repos_result:
+    "private repository #1": clean
+  # No report issue is ever created when Issues is denied.
+  issue_report:
+    slug: e2e-owner/svc-denied
+    created_count: 0
+  never:
+    - "POST /repos/e2e-owner/svc-denied/issues"
+  # The delivery failure is a safe warning; it names the HTTP status only.
+  stdout_contains:
+    - "could not deliver the private report"
+  summary_lacks:
+    - "svc-denied"
+  stdout_lacks:
+    - "svc-denied"

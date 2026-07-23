@@ -349,6 +349,27 @@ describe("denial barrier", () => {
     expect(h.violations.some((v) => v.includes("should have aborted"))).toBe(true);
   });
 
+  test("a denied ADVISORY read (branches.branchProbe) does NOT arm the barrier", async () => {
+    // The branch-existence probe is advisory: branches.ts ignores any status but
+    // a definitive 404 and proceeds to the protection PUT regardless. A denied
+    // branchProbe (contents: none -> 403) must therefore NOT arm - the PUT that
+    // follows is the engine's legitimate write, not a post-abort write. Fuzz seed
+    // 610725843 found the old rule false-flagging exactly this.
+    const branch = "main-0";
+    const h = await start(
+      scenario({
+        inputs: { on_missing_permission: "warn" },
+        token_permissions: { contents: "none", administration: "read" },
+      }),
+    );
+    // getProtection 404s (unprotected, tolerated); the advisory branchProbe is
+    // contents-denied; the protection PUT is then administration-write-denied.
+    await call(h, "GET", `/repos/${OWNER}/${REPO}/branches/${branch}/protection`);
+    await call(h, "GET", `/repos/${OWNER}/${REPO}/branches/${branch}`); // advisory, denied
+    await call(h, "PUT", `/repos/${OWNER}/${REPO}/branches/${branch}/protection`, { body: {} });
+    expect(h.violations).toHaveLength(0);
+  });
+
   test("the visibility probe (expected, first repository.get) does NOT arm the barrier", async () => {
     // In a redact multi-repo run, an EXPLICIT target's first repository.get is
     // the visibility probe (issued before the target loop). A denied probe must
@@ -1463,6 +1484,146 @@ describe("multi-repo mode", () => {
     expect(h.violations.some((v) => v.includes("no known target slug"))).toBe(true);
     // The fault still fires for a VALID target (unchanged behavior).
     expect((await call(h, "GET", "/repos/e2e-owner/svc-a/labels")).status).toBe(403);
+  });
+});
+
+describe("private-report bypass is scoped to redact-and-deliver targets", () => {
+  const jsonHeaders = { "content-type": "application/json" };
+
+  test("a marker-label POST in check mode to a PUBLIC target hits the check-mode barrier", async () => {
+    // The report-infra bypass writes even in check mode, but ONLY for a
+    // report-delivery target. A marker POST to a public slug (e.g. a buggy
+    // labels-section write of the injected marker) is NOT report infra: it falls
+    // through to the labels.create section route and the check-mode barrier fires.
+    const target = "e2e-owner/svc-pub";
+    const h = await start(
+      scenario({
+        inputs: { mode: "check", private_report: "issue" },
+        repos: { [target]: { settings: {}, live_state: { repo: { visibility: "public" } } } },
+      }),
+    );
+    const res = await call(h, "POST", `/repos/${target}/labels`, {
+      headers: jsonHeaders,
+      body: { name: "settings-as-code-report" },
+    });
+    expect(res.status).toBe(400);
+    expect(h.violations.some((v) => v === "write in check mode")).toBe(true);
+  });
+
+  test("issue traffic to a PUBLIC (non-delivery) target is a loud no-route violation", async () => {
+    // An issue POST to a public slug is accidental delivery: the bypass does not
+    // serve it, so it falls through to section matching, which has no /issues
+    // route and raises the no-route violation. Fuzz can thus reject a stray
+    // report write to a repo that might be public.
+    const target = "e2e-owner/svc-pub";
+    const h = await start(
+      scenario({
+        inputs: { private_report: "issue" },
+        repos: { [target]: { settings: {}, live_state: { repo: { visibility: "public" } } } },
+      }),
+    );
+    const res = await call(h, "POST", `/repos/${target}/issues`, {
+      headers: jsonHeaders,
+      body: { title: "x", body: "y" },
+    });
+    expect(res.status).toBe(400);
+    expect(h.violations.some((v) => v.includes("no route in routes.ts"))).toBe(true);
+  });
+
+  test("the same issue POST to a PRIVATE delivery target IS served (control)", async () => {
+    // The mirror of the above: with a proven-private target and the issue
+    // channel on, the bypass serves the create (201), proving the scoping gates
+    // on visibility, not on the path alone.
+    const target = "e2e-owner/svc-priv";
+    const h = await start(
+      scenario({
+        inputs: { private_report: "issue" },
+        repos: {
+          [target]: {
+            settings: {},
+            live_state: { repo: { private: true, visibility: "private" } },
+          },
+        },
+      }),
+    );
+    const res = await call(h, "POST", `/repos/${target}/issues`, {
+      headers: jsonHeaders,
+      body: { title: "x", body: "y", labels: ["settings-as-code-report"] },
+    });
+    expect(res.status).toBe(201);
+    expect(h.violations).toHaveLength(0);
+  });
+
+  test("delivery to a private target whose PROBE is denied is a no-route violation", async () => {
+    // The fixture is private, but administration:none denies the visibility
+    // probe, so the action resolves "unknown" and must NOT deliver. The mock
+    // models provability, not the fixture alone: the issue POST is not served and
+    // falls through to the no-route violation, so a regression that delivers on
+    // an unprovable target is caught.
+    const target = "e2e-owner/svc-unprovable";
+    const h = await start(
+      scenario({
+        inputs: { private_report: "issue" },
+        repos: {
+          [target]: {
+            settings: {},
+            live_state: { repo: { private: true, visibility: "private" } },
+            permissions: { administration: "none" },
+          },
+        },
+      }),
+    );
+    const res = await call(h, "POST", `/repos/${target}/issues`, {
+      headers: jsonHeaders,
+      body: { title: "x", body: "y" },
+    });
+    expect(res.status).toBe(400);
+    expect(h.violations.some((v) => v.includes("no route in routes.ts"))).toBe(true);
+  });
+
+  test("delivery to a private target whose probe FAULTS out its budget is a no-route violation", async () => {
+    // A repository.get fault that exhausts the probe's retry budget makes the
+    // probe never resolve -> "unknown" -> no delivery. Same provability rule as
+    // the denied probe, via the fault path.
+    const target = "e2e-owner/svc-faulted";
+    const h = await start(
+      scenario({
+        inputs: { private_report: "issue" },
+        repos: {
+          [target]: {
+            settings: {},
+            live_state: { repo: { private: true, visibility: "private" } },
+          },
+        },
+      }),
+      { faults: [{ key: "repository.get", kind: "rate_limit_403", times: 3 }] },
+    );
+    const res = await call(h, "POST", `/repos/${target}/issues`, {
+      headers: jsonHeaders,
+      body: { title: "x", body: "y" },
+    });
+    expect(res.status).toBe(400);
+    expect(h.violations.some((v) => v.includes("no route in routes.ts"))).toBe(true);
+  });
+
+  test("a DISCOVERY-supplied private target IS a delivery target (visibility needs no probe)", async () => {
+    // A private repo discovered via /user/repos carries its visibility already, so
+    // the action needs no probe and delivers. The mock seeds the discovered
+    // repo's state from the pool visibility, so its delivery gate agrees: the
+    // issue create is served (201), NOT flagged as an accidental delivery.
+    const target = "e2e-owner/disc-priv";
+    const h = await start(
+      scenario({
+        inputs: { private_report: "issue" },
+        discovery: { pool: [{ slug: target, visibility: "private" }], inputs: {} },
+      }),
+    );
+    const res = await call(h, "POST", `/repos/${target}/issues`, {
+      headers: jsonHeaders,
+      body: { title: "x", body: "y", labels: ["settings-as-code-report"] },
+    });
+    expect(res.status).toBe(201);
+    expect(h.violations).toHaveLength(0);
   });
 });
 

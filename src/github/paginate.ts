@@ -10,10 +10,16 @@ import type { ApiError, GithubClient } from "./api.js";
 
 export type PageResult = { items: unknown[] } | { error: ApiError } | { malformed: true };
 
+/**
+ * `stop`, when given, is consulted after every page with everything collected
+ * so far; returning true ends the walk early with those items. Lookups that
+ * only need the first match use it to avoid fetching pages past the answer.
+ */
 export async function paginate(
   api: GithubClient,
   path: string,
   extract: (data: unknown) => unknown[] | null = (data) => (Array.isArray(data) ? data : null),
+  stop?: (items: unknown[]) => boolean,
 ): Promise<PageResult> {
   const items: unknown[] = [];
   const separator = path.includes("?") ? "&" : "?";
@@ -27,7 +33,7 @@ export async function paginate(
       return { malformed: true };
     }
     items.push(...chunk);
-    if (chunk.length < 100) {
+    if (stop?.(items) || chunk.length < 100) {
       return { items };
     }
   }

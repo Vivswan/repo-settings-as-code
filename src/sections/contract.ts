@@ -118,6 +118,13 @@ export interface EndpointDecl {
    * consumers resolve the effective permission via endpointPermission().
    */
   permission?: SectionPermission | "none";
+  /**
+   * True for an advisory READ whose non-404 failures are tolerated (the section
+   * proceeds without it rather than failing). The e2e mock derives its
+   * advisory-read exemption from this flag via allEndpoints(), so the exemption
+   * stays in one place - the declaration - instead of a hard-coded list.
+   */
+  advisory?: boolean;
 }
 
 /** The method half of a route ("PATCH /repos/..." -> "PATCH"). */
@@ -210,11 +217,12 @@ export function matchesTemplate(template: string, concretePath: string): boolean
  * segment); every other `{token}` fills from params. All are URL-encoded in
  * this single place. A missing param or an unused (extra) param is a handler
  * bug, so throw loudly. `query`, when given, is appended as an encoded query
- * string.
+ * string. Only the owner/repo halves of the context are read, so non-section
+ * callers (the private-report module) can pass a bare pair.
  */
 export function expand(
   endpoint: EndpointDecl,
-  ctx: SectionContext,
+  ctx: Pick<SectionContext, "owner" | "repo">,
   params?: Readonly<Record<string, string>>,
   query?: Readonly<Record<string, string>>,
 ): string {
@@ -313,13 +321,6 @@ export function emptyResult(): SectionResult {
   return { changes: [], drift: [], notes: [] };
 }
 
-/**
- * The params a call site must pass for an endpoint: exactly the route's path
- * params (owner/repo excluded, supplied by ctx). When the route has no such
- * params, `params` is forbidden; when it has some, `params` is required with
- * exactly those keys. The `[X] extends [never]` wrapper distributes correctly
- * over the never case.
- */
 /**
  * The trailing options argument for a request helper, whose optionality
  * depends on the route. When the route has no path params (owner/repo

@@ -1,0 +1,63 @@
+# The issue report channel delivers the full unredacted report to the private
+# target repo itself. svc-report is private and runs in check mode with an
+# undeclared live label (REPORTLEAK-sentinel), so it drifts. Under private-report:
+# issue, the action creates ONE issue on svc-report titled with ISSUE_TITLE,
+# attaches the marker label, and writes the full detail - INCLUDING the sentinel
+# and the placeholder-free slug - into the issue body. Because check-mode drift
+# fails the run, the issue is opened. The public surfaces (summary, stdout,
+# outputs) stay leak-free: the sentinel and the real slug appear ONLY in the
+# issue body (a GitHub-ACL-private channel), never in the public log.
+name: multi-report-issue-delivery
+settings: {}
+inputs:
+  mode: check
+  private_report: issue
+repos:
+  e2e-owner/svc-report:
+    settings:
+      labels:
+        - name: declared
+          color: "00ff00"
+    live_state:
+      repo:
+        private: true
+        visibility: private
+      labels:
+        - name: declared
+          color: "00ff00"
+        - name: REPORTLEAK-sentinel
+          color: "abcdef"
+    permissions:
+      issues: write
+      contents: read
+      administration: read
+expect:
+  exit_code: 1
+  result: drift
+  repos_result:
+    "private repository #1": drift
+  # The report issue is created (POST) with the marker label ensured first.
+  mutations:
+    - "POST /repos/e2e-owner/svc-report/labels"
+    - "POST /repos/e2e-owner/svc-report/issues"
+  summary_contains:
+    - "private repository #1"
+  # The real slug and the private live label leak into NO public surface.
+  summary_lacks:
+    - "svc-report"
+    - "REPORTLEAK-sentinel"
+  stdout_lacks:
+    - "svc-report"
+    - "REPORTLEAK-sentinel"
+  # The full unredacted detail lands in the target repo's own issue: exactly one
+  # report issue, titled with ISSUE_TITLE, opened (drift needs attention), body
+  # carrying both the real slug and the private sentinel.
+  issue_report:
+    slug: e2e-owner/svc-report
+    title: "[automated] settings-as-code: private settings report"
+    created_count: 1
+    state: open
+    lookup_by_label: true
+    body_contains:
+      - "e2e-owner/svc-report"
+      - "REPORTLEAK-sentinel"

@@ -117,6 +117,24 @@ describe("scenario schema", () => {
     );
   });
 
+  test("rejects a repo that sets both `settings` and `settings_raw`", () => {
+    // The two are mutually exclusive (both define settings.yml); setting both is
+    // a loud failure, not a silent preference.
+    expect(() =>
+      parseScenario(
+        {
+          name: "x",
+          settings: {},
+          expect: { exit_code: 0 },
+          repos: {
+            "e2e-owner/svc-a": { settings: { labels: [] }, settings_raw: "labels: [oops" },
+          },
+        },
+        "both.yml",
+      ),
+    ).toThrow(/only one of `settings` or `settings_raw`/);
+  });
+
   test("accepts the numeric denial styles", () => {
     const s = parseScenario(
       { name: "x", settings: {}, denial_style: 403, expect: { exit_code: 0 } },

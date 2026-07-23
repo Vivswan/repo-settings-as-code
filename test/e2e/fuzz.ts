@@ -19,11 +19,17 @@
 
 import { rmSync } from "node:fs";
 import type { SectionKey } from "../../src/schema.js";
-import { genDiscoveryScenario, genMultiScenario, genScenario } from "./generators.js";
+import {
+  genDiscoveryScenario,
+  genMultiScenario,
+  genScenario,
+  type MultiRepoMeta,
+} from "./generators.js";
 import { predictDiscovery, predictMulti, predictOutcomes } from "./oracle.js";
 import { Rng } from "./prng.js";
 import {
   checkLeaks,
+  deliveredIssueBody,
   parseReposResult,
   parseSummaryOutcomes,
   runScenario,
@@ -394,7 +400,10 @@ async function multiRepoFuzzIteration(seed: number): Promise<IterationResult> {
     if (canaries.length > 0) {
       const shown = await runScenario({
         ...scenario,
-        inputs: { ...scenario.inputs, private_repos: "show" },
+        // Drop private_report too: `issue` + `show` is rejected at config parse
+        // (show redacts nothing), which would make the counterfactual run fail to
+        // start and falsely read as "no canary surfaced".
+        inputs: { ...scenario.inputs, private_repos: "show", private_report: "none" },
       });
       const rendered = [
         stripDebugLines(stripMaskLines(shown.stdout)),
@@ -410,12 +419,58 @@ async function multiRepoFuzzIteration(seed: number): Promise<IterationResult> {
     }
   }
 
+  // REPORT-BODY POSITIVE ASSERTION (the plan's canary-in-report check): under
+  // private-report: issue, a redacted target whose report DELIVERS (Issues
+  // granted and its settings readable) must carry its canaries in ITS OWN report
+  // issue body - the one private channel where the full detail legitimately
+  // lands. The forced-private target is fully granted, so its report always
+  // delivers; assert its canaries reached the recorded issue body. This proves
+  // suppression did not eat the report.
+  if (meta.privateReport === "issue") {
+    for (const repo of meta.repos) {
+      if (!repo.redacted || !reportDelivers(repo) || repo.canaries.length === 0) {
+        continue;
+      }
+      const body = deliveredIssueBody(report.requests, repo.slug);
+      if (body === undefined) {
+        problems.push(`report: no issue body delivered for the redacted target ${repo.slug}`);
+        continue;
+      }
+      // The label-name canary flows into the report's section detail and
+      // transcript in every mode (create/update/drift all name the label), so it
+      // is the one asserted here; the description canaries only surface in check
+      // mode and are already covered by the leak invariant. A delivering target
+      // that carries canaries MUST have a `-name` one - if the naming convention
+      // changes out from under this check, that is a failure, not a silent skip.
+      const nameCanary = repo.canaries.find((c) => c.endsWith("-name"));
+      if (nameCanary === undefined) {
+        problems.push(
+          `report: ${repo.slug} has canaries but no -name canary to assert in the body`,
+        );
+      } else if (!body.includes(nameCanary)) {
+        problems.push(`report: issue body for ${repo.slug} is missing canary ${nameCanary}`);
+      }
+    }
+  }
+
   return {
     ok: problems.length === 0,
     failure: problems.length > 0 ? problems.join("; ") : undefined,
     artifactDir: report.artifactDir,
     sections: [],
   };
+}
+
+/**
+ * Whether a redacted target's private report DEFINITELY delivers, so its canary
+ * must appear in the report issue body. Only asserted for the fully-granted
+ * (empty per-repo mask) forced-private target: it has a settings file, Issues
+ * write, and Contents read, so the issue channel always succeeds. Other redacted
+ * targets may have Issues denied (a safe warning, no body), so they are not
+ * asserted - the leak invariant already covers them.
+ */
+function reportDelivers(repo: MultiRepoMeta): boolean {
+  return repo.redacted && repo.meta !== null && Object.keys(repo.meta.mask).length === 0;
 }
 
 /**

@@ -298,6 +298,7 @@ describe("predictMulti rollup", () => {
       mode: "apply",
       policy: "fail",
       privateRepos: "show",
+      privateReport: "none",
       selfSlug: "e2e-owner/e2e-repo",
     };
   }
@@ -342,6 +343,7 @@ describe("predictMulti rollup", () => {
       mode: "apply",
       policy: "warn",
       privateRepos: "show",
+      privateReport: "none",
       selfSlug: "e2e-owner/e2e-repo",
     });
     expect(p.repos[0]?.allowedResults.has("partial")).toBe(true);
@@ -435,6 +437,7 @@ describe("predictMulti rollup", () => {
       mode: "apply",
       policy: "fail",
       privateRepos: "redact",
+      privateReport: "none",
       selfSlug: "e2e-owner/e2e-repo",
     });
     // The result prediction keys on the placeholder; the real slug never appears.

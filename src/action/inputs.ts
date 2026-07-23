@@ -18,8 +18,11 @@ import { SLUG_RE } from "../discovery/targets.js";
 import { DEFAULT_API_VERSION } from "../github/api.js";
 import { type MustBeNever, SECTION_KEYS } from "../schema.js";
 import {
+  DEFAULT_PRIVATE_REPORT,
   DEFAULT_PRIVATE_REPOS,
+  PRIVATE_REPORT_CHANNELS,
   PRIVATE_REPOS_POLICIES,
+  type PrivateReportChannel,
   type PrivateReposPolicy,
 } from "./redact.js";
 
@@ -63,6 +66,7 @@ export const INPUT_NAMES = [
   "repos-dir",
   "defaults-file",
   "private-repos",
+  "private-report",
 ] as const;
 
 export function input(name: (typeof INPUT_NAMES)[number]): string {
@@ -128,12 +132,20 @@ export interface CommonConfig {
   apiVersion: string;
   /** Whether to hide private/internal targets from the public view. */
   privateRepos: PrivateReposPolicy;
+  /** Where the full unredacted report for a redacted target is delivered. */
+  privateReport: PrivateReportChannel;
   /**
    * The workflow's own repository (GITHUB_REPOSITORY), read once here so the
    * run flows stay env-free. A target equal to this slug is never redacted:
    * a repository operating on itself leaks nothing.
    */
   selfSlug: string;
+  /**
+   * Link to the workflow run, for the private report metadata. Built once here
+   * from GITHUB_SERVER_URL/GITHUB_REPOSITORY/GITHUB_RUN_ID so the run flows stay
+   * env-free; empty when those are unset (local runs), which the report tolerates.
+   */
+  runUrl: string;
 }
 
 /** Everything run() needs, already validated; `kind` picks the mode. */
@@ -161,6 +173,9 @@ export function parseConfig(): { config: RunConfig } | { error: string } {
         'cannot call the GitHub API: no token was provided. Set the "token" input on the action step (or export GITHUB_TOKEN)',
     };
   }
+  // The workflow's own repository, read once and reused for the self slug, the
+  // run URL, the central-mode admin owner, and the single-repo fallback target.
+  const githubRepository = process.env.GITHUB_REPOSITORY ?? "";
   const mode = input("mode") || DEFAULT_MODE;
   if (mode !== "apply" && mode !== "check") {
     return {
@@ -206,6 +221,30 @@ export function parseConfig(): { config: RunConfig } | { error: string } {
   if (typeof privateRepos !== "string") {
     return { error: privateRepos.error };
   }
+  const privateReport = readEnum(
+    "private-report",
+    PRIVATE_REPORT_CHANNELS,
+    DEFAULT_PRIVATE_REPORT,
+    "private-report channel",
+  );
+  if (typeof privateReport !== "string") {
+    return { error: privateReport.error };
+  }
+  // A report channel only ever runs for a REDACTED target, so combining it with
+  // private-repos: show (which redacts nothing) would silently deliver no
+  // report - a silent no-op violates the loud-failure promise, so reject it.
+  if (privateReport !== "none" && privateRepos === "show") {
+    return {
+      error:
+        'the "private-report" input delivers reports only for redacted targets, but "private-repos" is "show", so nothing is redacted and no report would ever be sent. Set private-repos: redact, or set private-report: none',
+    };
+  }
+  const serverUrl = process.env.GITHUB_SERVER_URL ?? "";
+  const runId = process.env.GITHUB_RUN_ID ?? "";
+  const runUrl =
+    serverUrl && githubRepository && runId
+      ? `${serverUrl}/${githubRepository}/actions/runs/${runId}`
+      : "";
   const common: CommonConfig = {
     token,
     mode,
@@ -214,7 +253,9 @@ export function parseConfig(): { config: RunConfig } | { error: string } {
     onlySections,
     apiVersion,
     privateRepos,
-    selfSlug: process.env.GITHUB_REPOSITORY ?? "",
+    privateReport,
+    selfSlug: githubRepository,
+    runUrl,
   };
 
   const discoveryFiltersSet = FILTER_INPUTS.filter((name) => input(name) !== "");
@@ -290,7 +331,7 @@ export function parseConfig(): { config: RunConfig } | { error: string } {
           'the "settings-file" input cannot be combined with "repos" or "repos-dir": central targets are read from repos-dir files and remote targets from each repository\'s own .github/settings.yml. Remove the settings-file override',
       };
     }
-    const adminOwner = (process.env.GITHUB_REPOSITORY ?? "").split("/")[0] ?? "";
+    const adminOwner = githubRepository.split("/")[0] ?? "";
     return {
       config: {
         ...common,
@@ -317,7 +358,7 @@ export function parseConfig(): { config: RunConfig } | { error: string } {
         'the "defaults-file" input only applies to multi-repo mode, but this run is in single-repo mode, so the defaults would never be merged. Remove the input, or add "repos" or "repos-dir" to switch to multi-repo mode',
     };
   }
-  const repo = input("repository") || process.env.GITHUB_REPOSITORY || "";
+  const repo = input("repository") || githubRepository;
   if (!SLUG_RE.test(repo)) {
     return {
       error: `cannot target a repository: "${repo}" is not an owner/name slug. Set the "repository" input (or GITHUB_REPOSITORY) to a value like "octocat/hello-world"`,

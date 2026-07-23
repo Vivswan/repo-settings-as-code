@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { redactOutcomes, runMulti, toPublicView } from "../../src/action/multi.js";
+import {
+  applyMarkerInjection,
+  redactOutcomes,
+  runMulti,
+  toPublicView,
+} from "../../src/action/multi.js";
 import { DEFAULT_DISCOVERY_FILTERS } from "../../src/discovery/discover.js";
 import type { Io } from "../../src/io.js";
 import { MockApi } from "../mock-api.js";
@@ -52,7 +57,9 @@ function cfg(overrides: Partial<Parameters<typeof runMulti>[1]> = {}) {
     // Existing scenarios predate redaction and assert on raw slugs; default
     // to "show" so they stay byte-identical. Redaction tests override this.
     privateRepos: "show" as const,
+    privateReport: "none" as const,
     selfSlug: "",
+    runUrl: "",
     ...overrides,
   };
 }
@@ -283,7 +290,7 @@ describe("runMulti redaction (private-repos: redact)", () => {
     );
     // the private slug is masked, and the mask is recorded before any emission
     expect(masks).toContain("o/priv");
-    const firstMask = events.findIndex((e) => e === "mask: o/priv");
+    const firstMask = events.indexOf("mask: o/priv");
     const firstEmit = events.findIndex((e) => e.startsWith("annotate") || e.startsWith("log"));
     expect(firstMask).toBeGreaterThanOrEqual(0);
     expect(firstMask).toBeLessThan(firstEmit);
@@ -480,5 +487,257 @@ describe("redactOutcomes (shared by the multi view and the single-repo summary)"
       { key: "rulesets", status: "failed", detail: ["hidden (private repository), HTTP 403"] },
       { key: "teams", status: "clean", detail: ["hidden (private repository)"] },
     ]);
+  });
+});
+
+describe("runMulti private-report: issue wiring", () => {
+  const MARKER = "settings-as-code-report";
+  const ISSUE_TITLE = "[automated] settings-as-code: private settings report";
+  const listPath = (slug: string) =>
+    `GET /repos/${slug}/issues?state=all&labels=${MARKER}&per_page=100`;
+
+  /**
+   * A private drifting target whose report issue already exists (found by the
+   * marker-label list), so delivery is a single PATCH we can inspect. The
+   * settings.yml drift carries a CANARY the report body must contain and the
+   * public surfaces must not.
+   */
+  function reportApi(
+    overrides: Record<
+      string,
+      { data?: unknown; error?: { status: number; message: string; body: string } }
+    > = {},
+  ) {
+    return new MockApi({
+      "GET /repos/o/priv": { data: { description: "CANARY-live", private: true } },
+      "GET /repos/o/priv/contents/.github/settings.yml": {
+        data: 'repository:\n  description: "CANARY-want"\n',
+      },
+      "POST /repos/o/priv/labels": { error: { status: 422, message: "exists", body: "" } },
+      [listPath("o/priv")]: {
+        data: [{ number: 7, title: ISSUE_TITLE, html_url: "https://github.com/o/priv/issues/7" }],
+      },
+      "PATCH /repos/o/priv/issues/7": { data: { number: 7 } },
+      ...overrides,
+    });
+  }
+
+  test("delivers the full report to the target issue; body has detail+transcript, public surfaces do not", async () => {
+    const api = reportApi();
+    const { io, annotations, logs } = captureIo();
+    const { targets } = await runMulti(
+      api,
+      cfg({
+        reposInput: "o/priv",
+        mode: "check",
+        privateRepos: "redact",
+        privateReport: "issue",
+        selfSlug: "admin/repo",
+        runUrl: "https://example.com/run/1",
+      }),
+      io,
+    );
+    expect(targets[0]?.result).toBe("drift");
+    // the report issue was PATCHed (found by marker label -> one request)
+    const patch = api.calls.find(
+      (c) => c.method === "PATCH" && c.path === "/repos/o/priv/issues/7",
+    );
+    const payload = (patch?.payload ?? {}) as { body?: unknown; state?: unknown };
+    const body = String(payload.body ?? "");
+    // the report body carries the full unredacted detail and the transcript
+    expect(body).toContain("CANARY-live");
+    expect(body).toContain("o/priv");
+    expect(body).toContain("## Transcript");
+    // a check-mode drift needs attention -> the issue is opened
+    expect(payload.state).toBe("open");
+    // and NONE of that leaks to the public surfaces
+    const publicText = [...annotations, ...logs].join("\n");
+    expect(publicText).not.toContain("CANARY-live");
+    expect(publicText).not.toContain("o/priv");
+  });
+
+  test("marker label is injected when a labels section is declared, notice lands in the report only", async () => {
+    const api = reportApi({
+      "GET /repos/o/priv/contents/.github/settings.yml": {
+        data: 'labels:\n  - name: bug\n    color: "d73a4a"\n',
+      },
+      "GET /repos/o/priv/labels?per_page=100&page=1": { data: [] },
+    }).allowMutations("POST /repos/o/priv/labels", "PATCH /repos/o/priv/labels/bug");
+    const { io, annotations } = captureIo();
+    await runMulti(
+      api,
+      cfg({
+        reposInput: "o/priv",
+        mode: "apply",
+        privateRepos: "redact",
+        privateReport: "issue",
+        selfSlug: "admin/repo",
+      }),
+      io,
+    );
+    const patch = api.calls.find(
+      (c) => c.method === "PATCH" && c.path === "/repos/o/priv/issues/7",
+    );
+    const body = String(((patch?.payload ?? {}) as { body?: unknown }).body ?? "");
+    // the injection notice is in the report transcript, not the public log
+    expect(body).toContain(`added the "${MARKER}" marker label`);
+    expect(annotations.some((a) => a.includes(MARKER))).toBe(false);
+  });
+
+  test("delivery failure warns safely and never changes the target result", async () => {
+    const api = reportApi({
+      "PATCH /repos/o/priv/issues/7": {
+        error: { status: 403, message: "Resource not accessible", body: "" },
+      },
+    });
+    const { io, annotations } = captureIo();
+    const { targets } = await runMulti(
+      api,
+      cfg({
+        reposInput: "o/priv",
+        mode: "check",
+        privateRepos: "redact",
+        privateReport: "issue",
+        selfSlug: "admin/repo",
+      }),
+      io,
+    );
+    // the target result is unchanged by the delivery failure
+    expect(targets[0]?.result).toBe("drift");
+    // one safe warning: placeholder + HTTP status only, no slug, no message
+    const warning = annotations.find((a) => a.includes("could not deliver the private report"));
+    expect(warning).toBeDefined();
+    expect(warning).toContain("private repository #1");
+    expect(warning).toContain("HTTP 403");
+    expect(warning).not.toContain("o/priv");
+    expect(warning).not.toContain("Resource not accessible");
+  });
+
+  test("no report is delivered under channel none, policy show, or for a non-redacted target", async () => {
+    // channel none: even a redacted target gets no issue traffic
+    const none = reportApi();
+    await runMulti(
+      none,
+      cfg({ reposInput: "o/priv", mode: "check", privateRepos: "redact", privateReport: "none" }),
+      captureIo().io,
+    );
+    expect(none.calls.some((c) => c.path.includes("/issues"))).toBe(false);
+    expect(none.calls.some((c) => c.method === "POST" && c.path.endsWith("/labels"))).toBe(false);
+
+    // policy show: nothing is redacted, so the report never runs (config would
+    // reject this combo at parse; runMulti itself must also stay inert)
+    const shown = reportApi();
+    await runMulti(
+      shown,
+      cfg({ reposInput: "o/priv", mode: "check", privateRepos: "show", privateReport: "issue" }),
+      captureIo().io,
+    );
+    expect(shown.calls.some((c) => c.path.includes("/issues"))).toBe(false);
+  });
+
+  test("unknown visibility redacts publicly but does NOT deliver the report (fail closed)", async () => {
+    // The repo probe answers a body with neither `private` nor `visibility`, so
+    // visibility resolves "unknown". Redaction still hides the target (fail
+    // closed for the public view), but delivery must NOT post the private report
+    // to a repo that could actually be public.
+    const api = new MockApi({
+      "GET /repos/o/maybe": { data: { description: "SECRET" } },
+      "GET /repos/o/maybe/contents/.github/settings.yml": {
+        data: 'repository:\n  description: "SECRET-want"\n',
+      },
+      "POST /repos/o/maybe/labels": { error: { status: 422, message: "exists", body: "" } },
+    });
+    const { io, annotations } = captureIo();
+    const { targets } = await runMulti(
+      api,
+      cfg({ reposInput: "o/maybe", mode: "check", privateRepos: "redact", privateReport: "issue" }),
+      io,
+    );
+    // redacted in the public view
+    expect(targets[0]?.redacted).toBe(true);
+    // but NO issue/label traffic - the report was withheld
+    expect(api.calls.some((c) => c.path.includes("/issues"))).toBe(false);
+    expect(api.calls.some((c) => c.method === "POST" && c.path.endsWith("/labels"))).toBe(false);
+    // one safe notice explains the withholding; no slug leaks
+    const withheld = annotations.find((a) => a.includes("visibility could not be verified"));
+    expect(withheld).toBeDefined();
+    expect(withheld).toContain("private repository #1");
+    expect(annotations.join("\n")).not.toContain("o/maybe");
+  });
+
+  test("an internal target IS deliverable (proven private/internal)", async () => {
+    const api = reportApi({
+      "GET /repos/o/priv": { data: { description: "CANARY-live", visibility: "internal" } },
+    });
+    const { io } = captureIo();
+    await runMulti(
+      api,
+      cfg({ reposInput: "o/priv", mode: "check", privateRepos: "redact", privateReport: "issue" }),
+      io,
+    );
+    // internal is deliverable: the issue was upserted
+    expect(api.calls.some((c) => c.method === "PATCH" && c.path === "/repos/o/priv/issues/7")).toBe(
+      true,
+    );
+  });
+
+  test("a settings-read failure still delivers a report (whole lifecycle covered)", async () => {
+    // The remote settings.yml is unparseable YAML - a pre-engine failure. The
+    // target fails, but the private report must STILL be delivered (and opened),
+    // so a previously-created issue never keeps a stale body. Finding R3.
+    const api = reportApi({
+      "GET /repos/o/priv/contents/.github/settings.yml": { data: "repository: [oops\n" },
+    });
+    const { io, annotations } = captureIo();
+    const { targets } = await runMulti(
+      api,
+      cfg({ reposInput: "o/priv", mode: "apply", privateRepos: "redact", privateReport: "issue" }),
+      io,
+    );
+    expect(targets[0]?.result).toBe("failed");
+    // the report issue was still PATCHed and OPENED (a failure needs attention)
+    const patch = api.calls.find(
+      (c) => c.method === "PATCH" && c.path === "/repos/o/priv/issues/7",
+    );
+    const payload = (patch?.payload ?? {}) as { body?: unknown; state?: unknown };
+    expect(patch).toBeDefined();
+    expect(payload.state).toBe("open");
+    // the parse-failure detail is in the private report body, not the public log
+    expect(String(payload.body ?? "")).toContain("failed");
+    expect(annotations.join("\n")).not.toContain("oops");
+  });
+});
+
+describe("applyMarkerInjection", () => {
+  const MARKER = "settings-as-code-report";
+
+  test("off: settings pass through untouched with no notice", () => {
+    const settings = { labels: [{ name: "bug", color: "d73a4a" }] };
+    const result = applyMarkerInjection(settings, false);
+    expect(result.settings).toBe(settings);
+    expect(result.notice).toBeUndefined();
+  });
+
+  test("on but no labels section: no injection, no notice", () => {
+    const settings = { repository: { has_wiki: false } };
+    const result = applyMarkerInjection(settings, true);
+    expect(result.settings).toEqual(settings);
+    expect(result.notice).toBeUndefined();
+  });
+
+  test("on with a labels section lacking the marker: appends it and returns a notice", () => {
+    const settings = { labels: [{ name: "bug", color: "d73a4a" }] };
+    const result = applyMarkerInjection(settings, true);
+    expect(result.notice).toContain(MARKER);
+    const names = (result.settings.labels ?? []).map((l) => l.name);
+    expect(names).toContain(MARKER);
+    expect(names).toContain("bug");
+  });
+
+  test("on with the marker already declared: no duplicate, no notice", () => {
+    const settings = { labels: [{ name: MARKER, color: "0e2a47" }] };
+    const result = applyMarkerInjection(settings, true);
+    expect(result.notice).toBeUndefined();
+    expect(result.settings.labels).toHaveLength(1);
   });
 });

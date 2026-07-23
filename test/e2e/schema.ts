@@ -68,6 +68,7 @@ export const InputsSchema = z
     required_sections: z.string().optional(),
     sections: z.string().optional(),
     private_repos: z.enum(["redact", "show"]).optional(),
+    private_report: z.enum(["none", "issue"]).optional(),
   })
   .strict();
 
@@ -112,6 +113,33 @@ export const ExpectSchema = z
      */
     stdout_lacks: z.array(z.string()).optional(),
     /**
+     * The private-report issue channel's delivery to one target repo. The runner
+     * inspects the recorded issue create/patch requests for that slug:
+     *   - `body_contains`: substrings the delivered report body must include (the
+     *     full unredacted detail, incl the sentinel) - the create body, or the
+     *     PATCH body on a reuse run.
+     *   - `title`: the created issue's title (checked only on create).
+     *   - a created issue must ALWAYS carry the marker label (the lookup key);
+     *     this is asserted unconditionally, not gated by a field.
+     *   - `lookup_by_label`: assert the issues list GET used the labels=<marker>
+     *     filter (the one-indexed-request lookup the reuse path depends on).
+     *   - `state`: the final open/closed state after all create/patch writes.
+     *   - `created_count`: how many report issues were POSTed for the slug (1 =
+     *     created once; 0 = none, e.g. the permission-denied or reuse path).
+     * This is the only place the private slug and sentinel may legitimately appear.
+     */
+    issue_report: z
+      .object({
+        slug: z.string(),
+        title: z.string().optional(),
+        body_contains: z.array(z.string()).optional(),
+        state: z.enum(["open", "closed"]).optional(),
+        created_count: z.number().int().optional(),
+        lookup_by_label: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
+    /**
      * Requests (any method) the log must contain, e.g. a `page=2` read that
      * proves pagination was exercised. Matched as substrings of "METHOD path".
      */
@@ -147,19 +175,28 @@ const TokenPermissionsSchema = z.partialRecord(MaskKeySchema, MaskGradeSchema);
 /**
  * One target repo in a multi-repo scenario. `settings` is that repo's
  * settings.yml body, or null when the repo has NO settings file (the
- * contents-404 -> skipped path). `live_state` and `permissions` scope the
- * mock's per-slug state and denial mask to this target; `expect.result` pins
- * this repo's individual rollup (also assertable via the top-level
- * repos_result map).
+ * contents-404 -> skipped path). `settings_raw` serves that exact string as the
+ * settings.yml content instead (for a genuine YAML PARSE failure, which a
+ * serialized object cannot produce); exactly one of `settings`/`settings_raw`
+ * is set. `live_state` and `permissions` scope the mock's per-slug state and
+ * denial mask to this target; `expect.result` pins this repo's individual
+ * rollup (also assertable via the top-level repos_result map).
  */
 const MultiRepoSchema = z
   .object({
     settings: SettingsSchema.nullable().optional(),
+    settings_raw: z.string().optional(),
     live_state: LiveStateSchema.optional(),
     permissions: TokenPermissionsSchema.optional(),
     expect: z.object({ result: z.string().optional() }).strict().optional(),
   })
-  .strict();
+  .strict()
+  // settings and settings_raw are mutually exclusive: they both define the
+  // served settings.yml, and setting both would silently favor one. Reject the
+  // ambiguity loudly rather than let a scenario pass with a surprising result.
+  .refine((repo) => !(repo.settings !== undefined && repo.settings_raw !== undefined), {
+    message: "set only one of `settings` or `settings_raw`, not both",
+  });
 
 /**
  * One discovery-pool repo `/user/repos` enumerates for a repos: "*" scenario.

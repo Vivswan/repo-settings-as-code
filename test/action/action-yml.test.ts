@@ -16,7 +16,7 @@ import {
   INPUT_NAMES,
 } from "../../src/action/inputs.js";
 import { OUTPUT_NAMES } from "../../src/action/io.js";
-import { DEFAULT_PRIVATE_REPOS } from "../../src/action/redact.js";
+import { DEFAULT_PRIVATE_REPORT, DEFAULT_PRIVATE_REPOS } from "../../src/action/redact.js";
 import { DEFAULT_DISCOVERY_FILTERS } from "../../src/discovery/discover.js";
 import { REPO_RESULTS } from "../../src/engine/orchestrate.js";
 import { DEFAULT_API_VERSION } from "../../src/github/api.js";
@@ -62,6 +62,7 @@ describe("action.yml <-> inputs.ts", () => {
     expect(def("mode")).toBe(DEFAULT_MODE);
     expect(def("on-missing-permission")).toBe(DEFAULT_ON_MISSING_PERMISSION);
     expect(def("private-repos")).toBe(DEFAULT_PRIVATE_REPOS);
+    expect(def("private-report")).toBe(DEFAULT_PRIVATE_REPORT);
   });
 });
 

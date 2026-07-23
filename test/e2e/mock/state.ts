@@ -75,6 +75,13 @@ export interface LiveState {
   teams?: Record<string, { role_name: string } | null>;
   /** Milestones (GET shape), replaces the baseline. */
   milestones?: Json[];
+  /**
+   * Issues the repo already has (GET shape: number, title, body, state, labels,
+   * html_url, pull_request?), replaces the baseline. The private-report issue
+   * channel lists, creates, and patches these; a scenario seeds a pre-existing
+   * report issue here to exercise the reuse (update-in-place) path.
+   */
+  issues?: Json[];
 }
 
 /**
@@ -104,6 +111,8 @@ export interface MockState {
   collaborators: Json[];
   teams: Record<string, { role_name: string } | null>;
   milestones: Json[];
+  /** Report issues the private-report issue channel lists/creates/patches. */
+  issues: Json[];
   /** Next id handed to a created resource (label, ruleset, autolink, ...). */
   nextId: number;
 }
@@ -203,6 +212,7 @@ export function buildState(liveState: LiveState | undefined, ownerKind: OwnerKin
     collaborators: ls.collaborators ? clone(ls.collaborators) : [],
     teams: ls.teams ? clone(ls.teams) : {},
     milestones: ls.milestones ? clone(ls.milestones) : [],
+    issues: ls.issues ? clone(ls.issues) : [],
     nextId,
   };
 }
@@ -342,11 +352,22 @@ export function buildMultiState(
   for (const [slug, spec] of Object.entries(repos)) {
     ensure(slug, spec);
   }
-  // Discovered slugs with no explicit spec: default state, no settings file.
+  // Discovered slugs with no explicit spec: default state seeded with the pool's
+  // visibility, no settings file. Seeding the visibility matters for the report
+  // channel: a discovered PRIVATE repo needs no probe (its visibility came from
+  // /user/repos), so it is deliverable - but the mock's delivery gate reads the
+  // per-slug repo state's visibility, which would otherwise default to public and
+  // wrongly reject the legitimate delivery. Carrying the discovery visibility
+  // into the state keeps fixture and discovery-supplied visibility in agreement.
   for (const pool of discoveryPool ?? []) {
-    if (!state.repos.has(pool.slug)) {
-      ensure(pool.slug, { settingsYaml: null });
+    if (state.repos.has(pool.slug)) {
+      continue;
     }
+    const liveState =
+      pool.visibility === undefined
+        ? undefined
+        : { repo: { visibility: pool.visibility, private: pool.visibility !== "public" } };
+    ensure(pool.slug, { settingsYaml: null, liveState });
   }
   return state;
 }

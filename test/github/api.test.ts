@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import * as core from "@actions/core";
 import {
+  GithubApi,
   isPermissionError,
   isRateLimitError,
   redactingOctokitLog,
@@ -87,6 +88,71 @@ describe("retry and throttling", () => {
     }) as unknown as typeof fetch;
     await expect(api().tryRequest("GET", "/down")).rejects.toThrow("Check network connectivity");
   }, 20_000); // Two fixed-backoff retries (~1s + ~4s) before the final failure.
+});
+
+describe("throttle plugin honors the test knob", () => {
+  const saved = process.env.RETRY_BASE_MS;
+  afterEach(() => {
+    if (saved === undefined) {
+      delete process.env.RETRY_BASE_MS;
+    } else {
+      process.env.RETRY_BASE_MS = saved;
+    }
+  });
+
+  test("under RETRY_BASE_MS, many writes complete without the write limiter's ~1s spacing", async () => {
+    // The throttle plugin's write limiter spaces mutations by ~1000ms in
+    // production; under the test knob it must not, so a many-write run stays
+    // fast. Construct WITHOUT the retryBaseMs arg so the client reads the env
+    // exactly as the spawned bundle does.
+    process.env.RETRY_BASE_MS = "1";
+    stubFetch([() => new Response(null, { status: 204 })]);
+    const client = new GithubApi("t", "https://api.test", "2022-11-28");
+    const started = Date.now();
+    for (let i = 0; i < 12; i++) {
+      await client.tryRequest("PATCH", `/repos/o/r${i}`, { i });
+    }
+    // 12 production-spaced writes would take ~12s; the knob must keep it well
+    // under a second (generous bound to stay non-flaky on a loaded CI box).
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  test("without the knob the throttle plugin stays enabled (429s are retried)", async () => {
+    delete process.env.RETRY_BASE_MS;
+    // No env, explicit retryBaseMs=1 arg keeps waits short. A 429 that resolves
+    // on retry proves the throttle plugin is active.
+    const state = stubFetch([rateLimited, okJson]);
+    const client = new GithubApi("t", "https://api.test", "2022-11-28", 1);
+    const result = await client.tryRequest("GET", "/rl");
+    expect(state.calls).toBe(2);
+    expect("data" in result && result.data).toEqual({ ok: true });
+  });
+
+  test("UNDER the knob a 429-then-200 recovers on quadratic backoff, ignoring Retry-After", async () => {
+    // With the throttle plugin disabled under the knob, the retry plugin takes
+    // over 429 (dropped from doNotRetry under the knob) so a transient 429 still
+    // RECOVERS. The retry plugin IGNORES the Retry-After header - it backs off
+    // (n^2 * retryBaseMs) instead. The 429 here carries a large Retry-After; the
+    // fact that recovery is one retry and stays fast (not the header's 30s) is
+    // the observable proof the header is not honored on its raw scale, and pins
+    // that the retry path is what recovers, not throttle pacing.
+    process.env.RETRY_BASE_MS = "1";
+    const rateLimitedSlowHeader = () =>
+      new Response('{"message":"rate limited"}', {
+        status: 429,
+        // A large Retry-After: if it were honored on its raw seconds scale the
+        // retry would blow past any sane test timeout.
+        headers: { "retry-after": "30", "x-ratelimit-remaining": "0" },
+      });
+    const state = stubFetch([rateLimitedSlowHeader, okJson]);
+    const client = new GithubApi("t", "https://api.test", "2022-11-28");
+    const started = Date.now();
+    const result = await client.tryRequest("GET", "/rl");
+    expect(state.calls).toBe(2);
+    expect("data" in result && result.data).toEqual({ ok: true });
+    // The 30s header did not pace recovery; the quadratic backoff kept it fast.
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
 });
 
 describe("response shaping", () => {

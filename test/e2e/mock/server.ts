@@ -10,7 +10,7 @@
  */
 
 import { stringify as stringifyYaml } from "yaml";
-import type { Scenario } from "../schema.js";
+import type { MultiRepo, Scenario } from "../schema.js";
 import {
   assertFaultKeys,
   assertHandlerCompleteness,
@@ -61,6 +61,21 @@ export interface MockHandle {
 }
 
 /**
+ * The raw settings.yml content the contents endpoint serves for a target:
+ * `settings_raw` verbatim when set (for a genuine parse failure), else the
+ * settings object serialized to YAML, else null (the no-settings-file case).
+ */
+function settingsYamlFor(spec: MultiRepo): string | null {
+  if (spec.settings_raw !== undefined) {
+    return spec.settings_raw;
+  }
+  if (spec.settings === null || spec.settings === undefined) {
+    return null;
+  }
+  return stringifyYaml(spec.settings);
+}
+
+/**
  * Convert a scenario's multi-repo declaration into the buildMultiState inputs:
  * each target's settings object is serialized to the raw YAML the contents
  * endpoint serves (null settings -> null, the no-file case). Discovery-pool
@@ -74,8 +89,7 @@ function multiStateFor(scenario: Scenario): MultiMockState | undefined {
   const repos: Record<string, MultiRepoSpec> = {};
   for (const [slug, spec] of Object.entries(scenario.repos ?? {})) {
     repos[slug] = {
-      settingsYaml:
-        spec.settings === null || spec.settings === undefined ? null : stringifyYaml(spec.settings),
+      settingsYaml: settingsYamlFor(spec),
       liveState: spec.live_state,
       permissions: spec.permissions,
     };

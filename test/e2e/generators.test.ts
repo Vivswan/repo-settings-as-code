@@ -249,6 +249,27 @@ describe("genMultiScenario", () => {
     expect(sawShown).toBe(true);
   });
 
+  test("private_report is only 'issue' under redact, and the input echoes the meta", () => {
+    // The config rejects private-report: issue + private-repos: show, so the
+    // generator picks issue only under redact. Both channels are exercised.
+    let sawIssue = false;
+    let sawNone = false;
+    for (let i = 0; i < 300; i++) {
+      const { scenario, meta } = genMultiScenario(new Rng(i));
+      if (meta.privateReport === "issue") {
+        sawIssue = true;
+        expect(meta.privateRepos).toBe("redact");
+        expect(scenario.inputs?.private_report).toBe("issue");
+      } else {
+        sawNone = true;
+        // `none` is the default, so the input is left unset.
+        expect(scenario.inputs?.private_report).toBeUndefined();
+      }
+    }
+    expect(sawIssue).toBe(true);
+    expect(sawNone).toBe(true);
+  });
+
   test("a redact run always has at least one redacted target (non-vacuous leak check)", () => {
     // The generator forces one non-missing target private under redact, so the
     // forbidden set is never empty and the leak invariant is never vacuous.

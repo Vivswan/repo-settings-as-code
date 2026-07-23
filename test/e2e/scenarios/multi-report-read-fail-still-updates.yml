@@ -1,0 +1,66 @@
+# Stale-body prevention: a redacted deliverable target whose settings PARSE
+# fails still updates its report issue, so the private mirror never goes stale.
+# svc-badcfg is proven private with private_report: issue and a pre-existing
+# report issue (seeded, closed, "STALE PRIOR REPORT"). Its settings.yml is served
+# as raw invalid YAML, so parsing fails before any section runs. The target
+# fails, yet the ONE finalizer still delivers the report: the existing issue is
+# PATCHed (not left stale, no duplicate) with the failure recorded, and reopened
+# because a failed target needs attention. Public surfaces stay leak-free.
+name: multi-report-read-fail-still-updates
+settings: {}
+inputs:
+  mode: apply
+  private_report: issue
+  on_missing_permission: warn
+repos:
+  e2e-owner/svc-badcfg:
+    # Raw invalid YAML: an unclosed flow sequence the parser rejects.
+    settings_raw: "labels: [oops, unclosed"
+    live_state:
+      repo:
+        private: true
+        visibility: private
+      labels:
+        - name: settings-as-code-report
+          color: "0e2a47"
+          description: "managed by settings-as-code private reporting - do not remove"
+      issues:
+        - number: 3
+          title: "[automated] settings-as-code: private settings report"
+          body: "STALE PRIOR REPORT"
+          state: closed
+          labels:
+            - name: settings-as-code-report
+          user:
+            login: e2e-token-user
+          html_url: "https://github.com/e2e-owner/svc-badcfg/issues/3"
+    permissions:
+      issues: write
+      contents: read
+      administration: read
+expect:
+  exit_code: 1
+  result: failed
+  repos_result:
+    "private repository #1": failed
+  summary_lacks:
+    - "svc-badcfg"
+  stdout_lacks:
+    - "svc-badcfg"
+  # The stale issue is UPDATED in place (not left stale, no new issue), reopened
+  # because the target failed, and the body carries the ACTUAL parse-failure text
+  # from the captured pre-engine transcript - not just "failed" metadata, which
+  # would survive even if the transcript capture were lost.
+  issue_report:
+    slug: e2e-owner/svc-badcfg
+    created_count: 0
+    state: open
+    lookup_by_label: true
+    body_contains:
+      - "e2e-owner/svc-badcfg"
+      - "cannot parse"
+      - "Fix the YAML in that file"
+  never:
+    - "POST /repos/e2e-owner/svc-badcfg/issues"
+  requests_contain:
+    - "PATCH /repos/e2e-owner/svc-badcfg/issues/3"

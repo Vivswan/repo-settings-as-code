@@ -135,6 +135,18 @@ inputs:
       behavior); only use it when the run's logs are not publicly readable.
     required: false
     default: redact
+  private-report:
+    description: >-
+      none (default) or issue. Under issue, the full unredacted report for
+      each redacted target is delivered as a reused, marker-labelled issue on
+      that target repository itself (the one GitHub-private channel a public
+      run has): the body is replaced every run, and the issue is opened when
+      the target fails or drifts and closed when it is healthy. Applies only
+      to redacted targets, so it is rejected alongside private-repos: show.
+      Report delivery writes even in mode: check, and its failure never
+      changes the run's result.
+    required: false
+    default: none
 
 outputs:
   result:
