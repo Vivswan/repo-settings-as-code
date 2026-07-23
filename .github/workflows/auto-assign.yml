@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       issue:
-        description: Issue number to assign to the owner (for issues whose creation fired no workflow)
+        description: Issue or PR number to assign (for items whose creation fired no workflow)
         required: false
         default: ""
   issues:
@@ -14,9 +14,11 @@ on:
   pull_request:
     types: [opened, synchronize]
   # Code scanning alerts have no creation trigger for Actions, so assign them
-  # after each CodeQL run completes, with a weekly cron as a catch-up.
+  # after each CI run completes (CodeQL analyzes inside CI's gate, and a
+  # reusable-workflow call creates no separate run to watch), with a weekly
+  # cron as a catch-up. The code_scanning input gates the actual alert job.
   workflow_run:
-    workflows: ["CodeQL"]
+    workflows: ["CI"]
     types: [completed]
   schedule:
     - cron: "23 6 * * 1"
@@ -26,8 +28,10 @@ on:
 # file regardless of each job's `if:`, so the alert-assignment job's
 # permissions must be grantable even where code scanning is disabled. The
 # code_scanning input below keeps that job from actually running there.
+# contents:read lets the reusable workflow read CODEOWNERS to decide who
+# gets assigned (falling back to the repo owner).
 permissions:
-  contents: read # every nested job resolves CODEOWNERS
+  contents: read
   issues: write
   pull-requests: write
   security-events: write

@@ -1,10 +1,29 @@
+# This file is managed by Vivswan/repo-platform.
+# Local edits may be replaced during template updates.
+#
+# The all-green convention: branch protection requires only the `all-green`
+# check, which needs every other job here, so the required-checks list never
+# changes as jobs come and go. This repository's own test and lint jobs live
+# in checks.yml (repo-owned, never overwritten by sync) and run inside the
+# gate through the `checks` job. Module checks (the pr-title title check,
+# CodeQL analysis) run inside the gate too, so branch protection blocks on
+# them without extra required checks.
+
 name: CI
 
 on:
   push:
     branches: [main]
+  # `edited` on top of the default three: a PR title edit must re-run the
+  # gate so title-sensitive checks (the pr-title module) stay honest. The
+  # cancel-in-progress concurrency below bounds the extra runs.
   pull_request:
+    types: [opened, edited, reopened, synchronize]
   workflow_dispatch:
+  # Weekly CodeQL re-scan with refreshed query packs; every other gate job
+  # is event-agnostic or skips its work cleanly on non-PR events.
+  schedule:
+    - cron: "23 4 * * 1"
 
 permissions:
   contents: read
@@ -14,83 +33,18 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: .bun-version
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-      # bun test includes the OpenAPI validator tests, which load the fetched,
-      # gitignored trimmed spec; restore it from cache or fetch on a miss.
-      - name: Cache the trimmed OpenAPI spec
-        id: openapi-cache
-        uses: actions/cache@v6
-        with:
-          path: test/e2e/openapi/github-openapi.trimmed.json
-          key: openapi-trimmed-${{ hashFiles('.github/scripts/trim-openapi.ts', 'test/e2e/openapi/paths.ts', 'src/sections/**', 'src/schema.ts', 'src/github/api.ts') }}
-      - name: Fetch the trimmed OpenAPI spec (cache miss)
-        if: steps.openapi-cache.outputs.cache-hit != 'true'
-        run: bun .github/scripts/trim-openapi.ts
-      - name: Lint (biome)
-        run: bun run lint
-      - name: Typecheck
-        run: bun run typecheck
-      - name: Test
-        run: bun run test
-
-  # lib/ holds committed generated artifacts: the bundled entrypoint the
-  # node24 runtime executes and the settings.yml JSON Schema; fail if
-  # either drifts from src/.
-  bundle-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: .bun-version
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-      - name: Rebuild and compare
-        run: bun run build:check
-
-  # Self-test: run the action from this checkout in check mode against this
-  # repository. Drift or permission skips are fine (the default token cannot
-  # read admin surfaces); a CRASH is not - assert the action produced a
-  # result output, which an exception never does.
-  self-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Run settings-as-code (check mode)
-        id: selfcheck
-        uses: ./
-        continue-on-error: true
-        with:
-          mode: check
-          on-missing-permission: warn
-      - name: Assert the action ran to completion
-        env:
-          RESULT: ${{ steps.selfcheck.outputs.result }}
-        run: |
-          case "$RESULT" in
-            clean|drift|partial|failed) echo "action completed with result=$RESULT" ;;
-            *) echo "::error::action crashed (no result output)"; exit 1 ;;
-          esac
+  # Repo-owned checks: edit .github/workflows/checks.yml, not this file. No
+  # secrets are passed and permissions cap at contents: read; a check that
+  # needs either belongs in its own workflow (see
+  # https://github.com/Vivswan/repo-platform/blob/main/docs/all-green.md).
+  checks:
+    uses: ./.github/workflows/checks.yml
 
   typography:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: Vivswan/repo-platform/actions/check-typography@main
-
-  validate-template:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: Vivswan/repo-platform/actions/validate-template@main
 
   commit-names:
     runs-on: ubuntu-latest
@@ -100,82 +54,73 @@ jobs:
           fetch-depth: 0
       - uses: Vivswan/repo-platform/actions/validate-commit-names@main
 
+  # Informational, deliberately NOT in all-green's needs: a red run flags
+  # template-convention drift (usually local edits to managed files), but
+  # it never blocks this repository's merges - the next sync PR heals it.
+  validate-template:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Vivswan/repo-platform/actions/validate-template@main
+
   actionlint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: raven-actions/actionlint@v2
 
-  # Diff-aware e2e smoke: on a PR, run only the scenarios and fuzz for the
-  # sections the PR touched (docs-only PRs skip; core or cross-cutting changes
-  # run every section). The action bundle runs under node24, so the smoke job
-  # installs node too. Non-PR events (push, dispatch) have no PR base to diff
-  # against, so they run the full corpus.
-  e2e-smoke:
+  yamllint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: .bun-version
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-      # The trimmed OpenAPI spec is a fetched, gitignored artifact. Restore it
-      # from cache or fetch on a miss. The key hashes every input that changes
-      # the output - the trim script (which carries UPSTREAM_REF), USED_PATHS,
-      # and the DEFAULT_API_VERSION source - so any of them changing busts the
-      # cache and re-fetches, never restoring a stale slice.
-      - name: Cache the trimmed OpenAPI spec
-        id: openapi-cache
-        uses: actions/cache@v6
-        with:
-          path: test/e2e/openapi/github-openapi.trimmed.json
-          key: openapi-trimmed-${{ hashFiles('.github/scripts/trim-openapi.ts', 'test/e2e/openapi/paths.ts', 'src/sections/**', 'src/schema.ts', 'src/github/api.ts') }}
-      - name: Fetch the trimmed OpenAPI spec (cache miss)
-        if: steps.openapi-cache.outputs.cache-hit != 'true'
-        run: bun .github/scripts/trim-openapi.ts
-      - name: Select sections from the diff
-        id: select
+      - name: Install yamllint
+        run: python3 -m pip install --quiet yamllint
+      - name: Lint YAML
+        run: yamllint -s .
+
+  # CodeQL analysis runs inside the gate (one job per language), so a failed
+  # scan blocks merges. Each job grants the scan permissions - a caller
+  # job's permissions are the ceiling for the called workflow - and the
+  # weekly re-scan schedule lives on this workflow's triggers.
+
+  codeql-javascript:
+    uses: Vivswan/repo-platform/.github/workflows/reusable-codeql.yml@main
+    with:
+      language: javascript-typescript
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+
+  # Conventional Commit PR title, checked inside the gate so branch
+  # protection blocks on it. PRs are squash-merged, so the PR title becomes
+  # the commit subject and drives release-please versioning: `feat:` (minor),
+  # `fix:` (patch), `feat!:` (major), `chore:`/`docs:` (no release). The
+  # skip lives on the STEP, not the job: all-green treats a skipped needed
+  # job as failure, and ci.yml also runs on push/dispatch/schedule events.
+  pr-title:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - name: Validate PR title is a Conventional Commit
+        if: github.event_name == 'pull_request'
+        uses: amannn/action-semantic-pull-request@v6
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          if [ -n "$BASE_SHA" ]; then
-            SECTIONS="$(bun .github/scripts/changed-sections.ts "$BASE_SHA")"
-          else
-            SECTIONS="all"
-          fi
-          echo "sections=$SECTIONS" >> "$GITHUB_OUTPUT"
-          echo "selected sections: $SECTIONS"
-      - name: Run scenarios and fuzz
-        if: steps.select.outputs.sections != 'none'
-        env:
-          SECTIONS: ${{ steps.select.outputs.sections }}
-        run: |
-          if [ "$SECTIONS" = "all" ]; then
-            bun test/e2e/run.ts
-            bun test/e2e/fuzz.ts --iterations 25
-          else
-            bun test/e2e/run.ts --sections "$SECTIONS"
-            bun test/e2e/fuzz.ts --iterations 25 --sections "$SECTIONS"
-          fi
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   all-green:
     name: all-green
     if: always()
     needs:
-      - check
-      - bundle-check
-      - self-check
+      - checks
       - typography
-      - validate-template
       - commit-names
       - actionlint
-      - e2e-smoke
+      - yamllint
+      - codeql-javascript
+      - pr-title
     runs-on: ubuntu-latest
     steps:
       - name: All jobs green
@@ -185,20 +130,32 @@ jobs:
           echo "results: $RESULTS"
           for result in $RESULTS; do
             if [ "$result" != "success" ]; then
-              echo "::error::a required job did not succeed"
+              echo "::error::all-green failed: at least one required job did not succeed (results: $RESULTS). Open the failing job's log in this run, fix the failure, and push again."
               exit 1
             fi
           done
 
-  # Release from a green main only: release-please (and the major-tag move)
-  # runs downstream of all-green, so a red commit can never cut a release or
-  # refresh the release PR. Deliberately NOT in all-green's needs: it depends
-  # on the gate, it is not gated by it.
+  # Release from a green main only: the repo-owned release.yml pipeline
+  # (which runs the managed release-please.yml machinery, plus any of this
+  # repository's pre/post-release jobs) runs downstream of all-green, so a
+  # red commit can never cut a release or refresh the release PR.
+  # Deliberately NOT in all-green's needs: it depends on the gate, it is not
+  # gated by it. Only push/dispatch runs release: pull requests must never
+  # reach the publish pipeline, and the weekly scheduled CodeQL re-scan has
+  # no business refreshing release state. Secrets are inherited
+  # deliberately: publish steps need them.
   release:
     needs: [all-green]
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && github.ref == 'refs/heads/main'
+    # The publishing ceiling for the repo-owned release.yml jobs (release
+    # assets, ghcr, npm/PyPI trusted publishing); nested jobs can only
+    # narrow it, never raise it.
     permissions:
       contents: write
       pull-requests: write
-    uses: ./.github/workflows/release-please.yml
+      packages: write
+      id-token: write
+    uses: ./.github/workflows/release.yml
     secrets: inherit
