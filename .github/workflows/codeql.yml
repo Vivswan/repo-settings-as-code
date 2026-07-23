@@ -18,6 +18,12 @@ jobs:
     uses: Vivswan/repo-platform/.github/workflows/reusable-codeql.yml@main
     with:
       language: javascript-typescript
+      # lib/ is the committed generated bundle (src plus vendored deps); its
+      # source is already scanned, and the bundler emits syntax CodeQL's
+      # parser rejects (rest-parameter destructuring in a vendored util shim).
+      config: |
+        paths-ignore:
+          - lib
     permissions:
       contents: read
       security-events: write

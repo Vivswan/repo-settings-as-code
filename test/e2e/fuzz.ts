@@ -1905,8 +1905,7 @@ async function main(): Promise<number> {
       const seed = iterationSeed(master, 0x300000 + index);
       const mode = (index >> 1) % 2 === 0 ? ("apply" as const) : ("check" as const);
       const section = faultableSections[
-        // codeql[js/biased-cryptographic-random] -- the crypto value is a fuzz seed, not key material; modulo bias is irrelevant to coverage rotation
-        (index + (master % faultableSections.length)) % faultableSections.length
+        (index + (master % faultableSections.length)) % faultableSections.length // codeql[js/biased-cryptographic-random] -- fuzz seed rotation, not key material
       ] as FaultableSection;
       const label = `${section}:${kind}/x${exhausting ? RETRY_BUDGET : 1}`;
       const result = await faultedSectionRun(seed, {
