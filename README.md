@@ -51,7 +51,7 @@ silently.
        runs-on: ubuntu-latest
        steps:
          - uses: actions/checkout@v7
-         - uses: Vivswan/repo-settings-as-code@v1.0.1
+         - uses: Vivswan/repo-settings-as-code@v1.1.0
            with:
              token: ${{ secrets.ADMIN_TOKEN }}
    ```
@@ -78,7 +78,7 @@ field GitHub ships tomorrow must never read as an error (see
 - `@v1` is a moving major tag: <!-- x-release-please-major -->
   every release in that major line moves it, so fixes arrive without
   changing your pin.
-- Pin an exact tag (`@v1.0.1`) when you need byte-stable behavior, and <!-- x-release-please-version -->
+- Pin an exact tag (`@v1.1.0`) when you need byte-stable behavior, and <!-- x-release-please-version -->
   upgrade deliberately.
 - Only the latest release is supported; fixes are not backported (see
   [SECURITY.md](SECURITY.md)).
@@ -278,7 +278,7 @@ token needs the same per-section permissions (see the
 ```yaml
 # One admin repo managing the fleet
 - uses: actions/checkout@v7
-- uses: Vivswan/repo-settings-as-code@v1.0.1
+- uses: Vivswan/repo-settings-as-code@v1.1.0
   with:
     token: ${{ secrets.FLEET_TOKEN }}
     repos-dir: .github/repos

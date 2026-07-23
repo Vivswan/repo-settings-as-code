@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/Vivswan/repo-settings-as-code/compare/v1.0.1...v1.1.0) (2026-07-23)
+
+
+### Features
+
+* move repo-owned CI and release logic to template extension points ([#12](https://github.com/Vivswan/repo-settings-as-code/issues/12)) ([f9320b7](https://github.com/Vivswan/repo-settings-as-code/commit/f9320b781e4fc2b7cd144fb26d6f0590c6774dad))
+
 ## [1.0.1](https://github.com/Vivswan/repo-settings-as-code/compare/v1.0.0...v1.0.1) (2026-07-23)
 
 
