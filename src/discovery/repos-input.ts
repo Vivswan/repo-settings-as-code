@@ -18,7 +18,7 @@ export function parseReposInput(
     }
     return { slugs: [], discover: true };
   }
-  const seen = new Map<string, string>();
+  const seen = new Set<string>();
   for (const item of items) {
     if (!SLUG_RE.test(item)) {
       return {
@@ -31,7 +31,7 @@ export function parseReposInput(
         error: `the "repos" input lists ${item} more than once. Keep exactly one entry per repository`,
       };
     }
-    seen.set(key, item);
+    seen.add(key);
   }
   return { slugs: items, discover: false };
 }

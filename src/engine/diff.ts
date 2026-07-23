@@ -43,22 +43,19 @@ export function subsetDiff(desired: unknown, live: unknown, path: string): strin
   return [];
 }
 
+/** The `type` key of an object list item, or null when the item has none. */
+function typeOf(item: unknown): string | null {
+  return typeof item === "object" && item !== null && "type" in (item as object)
+    ? String((item as { type: unknown }).type)
+    : null;
+}
+
 function diffArray(desired: unknown[], live: unknown, path: string): string[] {
   if (!Array.isArray(live)) {
     return [`${path}: expected list, live has ${JSON.stringify(live)}`];
   }
-  const desiredTypes = desired.map((item) =>
-    typeof item === "object" && item !== null && "type" in (item as object)
-      ? String((item as { type: unknown }).type)
-      : null,
-  );
-  const liveTypes = Array.isArray(live)
-    ? live.map((item) =>
-        typeof item === "object" && item !== null && "type" in (item as object)
-          ? String((item as { type: unknown }).type)
-          : null,
-      )
-    : [];
+  const desiredTypes = desired.map(typeOf);
+  const liveTypes = live.map(typeOf);
   // Match by `type` only when types are UNIQUE on both sides (ruleset rules);
   // environment reviewers repeat types and must fall through to subset
   // matching below.
@@ -75,13 +72,17 @@ function diffArray(desired: unknown[], live: unknown, path: string): string[] {
     const drift: string[] = [];
     const liveByType = new Map<string, unknown>();
     for (const item of live) {
-      if (typeof item === "object" && item !== null && "type" in (item as object)) {
-        liveByType.set(String((item as { type: unknown }).type), item);
+      const type = typeOf(item);
+      if (type !== null) {
+        liveByType.set(type, item);
       }
     }
     const declaredTypes = new Set<string>();
     for (const item of desired) {
-      const type = String((item as { type: unknown }).type);
+      const type = typeOf(item);
+      if (type === null) {
+        continue;
+      }
       declaredTypes.add(type);
       const match = liveByType.get(type);
       if (match === undefined) {

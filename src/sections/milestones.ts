@@ -82,16 +82,17 @@ export const milestonesSection: SectionModule<"milestones"> = {
       }
       const { title: _t, ...declaredFields } = milestone;
       const drift = subsetDiff(declaredFields, existing, `milestones[${milestone.title}]`);
-      if (drift.length > 0) {
-        if (ctx.check) {
-          result.drift.push(...drift);
-        } else {
-          await call(ctx, this, ENDPOINTS.update, {
-            params: { milestone_number: String(existing.number) },
-            payload: want,
-          });
-          result.changes.push(`updated milestone "${milestone.title}"`);
-        }
+      if (drift.length === 0) {
+        continue;
+      }
+      if (ctx.check) {
+        result.drift.push(...drift);
+      } else {
+        await call(ctx, this, ENDPOINTS.update, {
+          params: { milestone_number: String(existing.number) },
+          payload: want,
+        });
+        result.changes.push(`updated milestone "${milestone.title}"`);
       }
     }
     // Divergence from Probot: undeclared milestones are kept (they may hold

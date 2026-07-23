@@ -39,29 +39,36 @@ export function resolveCentralTargets(
     return null;
   };
 
+  const scanOwnerDir = (dirPath: string, owner: string): string | null => {
+    for (const inner of readdirSync(dirPath).sort()) {
+      const innerPath = join(dirPath, inner);
+      if (statSync(innerPath).isDirectory()) {
+        warnings.push(
+          `ignoring ${innerPath}: repos-dir supports only <name>.yml and <owner>/<name>.yml, nothing deeper. Move the files up or remove the directory`,
+        );
+        continue;
+      }
+      if (!YAML_EXT.test(inner)) {
+        warnings.push(
+          `ignoring ${innerPath}: not a .yml/.yaml file, so it defines no target repository`,
+        );
+        continue;
+      }
+      const bad = addTarget(`${owner}/${inner.replace(YAML_EXT, "")}`, innerPath);
+      if (bad) {
+        return bad;
+      }
+    }
+    return null;
+  };
+
   try {
     for (const entry of readdirSync(reposDir).sort()) {
       const entryPath = join(reposDir, entry);
       if (statSync(entryPath).isDirectory()) {
-        for (const inner of readdirSync(entryPath).sort()) {
-          const innerPath = join(entryPath, inner);
-          if (statSync(innerPath).isDirectory()) {
-            warnings.push(
-              `ignoring ${innerPath}: repos-dir supports only <name>.yml and <owner>/<name>.yml, nothing deeper. Move the files up or remove the directory`,
-            );
-            continue;
-          }
-          if (!YAML_EXT.test(inner)) {
-            warnings.push(
-              `ignoring ${innerPath}: not a .yml/.yaml file, so it defines no target repository`,
-            );
-            continue;
-          }
-          const slug = `${entry}/${inner.replace(YAML_EXT, "")}`;
-          const bad = addTarget(slug, innerPath);
-          if (bad) {
-            return { error: bad };
-          }
+        const bad = scanOwnerDir(entryPath, entry);
+        if (bad) {
+          return { error: bad };
         }
         continue;
       }

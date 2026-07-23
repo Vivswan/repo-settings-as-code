@@ -19,26 +19,25 @@ export async function getRepoFile(
     accept: "application/vnd.github.raw+json",
     raw: true,
   });
-  if ("error" in result) {
-    if (result.error.status === 404) {
-      const repoProbe = await api.tryRequest("GET", `/repos/${slug}`);
-      if ("error" in repoProbe) {
-        return { error: repoProbe.error };
-      }
-      const pull = (repoProbe.data as { permissions?: { pull?: boolean } } | null)?.permissions
-        ?.pull;
-      if (pull === true) {
-        return { missing: true };
-      }
-      return {
-        error: {
-          status: 404,
-          message: `the repository is visible but the token cannot read its contents, so ${filePath} cannot be fetched (grant Contents: read)`,
-          body: "",
-        },
-      };
-    }
+  if (!("error" in result)) {
+    return { content: String(result.data ?? "") };
+  }
+  if (result.error.status !== 404) {
     return { error: result.error };
   }
-  return { content: String(result.data ?? "") };
+  const repoProbe = await api.tryRequest("GET", `/repos/${slug}`);
+  if ("error" in repoProbe) {
+    return { error: repoProbe.error };
+  }
+  const pull = (repoProbe.data as { permissions?: { pull?: boolean } } | null)?.permissions?.pull;
+  if (pull === true) {
+    return { missing: true };
+  }
+  return {
+    error: {
+      status: 404,
+      message: `the repository is visible but the token cannot read its contents, so ${filePath} cannot be fetched (grant Contents: read)`,
+      body: "",
+    },
+  };
 }

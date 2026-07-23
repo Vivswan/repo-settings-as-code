@@ -88,8 +88,7 @@ export function flattenEnvironment(live: unknown): Record<string, unknown> {
   for (const rule of rules) {
     if (rule.type === "wait_timer") {
       out.wait_timer = rule.wait_timer;
-    }
-    if (rule.type === "required_reviewers") {
+    } else if (rule.type === "required_reviewers") {
       if (rule.prevent_self_review !== undefined) {
         out.prevent_self_review = rule.prevent_self_review;
       }
@@ -98,8 +97,7 @@ export function flattenEnvironment(live: unknown): Record<string, unknown> {
         reviewer?: { id?: unknown };
       }>;
       out.reviewers = reviewers.map((r) => ({ type: r.type, id: r.reviewer?.id }));
-    }
-    if (rule.type !== "wait_timer" && rule.type !== "required_reviewers") {
+    } else {
       // Future rule types: un-nest their payload keys generically so check
       // mode can compare declared settings instead of reporting false drift.
       for (const [key, value] of Object.entries(rule)) {

@@ -47,10 +47,12 @@ export function recordHits(
 ): void {
   for (const request of requests) {
     for (const route of routes) {
-      if (!hit.has(route.key) && route.method === request.method) {
-        if (matchesTemplate(route.path, request.pathname)) {
-          hit.add(route.key);
-        }
+      if (
+        !hit.has(route.key) &&
+        route.method === request.method &&
+        matchesTemplate(route.path, request.pathname)
+      ) {
+        hit.add(route.key);
       }
     }
   }

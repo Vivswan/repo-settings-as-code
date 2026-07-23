@@ -88,15 +88,16 @@ export const autolinksSection: SectionModule<"autolinks"> = {
     }
 
     for (const autolink of live) {
-      if (!declared.has(autolink.key_prefix)) {
-        if (ctx.check) {
-          result.drift.push(
-            `autolinks[${autolink.key_prefix}]: undeclared - not in the settings file, so apply will DELETE it; add it to the settings file to keep it`,
-          );
-        } else {
-          await call(ctx, this, ENDPOINTS.remove, { params: { autolink_id: String(autolink.id) } });
-          result.changes.push(`DELETED undeclared autolink ${autolink.key_prefix}`);
-        }
+      if (declared.has(autolink.key_prefix)) {
+        continue;
+      }
+      if (ctx.check) {
+        result.drift.push(
+          `autolinks[${autolink.key_prefix}]: undeclared - not in the settings file, so apply will DELETE it; add it to the settings file to keep it`,
+        );
+      } else {
+        await call(ctx, this, ENDPOINTS.remove, { params: { autolink_id: String(autolink.id) } });
+        result.changes.push(`DELETED undeclared autolink ${autolink.key_prefix}`);
       }
     }
     return result;

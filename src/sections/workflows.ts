@@ -92,7 +92,7 @@ export const workflowsSection: SectionModule<"workflows"> = {
           `workflows[${workflow.path}]: declared "${workflow.state}" != live "${liveState}"${raw}; apply will ${action} the workflow`,
         );
       } else {
-        await call(ctx, this, action === "enable" ? ENDPOINTS.enable : ENDPOINTS.disable, {
+        await call(ctx, this, ENDPOINTS[action], {
           params: { workflow_id: String(match.id) },
         });
         result.changes.push(`${action}d workflow "${match.path}"`);

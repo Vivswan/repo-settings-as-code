@@ -61,9 +61,14 @@ export function failureDirs(root: string): string[] {
     return [];
   }
   return readdirSync(root)
-    .map((name) => join(root, name))
-    .filter((path) => statSync(path).isDirectory())
-    .sort((a, b) => statSync(a).mtimeMs - statSync(b).mtimeMs);
+    .map((name) => {
+      const path = join(root, name);
+      const stats = statSync(path);
+      return { path, mtimeMs: stats.mtimeMs, isDir: stats.isDirectory() };
+    })
+    .filter((entry) => entry.isDir)
+    .sort((a, b) => a.mtimeMs - b.mtimeMs)
+    .map((entry) => entry.path);
 }
 
 /**
@@ -163,9 +168,9 @@ export function buildBody(dirs: string[], env: NodeJS.ProcessEnv): string {
   // The omission notice is only present when some blocks are dropped, but its
   // length is reserved up front so the running total stays a real character
   // budget whether or not it ends up shown. Padded for the count digits.
-  const noticeReserve =
-    `\n${dirs.length} more failure artifact(s) omitted to stay under the GitHub body limit; see the attached artifacts.`
-      .length;
+  const omissionNotice = (count: number) =>
+    `\n${count} more failure artifact(s) omitted to stay under the GitHub body limit; see the attached artifacts.`;
+  const noticeReserve = omissionNotice(dirs.length).length;
 
   // Append per-scenario blocks while each fits the remaining budget; then stop
   // and say how many were omitted. Every block (including the first) is both
@@ -206,10 +211,7 @@ export function buildBody(dirs: string[], env: NodeJS.ProcessEnv): string {
   }
 
   const omitted = dirs.length - shown;
-  const truncation =
-    omitted > 0
-      ? `\n${omitted} more failure artifact(s) omitted to stay under the GitHub body limit; see the attached artifacts.`
-      : "";
+  const truncation = omitted > 0 ? omissionNotice(omitted) : "";
   return `${header}\n${blocks.join("\n")}${truncation}${artifactsNote}${footer}`;
 }
 

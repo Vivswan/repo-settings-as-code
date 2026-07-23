@@ -59,6 +59,15 @@ const ENDPOINTS = {
   },
 } as const satisfies Record<string, EndpointDecl>;
 
+// Forward-compatible key routing: known workflow-token keys go to the
+// /workflow sub-endpoint, selected_actions and access_level to their own
+// endpoints, and EVERYTHING else (including future fields GitHub adds)
+// passes through to the base permissions PUT verbatim - never silently
+// dropped.
+const WORKFLOW_KEYS = new Set(["default_workflow_permissions", "can_approve_pull_request_reviews"]);
+
+const KNOWN_PERMISSION_KEYS = new Set(["enabled", "allowed_actions"]);
+
 export const actionsSection: SectionModule<"actions"> = {
   key: "actions",
   deletesUndeclared: "untouched",
@@ -69,15 +78,6 @@ export const actionsSection: SectionModule<"actions"> = {
   async run(ctx, desiredRaw): Promise<SectionResult> {
     const result = emptyResult();
     const desired = desiredRaw as ActionsConfig;
-    // Forward-compatible key routing: known workflow-token keys go to the
-    // /workflow sub-endpoint, selected_actions and access_level to their own
-    // endpoints, and EVERYTHING else (including future fields GitHub adds)
-    // passes through to the base permissions PUT verbatim - never silently
-    // dropped.
-    const WORKFLOW_KEYS = new Set([
-      "default_workflow_permissions",
-      "can_approve_pull_request_reviews",
-    ]);
     const permissions: Record<string, unknown> = {};
     const workflow: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(desired as Record<string, unknown>)) {
@@ -106,7 +106,6 @@ export const actionsSection: SectionModule<"actions"> = {
       // implies actions are on unless said otherwise.
       permissions.enabled = permissions.enabled ?? true;
     }
-    const KNOWN_PERMISSION_KEYS = new Set(["enabled", "allowed_actions"]);
     const routed = Object.keys(permissions).filter((k) => !KNOWN_PERMISSION_KEYS.has(k));
     if (routed.length > 0) {
       // The base PUT body always carries an enabled value (defaulted above),

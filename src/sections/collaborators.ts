@@ -66,9 +66,9 @@ export const collaboratorsSection: SectionModule<"collaborators"> = {
     for (const collaborator of desired) {
       const login = collaborator.username.toLowerCase();
       declared.add(login);
-      const permission = collaborator.permission ?? DEFAULT_ROLE;
+      const wantPermission = collaborator.permission ?? DEFAULT_ROLE;
       const existing = liveByLogin.get(login);
-      const wantRole = roleForPermission(permission);
+      const wantRole = roleForPermission(wantPermission);
       if (existing && (existing.role_name ?? "") === wantRole) {
         continue;
       }
@@ -76,16 +76,16 @@ export const collaboratorsSection: SectionModule<"collaborators"> = {
         result.drift.push(
           existing
             ? `collaborators[${collaborator.username}]: live role "${existing.role_name}" != declared "${wantRole}"; apply will set the declared permission`
-            : `collaborators[${collaborator.username}]: missing - not a collaborator on the repo; apply will send an invitation with "${permission}"`,
+            : `collaborators[${collaborator.username}]: missing - not a collaborator on the repo; apply will send an invitation with "${wantPermission}"`,
         );
       } else {
         const { username: _u, ...body } = collaborator;
         await call(ctx, this, ENDPOINTS.update, {
           params: { username: collaborator.username },
-          payload: { ...body, permission }, // future sibling keys pass through
+          payload: { ...body, permission: wantPermission }, // future sibling keys pass through
         });
         result.changes.push(
-          `${existing ? "updated" : "invited"} collaborator "${collaborator.username}" (${permission})`,
+          `${existing ? "updated" : "invited"} collaborator "${collaborator.username}" (${wantPermission})`,
         );
       }
     }

@@ -24,13 +24,14 @@ export function validateSectionShapes(
       continue;
     }
     const parsed = sectionShape(key).safeParse(declared);
-    if (!parsed.success) {
-      for (const issue of parsed.error.issues.slice(0, 5)) {
-        const path = issue.path.length
-          ? issue.path.map((p) => (typeof p === "number" ? `[${p}]` : `.${String(p)}`)).join("")
-          : "";
-        problems.push(`${key}${path}: ${issue.message}`);
-      }
+    if (parsed.success) {
+      continue;
+    }
+    for (const issue of parsed.error.issues.slice(0, 5)) {
+      const path = issue.path
+        .map((p) => (typeof p === "number" ? `[${p}]` : `.${String(p)}`))
+        .join("");
+      problems.push(`${key}${path}: ${issue.message}`);
     }
   }
   if (problems.length === 0) {

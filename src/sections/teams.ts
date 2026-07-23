@@ -64,37 +64,37 @@ export const teamsSection: SectionModule<"teams"> = {
       return result;
     }
     for (const team of desired) {
-      const permission = team.permission ?? DEFAULT_ROLE;
-      if (ctx.check) {
-        // The repository media type makes this endpoint return the repo
-        // object (with role_name) instead of 204.
-        const probe = await probeAbsent(ctx, this, ENDPOINTS.probe, {
-          params: { org: ctx.owner, team_slug: team.name },
-          accept: "application/vnd.github.v3.repository+json",
-        });
-        if ("missing" in probe) {
-          result.drift.push(
-            `teams[${team.name}]: no access to ${ctx.repo}; apply will grant "${permission}"`,
-          );
-        } else {
-          const wantRole = roleForPermission(permission);
-          const liveRole = (probe.data as { role_name?: string } | null)?.role_name ?? "";
-          if (liveRole !== wantRole) {
-            result.drift.push(
-              `teams[${team.name}]: live role "${liveRole}" != declared "${wantRole}"; apply will set the declared permission`,
-            );
-          }
-        }
-      } else {
+      const role = team.permission ?? DEFAULT_ROLE;
+      if (!ctx.check) {
         const { name: _n, ...body } = team;
         await call(ctx, this, ENDPOINTS.grant, {
           params: { org: ctx.owner, team_slug: team.name },
           payload: {
             ...body, // future sibling keys pass through
-            permission,
+            permission: role,
           },
         });
-        result.changes.push(`granted team "${team.name}" ${permission}`);
+        result.changes.push(`granted team "${team.name}" ${role}`);
+        continue;
+      }
+      // The repository media type makes this endpoint return the repo
+      // object (with role_name) instead of 204.
+      const probe = await probeAbsent(ctx, this, ENDPOINTS.probe, {
+        params: { org: ctx.owner, team_slug: team.name },
+        accept: "application/vnd.github.v3.repository+json",
+      });
+      if ("missing" in probe) {
+        result.drift.push(
+          `teams[${team.name}]: no access to ${ctx.repo}; apply will grant "${role}"`,
+        );
+        continue;
+      }
+      const wantRole = roleForPermission(role);
+      const liveRole = (probe.data as { role_name?: string } | null)?.role_name ?? "";
+      if (liveRole !== wantRole) {
+        result.drift.push(
+          `teams[${team.name}]: live role "${liveRole}" != declared "${wantRole}"; apply will set the declared permission`,
+        );
       }
     }
     return result;

@@ -118,24 +118,24 @@ export function sectionsForFiles(files: readonly string[]): Selection {
     if (ALL_SELECTING_PREFIXES.some((prefix) => file.startsWith(prefix))) {
       return { kind: "all" };
     }
-    const inSections = file.startsWith("src/sections/");
-    if (inSections) {
-      const name = file.slice("src/sections/".length);
-      if (ALL_SELECTING_SECTION_FILES.has(name)) {
-        return { kind: "all" };
-      }
-      const keys = SECTIONS_BY_FILE[name];
-      if (keys) {
-        for (const key of keys) {
-          selected.add(key);
-        }
-      }
-      // A new, unmapped src/sections/*.ts file is conservatively ignored here;
-      // the map's unit test fails first if a section lacks an entry, so an
-      // unmapped file can only be a non-section helper.
+    if (!file.startsWith("src/sections/")) {
+      // Everything else (README, COVERAGE, workflows, package.json, tests
+      // outside e2e) contributes no section.
+      continue;
     }
-    // Everything else (README, COVERAGE, workflows, package.json, tests outside
-    // e2e) contributes no section.
+    const name = file.slice("src/sections/".length);
+    if (ALL_SELECTING_SECTION_FILES.has(name)) {
+      return { kind: "all" };
+    }
+    const keys = SECTIONS_BY_FILE[name];
+    if (keys) {
+      for (const key of keys) {
+        selected.add(key);
+      }
+    }
+    // A new, unmapped src/sections/*.ts file is conservatively ignored here;
+    // the map's unit test fails first if a section lacks an entry, so an
+    // unmapped file can only be a non-section helper.
   }
   if (selected.size === 0) {
     // A lib-only diff has no source to scope from, so run everything; a diff

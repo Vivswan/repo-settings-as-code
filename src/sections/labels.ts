@@ -104,9 +104,13 @@ export const labelsSection: SectionModule<"labels"> = {
       const wantColor = label.color === undefined ? undefined : normalizeColor(label.color);
       const wantDescription = label.description ?? "";
 
-      const { new_name: _newName, name: _name, ...extraKeys } = label;
-      delete (extraKeys as Record<string, unknown>).color;
-      delete (extraKeys as Record<string, unknown>).description;
+      const {
+        new_name: _newName,
+        name: _name,
+        color: _color,
+        description: _description,
+        ...extraKeys
+      } = label;
       if (!existing) {
         if (ctx.check) {
           result.drift.push(
@@ -131,50 +135,52 @@ export const labelsSection: SectionModule<"labels"> = {
         label.description !== undefined && (existing.description ?? "") !== wantDescription;
       const renameDrift = existing.name !== finalName;
       const extraDrift = subsetDiff(extraKeys, existing, `labels[${finalName}]`);
-      if (colorDrift || descriptionDrift || renameDrift || extraDrift.length > 0) {
-        if (ctx.check) {
-          if (renameDrift) {
-            result.drift.push(
-              `labels[${existing.name}]: should be named "${finalName}" per the settings file; apply will rename it`,
-            );
-          }
-          if (colorDrift) {
-            result.drift.push(
-              `labels[${finalName}].color: declared "${wantColor}" != live "${normalizeColor(existing.color)}"; apply will set the declared value`,
-            );
-          }
-          if (descriptionDrift) {
-            result.drift.push(
-              `labels[${finalName}].description: declared ${JSON.stringify(wantDescription)} != live ${JSON.stringify(existing.description ?? "")}; apply will set the declared value`,
-            );
-          }
-          result.drift.push(...extraDrift);
-        } else {
-          await call(ctx, this, ENDPOINTS.update, {
-            params: { name: existing.name },
-            payload: {
-              new_name: finalName,
-              ...(wantColor === undefined ? {} : { color: wantColor }),
-              ...(label.description === undefined ? {} : { description: wantDescription }),
-              ...extraKeys, // future label fields pass through verbatim
-            },
-          });
-          result.changes.push(`updated label "${finalName}"`);
+      if (!colorDrift && !descriptionDrift && !renameDrift && extraDrift.length === 0) {
+        continue;
+      }
+      if (ctx.check) {
+        if (renameDrift) {
+          result.drift.push(
+            `labels[${existing.name}]: should be named "${finalName}" per the settings file; apply will rename it`,
+          );
         }
+        if (colorDrift) {
+          result.drift.push(
+            `labels[${finalName}].color: declared "${wantColor}" != live "${normalizeColor(existing.color)}"; apply will set the declared value`,
+          );
+        }
+        if (descriptionDrift) {
+          result.drift.push(
+            `labels[${finalName}].description: declared ${JSON.stringify(wantDescription)} != live ${JSON.stringify(existing.description ?? "")}; apply will set the declared value`,
+          );
+        }
+        result.drift.push(...extraDrift);
+      } else {
+        await call(ctx, this, ENDPOINTS.update, {
+          params: { name: existing.name },
+          payload: {
+            new_name: finalName,
+            ...(wantColor === undefined ? {} : { color: wantColor }),
+            ...(label.description === undefined ? {} : { description: wantDescription }),
+            ...extraKeys, // future label fields pass through verbatim
+          },
+        });
+        result.changes.push(`updated label "${finalName}"`);
       }
     }
 
     // Probot parity: undeclared labels are deleted. Loud on purpose.
     for (const label of liveByKey.values()) {
-      if (!declaredKeys.has(nameKey(label.name))) {
-        if (ctx.check) {
-          result.drift.push(
-            `labels[${label.name}]: undeclared - not in the settings file, so apply will DELETE it; add it to the settings file to keep it`,
-          );
-        } else {
-          await call(ctx, this, ENDPOINTS.remove, { params: { name: label.name } });
-          result.changes.push(`DELETED undeclared label "${label.name}"`);
-        }
+      if (declaredKeys.has(nameKey(label.name))) {
+        continue;
+      }
+      if (ctx.check) {
+        result.drift.push(
+          `labels[${label.name}]: undeclared - not in the settings file, so apply will DELETE it; add it to the settings file to keep it`,
+        );
+      } else {
+        await call(ctx, this, ENDPOINTS.remove, { params: { name: label.name } });
+        result.changes.push(`DELETED undeclared label "${label.name}"`);
       }
     }
     return result;

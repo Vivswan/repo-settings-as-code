@@ -94,26 +94,26 @@ export const pagesSection: SectionModule<"pages"> = {
       return result;
     }
 
-    if (!exists) {
-      // The create endpoint accepts only build_type/source; cname and the
-      // rest are update-only, so create first, then PUT the remainder.
-      const create: Record<string, unknown> = {};
-      if (payload.build_type !== undefined) {
-        create.build_type = payload.build_type;
-      }
-      if (payload.source !== undefined) {
-        create.source = payload.source;
-      }
-      await call(ctx, this, ENDPOINTS.create, { payload: create });
-      result.changes.push("enabled GitHub Pages");
-      const rest = Object.keys(payload).filter((k) => !(k in create));
-      if (rest.length > 0) {
-        await call(ctx, this, ENDPOINTS.update, { payload });
-        result.changes.push("applied remaining Pages configuration");
-      }
-    } else {
+    if (exists) {
       await call(ctx, this, ENDPOINTS.update, { payload });
       result.changes.push("updated GitHub Pages configuration");
+      return result;
+    }
+    // The create endpoint accepts only build_type/source; cname and the
+    // rest are update-only, so create first, then PUT the remainder.
+    const create: Record<string, unknown> = {};
+    if (payload.build_type !== undefined) {
+      create.build_type = payload.build_type;
+    }
+    if (payload.source !== undefined) {
+      create.source = payload.source;
+    }
+    await call(ctx, this, ENDPOINTS.create, { payload: create });
+    result.changes.push("enabled GitHub Pages");
+    const rest = Object.keys(payload).filter((k) => !(k in create));
+    if (rest.length > 0) {
+      await call(ctx, this, ENDPOINTS.update, { payload });
+      result.changes.push("applied remaining Pages configuration");
     }
     return result;
   },
