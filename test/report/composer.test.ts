@@ -45,6 +45,26 @@ describe("composeReport", () => {
     expect(report).toContain("| labels | failed | a \\| b<br>second line |");
   });
 
+  test("backslashes are escaped BEFORE pipes, so backslash-pipe cannot split a row", () => {
+    // Without the backslash escape, "a\|b" renders as an escaped backslash
+    // followed by a LIVE pipe and the cell splits into two columns.
+    const report = composeReport(
+      input({
+        outcomes: [{ key: "labels", status: "failed", detail: ["a\\|b", "line1\nline2"] }],
+      }),
+    );
+    expect(report).toContain("| labels | failed | a\\\\\\|b<br>line1 line2 |");
+  });
+
+  test("a bare carriage return is a line ending too and is flattened", () => {
+    // CommonMark treats a standalone CR as a line ending, so an unflattened
+    // "\r" would still split the table row.
+    const report = composeReport(
+      input({ outcomes: [{ key: "labels", status: "failed", detail: ["cr\ronly"] }] }),
+    );
+    expect(report).toContain("| labels | failed | cr only |");
+  });
+
   test("a transcript containing code fences cannot break out of its block", () => {
     const report = composeReport(
       input({ transcript: [{ line: "```" }, { line: "````fenced````" }] }),

@@ -22,7 +22,10 @@ const STATUS_ICON: Record<SectionOutcome["status"] | RepoResult, string> = {
 
 function summaryCell(text: string): string {
   // Escape the escape character first, then the table delimiter.
-  return text.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+  return text
+    .replace(/\\/g, "\\\\")
+    .replace(/\|/g, "\\|")
+    .replace(/\r\n?|\n/g, " ");
 }
 
 /** The fields the section table renders; both SectionOutcome and the public view meet it. */

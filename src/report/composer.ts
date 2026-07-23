@@ -38,9 +38,17 @@ export interface ReportInput {
   transcript: TranscriptLine[];
 }
 
-/** Escape the one character that would break a markdown table cell. */
+/**
+ * Escape a markdown table cell the same way summary.ts's summaryCell does:
+ * backslashes FIRST (a bare backslash before an escaped pipe would read as an
+ * escaped backslash plus a live pipe and split the row), then pipes, then
+ * newlines flattened to spaces.
+ */
 function cell(text: string): string {
-  return text.replace(/\|/g, "\\|");
+  return text
+    .replace(/\\/g, "\\\\")
+    .replace(/\|/g, "\\|")
+    .replace(/\r\n?|\n/g, " ");
 }
 
 /**
