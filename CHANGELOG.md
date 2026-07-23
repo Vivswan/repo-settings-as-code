@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.0.1](https://github.com/Vivswan/repo-settings-as-code/compare/v1.0.0...v1.0.1) (2026-07-23)
+
+
+### Bug Fixes
+
+* **ci:** adopt the top-level modules format in .repo-platform.yml ([0d33581](https://github.com/Vivswan/repo-settings-as-code/commit/0d33581fd15099b01692a1dadd91b4200322a173))
+* **ci:** exclude the generated bundle from CodeQL and inline the suppression ([a5e286c](https://github.com/Vivswan/repo-settings-as-code/commit/a5e286cfb79dcdd297263a8869e42d385b1562ba))
+* **ci:** grant contents read so auto-assign can resolve CODEOWNERS ([494f2bd](https://github.com/Vivswan/repo-settings-as-code/commit/494f2bdd57b66cba8c3243f81c5644ea73d824a8))
+* **discovery:** redact private repositories from logs, summaries, and outputs ([fd8d105](https://github.com/Vivswan/repo-settings-as-code/commit/fd8d105b6446d16a839937fa03007a853011366f))
+* **engine:** move multi-repo label prefixing into the Io sink ([eec6ecb](https://github.com/Vivswan/repo-settings-as-code/commit/eec6ecbae71a3512d5fd72e2fd20d0c78e619a5b))
+* **quality:** flatten nested branches into guard clauses across the codebase ([1c0a3ce](https://github.com/Vivswan/repo-settings-as-code/commit/1c0a3ce2ba3fce462918ccf0c4e6ff16f1ca9491))
+* **report:** add the encrypted artifact report channel ([770dbb0](https://github.com/Vivswan/repo-settings-as-code/commit/770dbb0434d2329b3e248abdf0042e34f43589f3))
+* **report:** deliver full private-target reports via repo issues ([4465282](https://github.com/Vivswan/repo-settings-as-code/commit/446528244592b16d4671d10738935d8e3bdcffa3))
+* **report:** escape backslashes and bare CR in markdown table cells ([571166f](https://github.com/Vivswan/repo-settings-as-code/commit/571166f6daeeff9c1cf62da7c540ba4c0ef7f066))
+* **test:** add token-leak and self-consistency fuzz invariants ([089fe60](https://github.com/Vivswan/repo-settings-as-code/commit/089fe600d6192cfd392153560ff2434d6979b62d))
+* **test:** assert apply-convergence and state stability under fuzz ([193c6f2](https://github.com/Vivswan/repo-settings-as-code/commit/193c6f28a1780725c8adf44f1ca33598cf4b4eeb))
+* **test:** broaden input-mode validator fuzzing across the settings surface ([8c55504](https://github.com/Vivswan/repo-settings-as-code/commit/8c555041bd001c7f8311cc537c42833a3012d835))
+* **test:** close fuzz vacuity with a discovery guard and a live CI seed ([7c023fc](https://github.com/Vivswan/repo-settings-as-code/commit/7c023fc1c7e63502d45ee8b17c6bf0db14faf0e8))
+* **test:** extend the e2e harness with core-route faults, idempotence checks, and raw settings ([aa3cdbc](https://github.com/Vivswan/repo-settings-as-code/commit/aa3cdbc35b0eb764c729bc944877b10d8ba0c752))
+* **test:** fuzz live state so drift detection is actually tested ([9599759](https://github.com/Vivswan/repo-settings-as-code/commit/9599759926164969019be4edf10358b4a6f42e8d))
+* **test:** fuzz the dead corners of the input space ([7de5404](https://github.com/Vivswan/repo-settings-as-code/commit/7de5404180041a15ba5eb2a45a335026a96d5e84))
+* **test:** randomize fault targets and model 5xx and core-path faults ([4a80ac6](https://github.com/Vivswan/repo-settings-as-code/commit/4a80ac65aa21fe327cfed028a8667fc67ab58e61))
+
 ## 1.0.0 (2026-07-22)
 
 
