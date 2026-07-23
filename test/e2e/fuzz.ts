@@ -122,6 +122,8 @@ interface IterationResult {
   coverage?: CoverageEvent[];
   /** The fired fault's endpoint kind/verdict label, for the fault-class histogram. */
   faultClass?: string;
+  /** The fixpoint re-run proof this iteration armed, for the stats counts. */
+  proof?: "apply_idempotent" | "converges";
 }
 
 /**
@@ -212,10 +214,23 @@ async function runPredicted(
   // The runner requires an expect.exit_code; we assert the exit code against
   // the oracle's ALLOWED SET in fuzz.ts instead (a set cannot be expressed as
   // a single expect), so set a placeholder here and filter the runner's own
-  // exit-code check out of its failures below. Fully-granted applies must
-  // converge, so ask the runner to do the convergence re-run and write-barrier.
-  const converges = prediction.fullyGranted && meta.mode === "apply";
-  scenario.expect = { exit_code: 0, ...(converges ? { converges: true } : {}) };
+  // exit-code check out of its failures below. A fully-granted apply is a
+  // FIXPOINT: prove it with the runner's apply-idempotence machinery (second
+  // apply exit 0, write-quiet compare-before-write sections, byte-identical
+  // state, then a clean check run - which subsumes the converges re-run).
+  // Fault-carrying iterations keep the lighter converges proof: the
+  // idempotence gate requires no injected faults.
+  const fixpoint = prediction.fullyGranted && meta.mode === "apply";
+  const idempotent = fixpoint && opts.faultKey === undefined;
+  scenario.expect = {
+    exit_code: 0,
+    ...(idempotent ? { apply_idempotent: true } : fixpoint ? { converges: true } : {}),
+  };
+  const proof: IterationResult["proof"] = idempotent
+    ? "apply_idempotent"
+    : fixpoint
+      ? "converges"
+      : undefined;
 
   const report = await runScenario(scenario);
   const problems: string[] = [];
@@ -269,6 +284,7 @@ async function runPredicted(
     sections: meta.sections,
     coverage: witnessCoverage(report.requests, meta, observed),
     faultClass,
+    proof,
   };
 }
 
@@ -514,6 +530,9 @@ async function singleShotChaosIteration(
     failure: problems.length > 0 ? `[single ${mode}] ${problems.join("; ")}` : undefined,
     artifactDir: report.artifactDir,
     sections: ["labels"],
+    // The scenario armed converges above; label it so the fixpoint-proof
+    // stats count this real convergence proof instead of printing "(none)".
+    proof: "converges",
   };
 }
 
@@ -590,6 +609,46 @@ interface MultiRunOptions {
   reportFaultDegrades?: boolean;
 }
 
+/**
+ * The scenario-shape half of the multi apply-idempotence gate, shared by the
+ * random-stream gate (runMultiPredicted) and the fixpoint battery draw
+ * (multiIdempotenceBatteryRun) so the two CANNOT diverge - one predicate, not
+ * two copies with an equivalence assertion. Conditions: apply mode; a channel
+ * the runner accepts (the issue channel is rejected: its delivery embeds
+ * fresh timestamps and the marker-label injection ties the labels declaration
+ * to the channel); no raw-invalid target (its exit 1 would fail the
+ * second-apply-exit-0 property); and every normal target's mask EMPTY.
+ * Empty-mask is deliberately NARROWER than true fully-granted (a mask
+ * explicitly granting write everywhere would also qualify but is excluded):
+ * genMultiScenario's masks are sparse random rolls, so the loss is negligible
+ * and the check stays obviously sound. Fully granted is REQUIRED, not merely
+ * convenient - secondApplyWriteFailures counts REQUESTS to
+ * compare-before-write sections, and a warn-policy denied write would be
+ * re-attempted identically in the second apply, failing the write-quiet
+ * property even though nothing mutates.
+ */
+function multiIdempotenceEligible(meta: MultiScenarioMeta): boolean {
+  return (
+    meta.mode === "apply" &&
+    meta.privateReport !== "issue" &&
+    meta.repos.every((r) => r.target.kind !== "raw-invalid") &&
+    meta.repos.every(
+      (r) => r.target.kind !== "normal" || Object.keys(r.target.meta.mask).length === 0,
+    )
+  );
+}
+
+/**
+ * The shared eligibility for the discovery convergence proof: a non-empty
+ * predicted kept set (an empty one is a configuration error that exits 1 by
+ * design). One predicate for both the runDiscoveryPredicted gate and the
+ * fixpoint battery draw, same non-divergence reasoning as
+ * multiIdempotenceEligible.
+ */
+function discoveryConvergeEligible(meta: ReturnType<typeof genDiscoveryScenario>["meta"]): boolean {
+  return predictDiscovery(meta.pool, meta.filters).length > 0;
+}
+
 /** The shared multi-repo run + assertion core (see multiRepoFuzzIteration). */
 async function runMultiPredicted(
   scenario: Scenario,
@@ -597,7 +656,20 @@ async function runMultiPredicted(
   opts: MultiRunOptions = {},
 ): Promise<IterationResult> {
   const prediction = predictMulti(meta);
-  scenario.expect = { exit_code: 0 };
+  // Apply-idempotence gate: an ELIGIBLE scenario (multiIdempotenceEligible -
+  // the single predicate the fixpoint battery draw shares, so gate and draw
+  // cannot diverge) with no injected fault is a fixpoint the runner can prove
+  // (second apply exit 0, write-quiet compare-before-write sections,
+  // byte-identical state, clean final check). Belt: the oracle must predict
+  // exit 0 exactly - if the belt ever blocks an eligible draw, the battery's
+  // proof tripwire fails loudly instead of passing vacuously.
+  const idempotent =
+    multiIdempotenceEligible(meta) &&
+    opts.faultKey === undefined &&
+    meta.coreFault === undefined &&
+    prediction.allowedExitCodes.size === 1 &&
+    prediction.allowedExitCodes.has(0);
+  scenario.expect = { exit_code: 0, ...(idempotent ? { apply_idempotent: true } : {}) };
 
   const report = await runScenario(scenario);
   const problems: string[] = [];
@@ -851,6 +923,7 @@ async function runMultiPredicted(
     artifactDir: report.artifactDir,
     sections: [],
     faultClass,
+    proof: idempotent ? "apply_idempotent" : undefined,
   };
 }
 
@@ -895,7 +968,14 @@ async function runDiscoveryPredicted(
   // Zero surviving repos is a fatal configuration error for the action (there
   // is nothing to apply against), so the exit prediction follows the kept set.
   // The runner's own exit-code check enforces it; no failure is filtered here.
-  scenario.expect = { exit_code: kept.length === 0 ? 1 : 0 };
+  // A non-empty kept set is an APPLY over fully-granted labels (the discovery
+  // scenario pins issues: write / contents: read), so the check re-run must
+  // converge - unless a fault rides along and may legitimately perturb it.
+  const converges = discoveryConvergeEligible(meta) && opts.faultKey === undefined;
+  scenario.expect = {
+    exit_code: kept.length === 0 ? 1 : 0,
+    ...(converges ? { converges: true } : {}),
+  };
 
   const report = await runScenario(scenario);
   const problems: string[] = [...report.failures];
@@ -953,6 +1033,7 @@ async function runDiscoveryPredicted(
     artifactDir: report.artifactDir,
     sections: [],
     faultClass,
+    proof: converges ? "converges" : undefined,
   };
 }
 
@@ -1365,6 +1446,73 @@ async function reportFaultBatteryRun(seed: number): Promise<IterationResult> {
   return injectedReportFaultRun(drawn);
 }
 
+// --- Fixpoint battery --------------------------------------------------------
+
+/**
+ * Directed multi apply-idempotence entry: the random gate (fully granted +
+ * apply + non-issue channel + no raw target) fires on only ~5% of multi
+ * iterations, so a 30-iteration soak would exercise it with ~30% probability
+ * - the same near-vacuity the other batteries exist to prevent. Generation
+ * forks are pure CPU, so a 200-fork eligibility draw costs milliseconds and
+ * its deterministic miss probability is ~5e-5. The entry also fails when an
+ * ELIGIBLE draw does not arm the gate - the tripwire that keeps this draw
+ * predicate and runMultiPredicted's gate from drifting apart.
+ */
+async function multiIdempotenceBatteryRun(seed: number): Promise<IterationResult> {
+  const base = new Rng(seed);
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const { scenario, meta } = genMultiScenario(base.fork(`idempotent:${attempt}`));
+    if (!multiIdempotenceEligible(meta)) {
+      continue;
+    }
+    const result = await runMultiPredicted(scenario, meta);
+    if (result.ok && result.proof !== "apply_idempotent") {
+      return {
+        ...result,
+        ok: false,
+        failure:
+          "an eligible multi scenario did not arm the apply-idempotence gate - the exit-0 belt blocked it, which the shared predicate cannot express; investigate the prediction",
+      };
+    }
+    return result;
+  }
+  return {
+    ok: false,
+    failure: "could not draw an idempotence-eligible multi scenario in 200 forks",
+    sections: [],
+  };
+}
+
+/**
+ * Directed discovery check-convergence entry: draws until the predicted kept
+ * set is non-empty (almost every draw), then requires the apply-then-check
+ * convergence proof runDiscoveryPredicted arms for fault-free non-empty runs.
+ */
+async function discoveryConvergesBatteryRun(seed: number): Promise<IterationResult> {
+  const base = new Rng(seed);
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const { scenario, meta } = genDiscoveryScenario(base.fork(`converges:${attempt}`));
+    if (!discoveryConvergeEligible(meta)) {
+      continue;
+    }
+    const result = await runDiscoveryPredicted(scenario, meta);
+    if (result.ok && result.proof !== "converges") {
+      return {
+        ...result,
+        ok: false,
+        failure:
+          "a non-empty discovery scenario did not arm the converges gate - the battery draw predicate and runDiscoveryPredicted's gate drifted apart",
+      };
+    }
+    return result;
+  }
+  return {
+    ok: false,
+    failure: "could not draw a non-empty-kept discovery scenario in 20 forks",
+    sections: [],
+  };
+}
+
 /**
  * The fault half of the transport-misbehavior slot: section reads get the
  * bulk of the stream (8 faultable reads x 4 kinds x 2 budgets), and the three
@@ -1413,6 +1561,11 @@ async function main(): Promise<number> {
       faultHistogram.set(cls, (faultHistogram.get(cls) ?? 0) + 1);
     }
   };
+  // Random-stream fixpoint-proof counts (mode:proof), so a gate that starves
+  // (e.g. multi idempotence at its measured ~5% eligibility) is VISIBLE in
+  // every run instead of silently vacuous; the fixpoint battery guarantees
+  // each proof once per soak regardless.
+  const proofCounts = new Map<string, number>();
 
   for (let i = 0; i < flags.iterations; i++) {
     const seed = replayOne ? master : iterationSeed(master, i);
@@ -1449,6 +1602,10 @@ async function main(): Promise<number> {
     }
     recordCoverage(result.coverage);
     recordFaultClass(result.faultClass);
+    if (result.proof !== undefined) {
+      const key = `${mode}:${result.proof}`;
+      proofCounts.set(key, (proofCounts.get(key) ?? 0) + 1);
+    }
     if (!result.ok) {
       failures++;
       failingSeeds.push(seed);
@@ -1645,6 +1802,34 @@ async function main(): Promise<number> {
         console.log(`    artifact: ${result.artifactDir}`);
       }
     }
+
+    // Directed fixpoint battery: one multi apply-idempotence proof and one
+    // discovery convergence proof per soak. The standard-mode proof needs no
+    // entry - the witness battery's apply combos arm apply_idempotent
+    // deterministically already.
+    console.log("\nfixpoint battery (directed apply-idempotence / convergence):");
+    const fixpointEntries: Array<[string, (seed: number) => Promise<IterationResult>]> = [
+      ["multi/apply-idempotent", multiIdempotenceBatteryRun],
+      ["discovery/converges", discoveryConvergesBatteryRun],
+    ];
+    for (const [index, [name, run]] of fixpointEntries.entries()) {
+      const seed = iterationSeed(master, 0x500000 + index);
+      const result = await run(seed);
+      recordCoverage(result.coverage);
+      if (result.ok) {
+        if (result.artifactDir) {
+          rmSync(result.artifactDir, { recursive: true, force: true });
+        }
+        console.log(`  ${name} ok`);
+        continue;
+      }
+      batteryFailures++;
+      console.log(`  ${name} seed ${seed} FAIL: ${result.failure}`);
+      console.log(`    replay: bun test/e2e/fuzz.ts --seed ${master} --iterations 0`);
+      if (result.artifactDir) {
+        console.log(`    artifact: ${result.artifactDir}`);
+      }
+    }
   }
 
   console.log("\ncoverage (sections exercised):");
@@ -1698,9 +1883,22 @@ async function main(): Promise<number> {
     }
   }
 
+  // Fixpoint proofs the RANDOM stream armed (the battery adds one multi
+  // idempotence + one discovery convergence on top, printed above).
+  console.log("\nfixpoint-proof coverage (random stream, mode:proof):");
+  if (proofCounts.size === 0) {
+    console.log("  (none)");
+  } else {
+    for (const [key, count] of [...proofCounts.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      console.log(`  ${key}: ${count}`);
+    }
+  }
+
   console.log(`\n${flags.iterations - failures}/${flags.iterations} iterations ok`);
   if (batteryFailures > 0) {
-    console.log(`directed battery failures (witness + input + fault): ${batteryFailures}`);
+    console.log(
+      `directed battery failures (witness + input + fault + fixpoint): ${batteryFailures}`,
+    );
   }
   if (failingSeeds.length > 0) {
     console.log(`failing seeds: ${failingSeeds.join(", ")}`);
