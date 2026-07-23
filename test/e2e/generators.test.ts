@@ -6,6 +6,7 @@ import { SECTION_KEYS, type SectionKey } from "../../src/schema.js";
 import { allEndpoints, sectionShape } from "../../src/sections/registry.js";
 import {
   ARTIFACT_TEST_RECIPIENT,
+  genDiscoveryScenario,
   genInvalidSettings,
   genLiveWitness,
   genMultiScenario,
@@ -729,5 +730,25 @@ describe("genMultiScenario", () => {
       }
     }
     expect(sawCanary).toBe(true);
+  });
+});
+
+describe("genDiscoveryScenario", () => {
+  test("every pool carries at least one non-public repo (non-vacuous leak check)", () => {
+    // Discovery always runs under redact; an all-public pool would hand the
+    // leak invariant an empty forbidden set, so the generator forces one
+    // non-public repo - the same guard genMultiScenario's forced-private
+    // target provides.
+    for (let i = 0; i < 300; i++) {
+      const { meta } = genDiscoveryScenario(new Rng(i));
+      expect(meta.privateRepos).toBe("redact");
+      expect(meta.pool.some((r) => (r.visibility ?? "public") !== "public")).toBe(true);
+    }
+  });
+
+  test("is deterministic for a seed", () => {
+    expect(JSON.stringify(genDiscoveryScenario(new Rng(31)).scenario)).toBe(
+      JSON.stringify(genDiscoveryScenario(new Rng(31)).scenario),
+    );
   });
 });

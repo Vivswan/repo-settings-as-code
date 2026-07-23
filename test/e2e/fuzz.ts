@@ -1022,6 +1022,14 @@ async function runDiscoveryPredicted(
     const forbidden = meta.pool
       .filter((r) => (r.visibility ?? "public") !== "public")
       .map((r) => r.slug);
+    // Non-vacuity guard, mirroring the multi one: the generator forces one
+    // non-public pool repo, so an empty forbidden set here is a generator
+    // regression that would let the leak check pass without checking anything.
+    if (forbidden.length === 0) {
+      problems.push(
+        "redact discovery run produced an empty forbidden set - the leak check would be vacuous",
+      );
+    }
     problems.push(...checkLeaks(report, forbidden));
   }
   return {

@@ -158,10 +158,10 @@ jobs:
         run: |
           if [ "$SECTIONS" = "all" ]; then
             bun test/e2e/run.ts
-            bun test/e2e/fuzz.ts --iterations 25 --seed 20260722
+            bun test/e2e/fuzz.ts --iterations 25
           else
             bun test/e2e/run.ts --sections "$SECTIONS"
-            bun test/e2e/fuzz.ts --iterations 25 --seed 20260722 --sections "$SECTIONS"
+            bun test/e2e/fuzz.ts --iterations 25 --sections "$SECTIONS"
           fi
 
   all-green:

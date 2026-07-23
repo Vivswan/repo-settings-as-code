@@ -1533,6 +1533,11 @@ export function genDiscoveryScenario(rng: Rng): {
 } {
   const count = rng.int(5) + 4; // 4..8
   const TOPIC_POOL = ["platform", "infra", "legacy", "misc"];
+  // Discovery always runs under redact (see privateRepos below), so force ONE
+  // pool repo non-public: an all-public pool would hand the leak invariant an
+  // empty forbidden set and the check would pass vacuously - the same guard
+  // genMultiScenario's forced-private target provides.
+  const forcedPrivateIndex = rng.int(count);
   const pool: DiscoveryScenarioMeta["pool"] = [];
   for (let i = 0; i < count; i++) {
     const repo: DiscoveryScenarioMeta["pool"][number] = { slug: `e2e-owner/disc-${i}` };
@@ -1542,7 +1547,10 @@ export function genDiscoveryScenario(rng: Rng): {
     if (rng.bool(0.3)) {
       repo.fork = true;
     }
-    repo.visibility = rng.pick(["public", "private", "internal"]);
+    repo.visibility =
+      i === forcedPrivateIndex
+        ? rng.pick(["private", "internal"] as const)
+        : rng.pick(["public", "private", "internal"]);
     if (rng.bool(0.6)) {
       repo.topics = [rng.pick(TOPIC_POOL)];
     }
