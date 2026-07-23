@@ -1,12 +1,5 @@
-# This file is managed by Vivswan/repo-platform.
-# Its presence marks this repository as intentionally participating in
-# template updates; the sync workflow refuses to run without it.
+# This file is managed by Vivswan/repo-platform. Its presence
+# marks this repository as participating in push sync. `modules` is this
+# repo's module selection - edit it and the next sync applies the change.
 
-template:
-  repository: Vivswan/repo-platform
-  channel: staging
-  modules: ["agents", "bun", "release-please", "issue-templates", "pr-title", "auto-assign"]
-
-update:
-  enabled: true
-  auto_merge: false
+modules: ["agents", "bun", "release-please", "issue-templates", "pr-title", "auto-assign"]
