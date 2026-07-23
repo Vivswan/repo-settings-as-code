@@ -435,22 +435,29 @@ function settingsGateResult(denialStyle: DenialStyle, adminGrade: MaskGrade): Se
 export function predictMulti(meta: MultiScenarioMeta): MultiPrediction {
   const repos: RepoPrediction[] = meta.repos.map((repo) => {
     const common = { slug: repo.slug, displayKey: repo.displayKey, redacted: repo.redacted };
-    if (!repo.meta) {
+    if (repo.target.kind === "missing") {
       // No settings file: the contents read 404s and the target is skipped.
       return { ...common, run: null, allowedResults: new Set(["skipped"]) };
     }
+    if (repo.target.kind === "raw-invalid") {
+      // Raw settings text FAILS before any section runs: an unparseable body
+      // dies at the parse gate ("cannot parse <slug>"), a non-mapping one at
+      // the top-level validator. Never skipped.
+      return { ...common, run: null, allowedResults: new Set(["failed"]) };
+    }
+    const repoMeta = repo.target.meta;
     // The settings file read itself needs contents; a denied contents read
     // gates the whole target before any section runs.
-    const contentsGrade = repo.meta.mask.contents ?? "write";
+    const contentsGrade = repoMeta.mask.contents ?? "write";
     if (contentsGrade === "none") {
-      const adminGrade = repo.meta.mask.administration ?? "write";
+      const adminGrade = repoMeta.mask.administration ?? "write";
       return {
         ...common,
         run: null,
-        allowedResults: settingsGateResult(repo.meta.denialStyle, adminGrade),
+        allowedResults: settingsGateResult(repoMeta.denialStyle, adminGrade),
       };
     }
-    const run = predictOutcomes(repo.meta);
+    const run = predictOutcomes(repoMeta);
     return { ...common, run, allowedResults: runResultClass(run) };
   });
 

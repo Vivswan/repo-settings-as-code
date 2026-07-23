@@ -21,14 +21,18 @@ import { rmSync } from "node:fs";
 import type { SectionKey } from "../../src/schema.js";
 import {
   genDiscoveryScenario,
+  genInvalidSettings,
   genLiveWitness,
   genMultiScenario,
   genScenario,
   genSettings,
+  INVALID_SETTINGS_CASES,
   type LiveWitness,
   type LiveWitnessKind,
   type MultiRepoMeta,
+  NON_MAPPING_YAML,
   type ScenarioMeta,
+  UNPARSEABLE_YAML,
   validateAgainstPublishedSchema,
   WITNESS_KINDS,
   WITNESS_SECTIONS,
@@ -299,28 +303,42 @@ async function witnessIteration(
 }
 
 /**
- * Input fuzz: feed the action a settings file the validator must reject, and
- * assert it fails (exit 1) with an error naming the offending section BEFORE
- * making any API call. The zero-request assertion is the point: a validation
- * error must be caught at parse time, never after touching the repo.
+ * The specification of one rejection scenario: what the settings file contains
+ * (a document or raw text - exactly one) and the tokens the action's error
+ * must name. Shared by the random input stream and the directed input battery.
  */
-async function inputFuzzIteration(seed: number): Promise<IterationResult> {
+interface RejectionSpec {
+  label: string;
+  settings?: Record<string, unknown>;
+  settingsRaw?: string;
+  tokens: string[];
+  /** Pinned run mode; absent means a seeded random pick (the fuzz stream). */
+  mode?: "apply" | "check";
+}
+
+/**
+ * Run one settings-rejection scenario: the action must exit 1, its error must
+ * contain every expected token, and ZERO requests may reach the mock - a
+ * validation or parse error is caught before any API contact, in both apply
+ * and check mode. Belt and braces on the zero-request property: the runner's
+ * `zero_requests` expectation fails the scenario, and the sampled request log
+ * here names the offending calls for the failure report.
+ */
+async function rejectionIteration(seed: number, spec: RejectionSpec): Promise<IterationResult> {
   const rng = new Rng(seed);
-  // A labels section whose value is a mapping, not the required array, is a
-  // hard validation error the action names.
   const scenario: Scenario = {
-    name: `fuzz-input-${seed}`,
+    name: `fuzz-input-${spec.label}-${seed}`,
     tiers: ["mock"],
-    settings: { labels: { not: "an array" } },
-    inputs: { mode: rng.pick(["apply", "check"]) },
+    ...(spec.settingsRaw !== undefined
+      ? { settings_raw: spec.settingsRaw }
+      : { settings: spec.settings ?? {} }),
+    inputs: { mode: spec.mode ?? rng.pick(["apply", "check"]) },
     denial_style: "fine_grained",
     owner_kind: "org",
-    expect: { exit_code: 1, stdout_contains: ["labels"] },
+    expect: { exit_code: 1, stdout_contains: spec.tokens, zero_requests: true },
   };
   const report = await runScenario(scenario);
   const problems = report.ok ? [] : [...report.failures];
-  // The validation error must fire before any API contact: zero requests
-  // reached the mock.
   if (report.requests.length > 0) {
     const sample = report.requests
       .slice(0, 3)
@@ -332,10 +350,60 @@ async function inputFuzzIteration(seed: number): Promise<IterationResult> {
   }
   return {
     ok: problems.length === 0,
-    failure: problems.length > 0 ? problems.join("; ") : undefined,
+    failure: problems.length > 0 ? `[${spec.label}] ${problems.join("; ")}` : undefined,
     artifactDir: report.artifactDir,
     sections: [],
   };
+}
+
+/** A random validator-rejection spec drawn from the invalid-settings catalog. */
+function invalidDocSpec(rng: Rng): RejectionSpec {
+  const { name, doc, offendingToken } = genInvalidSettings(rng);
+  return { label: `invalid-${name}`, settings: doc, tokens: [offendingToken] };
+}
+
+/**
+ * A raw settings.yml the yaml parser rejects: single-repo this dies in
+ * readSettingsFile (local fs + parse, before ANY API call) with the
+ * "cannot read settings ... valid YAML" advice.
+ */
+function unparseableRawSpec(rng: Rng): RejectionSpec {
+  return {
+    label: "raw-unparseable",
+    settingsRaw: rng.pick(UNPARSEABLE_YAML),
+    tokens: ["cannot read settings", "valid YAML"],
+  };
+}
+
+/**
+ * A raw settings.yml that parses to a non-mapping: the parse succeeds, so
+ * the rejection comes from validateSettingsDoc's top-level check instead.
+ */
+function nonMappingRawSpec(rng: Rng): RejectionSpec {
+  return {
+    label: "raw-non-mapping",
+    settingsRaw: rng.pick(NON_MAPPING_YAML),
+    tokens: ["must be a YAML mapping"],
+  };
+}
+
+/**
+ * Input fuzz: feed the action a settings file it must reject BEFORE any API
+ * contact. Three shapes, weighted toward the rich validator catalog: a
+ * catalog case (wrong container/item/enum/nested types, an unknown top-level
+ * key), raw unparseable YAML, or raw YAML parsing to a non-mapping. Every
+ * shape must exit 1 with the offending token named and zero requests.
+ */
+async function inputFuzzIteration(seed: number): Promise<IterationResult> {
+  const rng = new Rng(seed);
+  const roll = rng.int(4);
+  const spec =
+    roll === 2
+      ? unparseableRawSpec(rng)
+      : roll === 3
+        ? nonMappingRawSpec(rng)
+        : invalidDocSpec(rng.fork("case"));
+  return rejectionIteration(seed, spec);
 }
 
 /** The three chaos corruption modes the mock supports (see CorruptOption). */
@@ -516,6 +584,64 @@ async function multiRepoFuzzIteration(seed: number): Promise<IterationResult> {
       problems.push(`${key}: reported in repos-result but not predicted`);
     }
   }
+  // A raw-settings target must fail at ITS promised gate, not just "somehow":
+  // an unrelated pre-validation exception would also read as {failed}. So the
+  // gate wording must appear on a rendered public surface (or, for a redacted
+  // target, must NOT - the rich detail is private, and this scenario's only
+  // source of that wording is this target). And the parse gate must stop the
+  // run before any section call: the target's legitimate request surface is
+  // the repo probe, the contents fetch, and the report channel's labels/issues
+  // routes - which never PATCH or DELETE a label.
+  const renderedPublic = [
+    stripDebugLines(stripMaskLines(report.stdout)),
+    stripDebugLines(stripMaskLines(report.stderr)),
+    report.summary,
+    ...Object.values(report.outputs),
+  ].join("\n");
+  for (const repo of meta.repos) {
+    if (repo.target.kind !== "raw-invalid") {
+      continue;
+    }
+    const wording = repo.target.raw === "unparseable" ? "cannot parse" : "must be a YAML mapping";
+    if (repo.redacted) {
+      if (renderedPublic.includes(wording)) {
+        problems.push(
+          `raw target ${repo.displayKey}: gate wording "${wording}" leaked to a public surface despite redaction`,
+        );
+      }
+    } else if (!renderedPublic.includes(wording)) {
+      problems.push(
+        `raw target ${repo.slug}: failure does not carry the promised gate wording "${wording}"`,
+      );
+    }
+    // The parse gate stops the target before any section call, so the only
+    // legitimate requests are: the repo probe (GET /repos/{slug} exactly),
+    // the settings-file read (GET on contents), and the report channel's
+    // issue delivery (GET/POST/PATCH on issues, POST-only on labels - the
+    // marker-label ensure-create; the channel never lists or edits labels).
+    const probePath = `/repos/${repo.slug}`;
+    const base = `${probePath}/`;
+    const allowedByHead: Record<string, ReadonlySet<string>> = {
+      contents: new Set(["GET"]),
+      labels: new Set(["POST"]),
+      issues: new Set(["GET", "POST", "PATCH"]),
+    };
+    for (const request of report.requests) {
+      const isProbe = request.pathname === probePath;
+      if (!isProbe && !request.pathname.startsWith(base)) {
+        continue;
+      }
+      const head = isProbe ? "" : (request.pathname.slice(base.length).split("/")[0] ?? "");
+      const allowed = isProbe
+        ? request.method === "GET"
+        : (allowedByHead[head]?.has(request.method) ?? false);
+      if (!allowed) {
+        problems.push(
+          `raw target ${repo.slug}: unexpected request ${request.method} ${request.pathname} - the parse gate must stop the target before any section call`,
+        );
+      }
+    }
+  }
   // The shared LEAK INVARIANT: with redaction active, no redacted slug and no
   // planted canary may appear in any public surface (stdout with ::add-mask::
   // lines stripped, the summary, or any output). Empty forbidden set under show.
@@ -647,7 +773,11 @@ async function multiRepoFuzzIteration(seed: number): Promise<IterationResult> {
  * invariant already covers them.
  */
 function reportDelivers(repo: MultiRepoMeta): boolean {
-  return repo.redacted && repo.meta !== null && Object.keys(repo.meta.mask).length === 0;
+  return (
+    repo.redacted &&
+    repo.target.kind === "normal" &&
+    Object.keys(repo.target.meta.mask).length === 0
+  );
 }
 
 /**
@@ -834,6 +964,60 @@ async function main(): Promise<number> {
         console.log(`    artifact: ${result.artifactDir}`);
       }
     }
+
+    // Directed input battery: every catalog case plus every raw pool entry,
+    // each run once per soak. Input mode holds 1/8 of the random stream, so a
+    // random draw covers a sparse subset of the ~15-case catalog per run;
+    // this pass exercises all of it deterministically, and pins that every
+    // raw pool string still fails the way its pool promises (a yaml-library
+    // upgrade changing parse behavior fails here, not in a nightly surprise).
+    console.log("\ninput battery (directed rejection catalog):");
+    const inputSpecs: Array<{ name: string; spec: (rng: Rng) => RejectionSpec }> = [
+      ...INVALID_SETTINGS_CASES.map(({ name, build }) => ({
+        name,
+        spec: (rng: Rng): RejectionSpec => {
+          const { doc, offendingToken } = build(rng);
+          return { label: name, settings: doc, tokens: [offendingToken] };
+        },
+      })),
+      ...UNPARSEABLE_YAML.map((raw, i) => ({
+        name: `raw-unparseable-${i}`,
+        spec: (): RejectionSpec => ({
+          label: `raw-unparseable-${i}`,
+          settingsRaw: raw,
+          tokens: ["cannot read settings", "valid YAML"],
+        }),
+      })),
+      ...NON_MAPPING_YAML.map((raw, i) => ({
+        name: `raw-non-mapping-${i}`,
+        spec: (): RejectionSpec => ({
+          label: `raw-non-mapping-${i}`,
+          settingsRaw: raw,
+          tokens: ["must be a YAML mapping"],
+        }),
+      })),
+    ];
+    for (const [index, { name, spec }] of inputSpecs.entries()) {
+      const seed = iterationSeed(master, 0x200000 + index);
+      // Alternate the run mode by index parity, so a mode-specific validation
+      // regression (e.g. an early exit only one mode takes) cannot escape the
+      // battery. Deterministic: a given entry always runs the same mode.
+      const mode = index % 2 === 0 ? ("apply" as const) : ("check" as const);
+      const result = await rejectionIteration(seed, { ...spec(new Rng(seed)), mode });
+      if (result.ok) {
+        if (result.artifactDir) {
+          rmSync(result.artifactDir, { recursive: true, force: true });
+        }
+        console.log(`  ${name} [${mode}] ok`);
+        continue;
+      }
+      batteryFailures++;
+      console.log(`  ${name} [${mode}] seed ${seed} FAIL: ${result.failure}`);
+      console.log(`    replay: bun test/e2e/fuzz.ts --seed ${master} --iterations 0`);
+      if (result.artifactDir) {
+        console.log(`    artifact: ${result.artifactDir}`);
+      }
+    }
   }
 
   console.log("\ncoverage (sections exercised):");
@@ -874,7 +1058,7 @@ async function main(): Promise<number> {
 
   console.log(`\n${flags.iterations - failures}/${flags.iterations} iterations ok`);
   if (batteryFailures > 0) {
-    console.log(`witness battery failures: ${batteryFailures}`);
+    console.log(`directed battery failures (witness + input): ${batteryFailures}`);
   }
   if (failingSeeds.length > 0) {
     console.log(`failing seeds: ${failingSeeds.join(", ")}`);

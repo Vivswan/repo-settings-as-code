@@ -12,7 +12,7 @@
 import { Ajv, type ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
 import settingsSchema from "../../lib/settings.schema.json" with { type: "json" };
-import { SECTION_KEYS, type SectionKey } from "../../src/schema.js";
+import { type MustBeNever, SECTION_KEYS, type SectionKey } from "../../src/schema.js";
 import type { LiveState } from "./mock/state.js";
 import type { Rng } from "./prng.js";
 import type { DenialStyle, MaskGrade, MaskKey, OwnerKind, Scenario } from "./schema.js";
@@ -587,6 +587,234 @@ export function genLiveWitness(
     : milestonesWitness(rng, declared, kind);
 }
 
+// --- Invalid-settings catalog (input-mode fuzz) -----------------------------
+
+/**
+ * One deliberately invalid settings document plus a token the action's
+ * rejection error must contain: a section path ("labels[2].name"), an unknown
+ * top-level key, or a fixed wording fragment. Every case is a violation
+ * validateSettingsDoc GENUINELY rejects. Values the loose shapes accept by
+ * design stay out of the catalog - unknown nested keys, un-modeled enums
+ * (milestones.state, every actions field), arbitrary field types on loose
+ * keys, `pages: null`, and underscore-prefixed top-level keys - because
+ * generating them would assert failures the contract does not promise.
+ */
+export interface InvalidSettingsCase {
+  doc: Json;
+  offendingToken: string;
+}
+
+/** The sections whose settings value is a list. */
+const ARRAY_SECTIONS = [
+  "labels",
+  "rulesets",
+  "branches",
+  "environments",
+  "autolinks",
+  "workflows",
+  "collaborators",
+  "teams",
+  "milestones",
+] as const satisfies readonly SectionKey[];
+
+/** The sections whose settings value is a plain record (anyRecord shapes). */
+const RECORD_SECTIONS = [
+  "repository",
+  "actions",
+  "code_scanning_default_setup",
+] as const satisfies readonly SectionKey[];
+
+/**
+ * Compile-time exhaustiveness: every section is classified as array, record,
+ * or pages (the one nullable-object section, covered by its own catalog
+ * cases). A new section that lands unclassified fails here instead of
+ * silently missing wrong-container fuzzing.
+ */
+type CoveredSection = (typeof ARRAY_SECTIONS)[number] | (typeof RECORD_SECTIONS)[number] | "pages";
+type _UnclassifiedSection = MustBeNever<Exclude<SectionKey, CoveredSection>>;
+
+/** The required string field each array section's item shape enforces. */
+const NATURAL_KEYS: Record<(typeof ARRAY_SECTIONS)[number], string> = {
+  labels: "name",
+  rulesets: "name",
+  branches: "name",
+  environments: "name",
+  autolinks: "key_prefix",
+  workflows: "path",
+  collaborators: "username",
+  teams: "name",
+  milestones: "title",
+};
+
+/** A valid generated array-section value plus a random item index to break. */
+function validItems(
+  rng: Rng,
+  key: (typeof ARRAY_SECTIONS)[number],
+): { value: Json[]; index: number } {
+  const value = genSettings(rng.fork("valid"), key) as Json[];
+  return { value, index: rng.int(value.length) };
+}
+
+/**
+ * The named rejection catalog. The fuzz stream draws random members and the
+ * directed input battery runs every member each run, so a validator or
+ * generator regression on any case fails loudly instead of hiding behind the
+ * random draw.
+ */
+export const INVALID_SETTINGS_CASES: ReadonlyArray<{
+  name: string;
+  build: (rng: Rng) => InvalidSettingsCase;
+}> = [
+  {
+    name: "unknown-top-level-key",
+    build: (rng) => {
+      // Near-miss typos of real section names; none underscore-prefixed
+      // (those are accepted as private keys by design).
+      const typo = rng.pick(["labelz", "label", "milestone", "repositories", "branch"]);
+      return {
+        doc: { labels: genSettings(rng.fork("labels"), "labels") as Json, [typo]: [] },
+        offendingToken: typo,
+      };
+    },
+  },
+  {
+    name: "array-section-wrong-type",
+    build: (rng) => {
+      const key = rng.pick(ARRAY_SECTIONS);
+      // { not: "an array" } keeps the input block's original fixed doc
+      // reachable as one member of this case.
+      return { doc: { [key]: rng.pick([{ not: "an array" }, "oops", 7]) }, offendingToken: key };
+    },
+  },
+  {
+    name: "record-section-wrong-type",
+    build: (rng) => {
+      const key = rng.pick(RECORD_SECTIONS);
+      return { doc: { [key]: rng.pick(["oops", 7, [1], null] as const) }, offendingToken: key };
+    },
+  },
+  {
+    name: "pages-wrong-type",
+    build: (rng) => ({
+      doc: { pages: rng.pick(["gh-pages", [1]] as const) },
+      offendingToken: "pages",
+    }),
+  },
+  {
+    name: "scalar-item",
+    build: (rng) => {
+      const key = rng.pick(ARRAY_SECTIONS);
+      const { value, index } = validItems(rng, key);
+      (value as unknown[])[index] = "oops";
+      return { doc: { [key]: value }, offendingToken: `${key}[${index}]` };
+    },
+  },
+  {
+    name: "missing-natural-key",
+    build: (rng) => {
+      const key = rng.pick(ARRAY_SECTIONS);
+      const { value, index } = validItems(rng, key);
+      delete (value[index] as Json)[NATURAL_KEYS[key]];
+      return { doc: { [key]: value }, offendingToken: `${key}[${index}].${NATURAL_KEYS[key]}` };
+    },
+  },
+  {
+    name: "non-string-natural-key",
+    build: (rng) => {
+      const key = rng.pick(ARRAY_SECTIONS);
+      const { value, index } = validItems(rng, key);
+      (value[index] as Json)[NATURAL_KEYS[key]] = 42;
+      return { doc: { [key]: value }, offendingToken: `${key}[${index}].${NATURAL_KEYS[key]}` };
+    },
+  },
+  {
+    name: "labels-new-name-not-a-string",
+    build: (rng) => {
+      const { value, index } = validItems(rng, "labels");
+      (value[index] as Json).new_name = 7;
+      return { doc: { labels: value }, offendingToken: `labels[${index}].new_name` };
+    },
+  },
+  {
+    name: "branches-protection-missing",
+    build: (rng) => {
+      // protection is REQUIRED (nullable, not optional) on every branch entry.
+      const { value, index } = validItems(rng, "branches");
+      delete (value[index] as Json).protection;
+      return { doc: { branches: value }, offendingToken: `branches[${index}].protection` };
+    },
+  },
+  {
+    name: "workflows-state-enum",
+    build: (rng) => {
+      // The one enum any loose shape enforces.
+      const { value, index } = validItems(rng, "workflows");
+      (value[index] as Json).state = rng.pick(["paused", "enabled", "on"]);
+      return { doc: { workflows: value }, offendingToken: `workflows[${index}].state` };
+    },
+  },
+  {
+    name: "rulesets-include-not-a-list",
+    build: (rng) => {
+      // The classic missing "-" typo the rulesets shape exists to catch.
+      const { value, index } = validItems(rng, "rulesets");
+      (value[index] as Json).conditions = { ref_name: { include: "main" } };
+      return {
+        doc: { rulesets: value },
+        offendingToken: `rulesets[${index}].conditions.ref_name.include`,
+      };
+    },
+  },
+  {
+    name: "pages-source-not-an-object",
+    build: () => ({
+      doc: { pages: { source: "main" } },
+      offendingToken: "pages.source",
+    }),
+  },
+  {
+    name: "pages-source-branch-missing",
+    build: () => ({
+      doc: { pages: { source: { path: "/" } } },
+      offendingToken: "pages.source.branch",
+    }),
+  },
+];
+
+/**
+ * One random catalog case, tagged with its case name so callers can label
+ * failures and coverage checks can prove every case is actually drawn.
+ */
+export function genInvalidSettings(rng: Rng): InvalidSettingsCase & { name: string } {
+  const { name, build } = rng.pick(INVALID_SETTINGS_CASES);
+  return { name, ...build(rng) };
+}
+
+/**
+ * Raw settings bodies the yaml parser GENUINELY throws on (each verified
+ * against the yaml package: unclosed flow collections, an unterminated
+ * quote, a compact nested mapping). Single-repo they hit the "cannot read
+ * settings ... valid YAML" read path; multi-repo the "cannot parse <slug>"
+ * target gate. Both fire before any section runs.
+ */
+export const UNPARSEABLE_YAML = [
+  "labels: [oops, unclosed",
+  "{",
+  "a: b\n  c: d",
+  'key: "unterminated',
+  "a: [1, 2\nb: 3",
+] as const;
+
+/**
+ * Raw bodies that PARSE fine but not to a mapping, so they pass the yaml
+ * parser and fail validateSettingsDoc's top-level check ("must be a YAML
+ * mapping ... parsed as a list/string") instead. In multi mode the
+ * defaults merge passes a non-mapping through wholesale (engine/merge.ts
+ * deepMerge replaces on a non-object override), so the same wording fires
+ * there with the slug as the source label.
+ */
+export const NON_MAPPING_YAML = ["- a\n- b", "just a string"] as const;
+
 /**
  * Seed the live state that makes the "configure but cannot create" sections
  * converge: every declared branch name is present in `live_state.branches` (so a
@@ -802,11 +1030,28 @@ export function genScenario(
   return { scenario, meta };
 }
 
+/**
+ * What one multi-repo target IS. The discriminant makes the illegal
+ * combinations unrepresentable: only a normal target carries a ScenarioMeta,
+ * and only a raw-invalid one carries a raw kind ("unparseable" bodies throw
+ * in the yaml parser - the "cannot parse <slug>" gate; "non-mapping" bodies
+ * parse to a list/scalar and fail the top-level validator). Both raw kinds
+ * fail the target before any section runs.
+ */
+export type MultiRepoTarget =
+  | { kind: "normal"; meta: ScenarioMeta }
+  | { kind: "missing" }
+  | { kind: "raw-invalid"; raw: "unparseable" | "non-mapping" };
+
 /** Generation facts for one target repo in a multi-repo scenario. */
 export interface MultiRepoMeta {
   slug: string;
-  /** null when this repo has no settings file (the action skips it). */
-  meta: ScenarioMeta | null;
+  /**
+   * The target's kind plus its kind-specific facts: "normal" runs sections
+   * under its meta, "missing" has no settings file (the action skips it),
+   * "raw-invalid" serves settings_raw that fails before any section runs.
+   */
+  target: MultiRepoTarget;
   /** The visibility planted in this target's mock repo (drives the redaction rule). */
   visibility: "public" | "private" | "internal";
   /**
@@ -860,10 +1105,11 @@ export interface MultiScenarioMeta {
 /**
  * A random multi-repo scenario: 2 to 5 target repos, each with its own
  * generated settings, live state, and permission mask. One repo is randomly
- * left without a settings file, which the action skips. A defaults file merged
- * under every target may null out one section (the opt-out path). The returned
- * meta lists each repo's ScenarioMeta (null for the skipped one) for the
- * per-repo oracle plus the worst-of rollup.
+ * left without a settings file, which the action skips, and one may serve raw
+ * invalid settings text instead. A defaults file merged under every target may
+ * null out one section (the opt-out path). The returned meta records each
+ * repo's target kind (normal with its ScenarioMeta, missing, or raw-invalid)
+ * for the per-repo oracle plus the worst-of rollup.
  */
 export function genMultiScenario(rng: Rng): { scenario: Scenario; meta: MultiScenarioMeta } {
   const count = rng.int(4) + 2; // 2..5
@@ -910,6 +1156,16 @@ export function genMultiScenario(rng: Rng): { scenario: Scenario; meta: MultiSce
   // The running placeholder ordinal, incremented per redacted target in target
   // order - the exact numbering planRedaction assigns (self and public skipped).
   let redactedOrdinal = 0;
+  // With ~1/5 probability one further target serves RAW settings text: an
+  // unparseable body (the "cannot parse <slug>" gate) or one parsing to a
+  // non-mapping (the top-level validator gate). Never the missing target (its
+  // gate is the contents 404) and never the forced-private target (its canary
+  // flow must stay guaranteed for the leak counterfactual).
+  const rawCandidates = Array.from({ length: count }, (_, i) => i).filter(
+    (i) => i !== missingIndex && i !== forcedPrivateIndex,
+  );
+  const rawIndex = rawCandidates.length > 0 && rng.bool(0.2) ? rng.pick(rawCandidates) : -1;
+  const rawKind = rawIndex >= 0 ? rng.pick(["unparseable", "non-mapping"] as const) : undefined;
   for (let i = 0; i < count; i++) {
     const slug = `e2e-owner/repo-${i}`;
     // Every target gets a random visibility; roughly half are non-public so the
@@ -938,7 +1194,38 @@ export function genMultiScenario(rng: Rng): { scenario: Scenario; meta: MultiSce
       repos[slug] = repoSpec;
       repoMetas.push({
         slug,
-        meta: null,
+        target: { kind: "missing" },
+        visibility,
+        probeDenied,
+        redacted,
+        displayKey,
+        canaries: [],
+      });
+      continue;
+    }
+    if (i === rawIndex && rawKind !== undefined) {
+      // Raw invalid settings text: the target fails at the parse gate (or the
+      // top-level validator, for the non-mapping kind) before any section
+      // runs. Fully granted (no mask) so the contents read always succeeds
+      // and the parse gate - not a permission gate - is what fires; the
+      // redaction mechanics stay identical to every other target.
+      const raw =
+        rawKind === "unparseable" ? rng.pick(UNPARSEABLE_YAML) : rng.pick(NON_MAPPING_YAML);
+      const probeDenied = false;
+      const redacted =
+        privateRepos === "redact" && slug !== selfSlug && (visibility !== "public" || probeDenied);
+      if (redacted) {
+        redactedOrdinal += 1;
+      }
+      const displayKey = redacted ? `private repository #${redactedOrdinal}` : slug;
+      const repoSpec: Record<string, unknown> = { settings_raw: raw };
+      if (visibility !== "public") {
+        repoSpec.live_state = { repo: { private: true, visibility } };
+      }
+      repos[slug] = repoSpec;
+      repoMetas.push({
+        slug,
+        target: { kind: "raw-invalid", raw: rawKind },
         visibility,
         probeDenied,
         redacted,
@@ -1046,19 +1333,22 @@ export function genMultiScenario(rng: Rng): { scenario: Scenario; meta: MultiSce
       redacted,
       displayKey,
       canaries,
-      meta: {
-        sections,
-        mask,
-        mode,
-        policy,
-        ownerKind: "org",
-        denialStyle,
-        requiredSections: [],
-        // teams' org gate is graded by the mock against the GLOBAL mask, not this
-        // per-slug one; genMultiScenario sets no global token_permissions, so it
-        // is empty (every org_members defaults to write - teams is never gated by
-        // a per-slug org_members:none).
-        orgMask: globalMask,
+      target: {
+        kind: "normal",
+        meta: {
+          sections,
+          mask,
+          mode,
+          policy,
+          ownerKind: "org",
+          denialStyle,
+          requiredSections: [],
+          // teams' org gate is graded by the mock against the GLOBAL mask, not this
+          // per-slug one; genMultiScenario sets no global token_permissions, so it
+          // is empty (every org_members defaults to write - teams is never gated by
+          // a per-slug org_members:none).
+          orgMask: globalMask,
+        },
       },
     });
   }
@@ -1073,7 +1363,13 @@ export function genMultiScenario(rng: Rng): { scenario: Scenario; meta: MultiSce
     milestones: [{ title: "shared-milestone", state: "open" }],
   };
   const optOutSlugs = Object.entries(repos)
-    .filter(([, spec]) => (spec as { settings: unknown }).settings !== null)
+    .filter(([, spec]) => {
+      // Only a target with a REAL settings mapping can opt out: null marks
+      // the missing-settings target, and undefined the raw-settings one
+      // (writing milestones: null into its absent mapping would crash).
+      const settings = (spec as { settings?: unknown }).settings;
+      return settings !== null && settings !== undefined;
+    })
     .map(([slug]) => slug);
   let optedOutSlug: string | undefined;
   if (optOutSlugs.length > 0 && rng.bool(0.3)) {
@@ -1093,16 +1389,17 @@ export function genMultiScenario(rng: Rng): { scenario: Scenario; meta: MultiSce
   // skipped when adding.
   const DEFAULTS_SECTIONS: SectionKey[] = ["labels", "milestones"];
   for (const repoMeta of repoMetas) {
-    if (!repoMeta.meta) {
+    if (repoMeta.target.kind !== "normal") {
       continue;
     }
+    const repoScenarioMeta = repoMeta.target.meta;
     const optedOut = repoMeta.slug === optedOutSlug ? ["milestones"] : [];
-    repoMeta.meta.sections = repoMeta.meta.sections.filter(
+    repoScenarioMeta.sections = repoScenarioMeta.sections.filter(
       (s) => !optedOut.includes(s),
     ) as SectionKey[];
     for (const inherited of DEFAULTS_SECTIONS) {
-      if (!repoMeta.meta.sections.includes(inherited) && !optedOut.includes(inherited)) {
-        repoMeta.meta.sections.push(inherited);
+      if (!repoScenarioMeta.sections.includes(inherited) && !optedOut.includes(inherited)) {
+        repoScenarioMeta.sections.push(inherited);
       }
     }
   }

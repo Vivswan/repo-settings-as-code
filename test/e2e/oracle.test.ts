@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { MultiScenarioMeta, ScenarioMeta } from "./generators.js";
+import type { MultiRepoTarget, MultiScenarioMeta, ScenarioMeta } from "./generators.js";
 import {
   predictDiscovery,
   predictMulti,
@@ -406,11 +406,15 @@ describe("predictOutcomes run level", () => {
 });
 
 describe("predictMulti rollup", () => {
-  function multiMeta(repoMetas: Array<ScenarioMeta | null>): MultiScenarioMeta {
+  // Explicit target builders: the tests state the target kind directly instead
+  // of inferring "missing" from a null, matching the discriminated union.
+  const normal = (m: ScenarioMeta): MultiRepoTarget => ({ kind: "normal", meta: m });
+  const missing = (): MultiRepoTarget => ({ kind: "missing" });
+  function multiMeta(targets: MultiRepoTarget[]): MultiScenarioMeta {
     return {
-      repos: repoMetas.map((m, i) => ({
+      repos: targets.map((target, i) => ({
         slug: `e2e-owner/repo-${i}`,
-        meta: m,
+        target,
         visibility: "public" as const,
         probeDenied: false,
         redacted: false,
@@ -426,9 +430,26 @@ describe("predictMulti rollup", () => {
   }
 
   test("a missing-settings target is skipped (null run)", () => {
-    const p = predictMulti(multiMeta([null]));
+    const p = predictMulti(multiMeta([missing()]));
     expect(p.repos[0]?.run).toBeNull();
     expect([...(p.repos[0]?.allowedResults ?? [])]).toEqual(["skipped"]);
+  });
+
+  test("a raw-settings target predicts exactly failed and raises exit 1", () => {
+    // Both raw kinds fail before any section runs: unparseable at the parse
+    // gate, non-mapping at the top-level validator. Never skipped.
+    for (const raw of ["unparseable", "non-mapping"] as const) {
+      const base = multiMeta([missing(), normal(meta({ mode: "apply", mask: {} }))]);
+      const rawRepo = base.repos[0];
+      if (rawRepo === undefined) {
+        throw new Error("multiMeta built no repos");
+      }
+      rawRepo.target = { kind: "raw-invalid", raw };
+      const p = predictMulti(base);
+      expect(p.repos[0]?.run).toBeNull();
+      expect([...(p.repos[0]?.allowedResults ?? [])]).toEqual(["failed"]);
+      expect(p.allowedExitCodes.has(1)).toBe(true);
+    }
   });
 
   test("repo result is the mechanical worst-of fold, not a loose union", () => {
@@ -436,7 +457,7 @@ describe("predictMulti rollup", () => {
     // reachable repo result is "applied" - a union over section outcomes would
     // also be {applied}, but the fold proves no stray clean/partial leaks in.
     const granted = meta({ sections: ["labels", "pages"], mode: "apply", mask: {} });
-    const p = predictMulti(multiMeta([granted]));
+    const p = predictMulti(multiMeta([normal(granted)]));
     expect([...(p.repos[0]?.allowedResults ?? [])]).toEqual(["applied"]);
   });
 
@@ -454,7 +475,7 @@ describe("predictMulti rollup", () => {
       repos: [
         {
           slug: "e2e-owner/repo-0",
-          meta: mixed,
+          target: { kind: "normal", meta: mixed },
           visibility: "public",
           probeDenied: false,
           redacted: false,
@@ -482,7 +503,7 @@ describe("predictMulti rollup", () => {
       mask: { contents: "none" },
       denialStyle: "fine_grained",
     });
-    const p = predictMulti(multiMeta([gated]));
+    const p = predictMulti(multiMeta([normal(gated)]));
     expect(p.repos[0]?.run).toBeNull();
     expect([...(p.repos[0]?.allowedResults ?? [])]).toEqual(["skipped"]);
     expect(p.allowedExitCodes.has(0)).toBe(true);
@@ -497,7 +518,7 @@ describe("predictMulti rollup", () => {
       mask: { contents: "none", administration: "none" },
       denialStyle: "fine_grained",
     });
-    const p = predictMulti(multiMeta([gated]));
+    const p = predictMulti(multiMeta([normal(gated)]));
     expect(p.repos[0]?.run).toBeNull();
     expect([...(p.repos[0]?.allowedResults ?? [])]).toEqual(["failed"]);
     expect(p.allowedExitCodes.has(1)).toBe(true);
@@ -509,7 +530,7 @@ describe("predictMulti rollup", () => {
       mask: { contents: "none" },
       denialStyle: 403,
     });
-    const p = predictMulti(multiMeta([gated]));
+    const p = predictMulti(multiMeta([normal(gated)]));
     expect(p.repos[0]?.run).toBeNull();
     expect([...(p.repos[0]?.allowedResults ?? [])]).toEqual(["failed"]);
     expect(p.allowedExitCodes.has(1)).toBe(true);
@@ -518,13 +539,13 @@ describe("predictMulti rollup", () => {
   test("contents:read lets the settings read through to per-section prediction", () => {
     // A non-none contents grade does not gate the target: it gets a real run.
     const readable = meta({ sections: ["labels"], mask: { contents: "read" } });
-    const p = predictMulti(multiMeta([readable]));
+    const p = predictMulti(multiMeta([normal(readable)]));
     expect(p.repos[0]?.run).not.toBeNull();
   });
 
   test("all granted targets => exit 0 only", () => {
     const granted = meta({ mode: "apply", mask: {} });
-    const p = predictMulti(multiMeta([granted, granted]));
+    const p = predictMulti(multiMeta([normal(granted), normal(granted)]));
     expect([...p.allowedExitCodes]).toEqual([0]);
   });
 
@@ -538,7 +559,7 @@ describe("predictMulti rollup", () => {
       policy: "fail",
       requiredSections: ["labels"],
     });
-    const p = predictMulti(multiMeta([granted, denied]));
+    const p = predictMulti(multiMeta([normal(granted), normal(denied)]));
     expect(p.allowedExitCodes.has(1)).toBe(true);
   });
 
@@ -548,7 +569,7 @@ describe("predictMulti rollup", () => {
       repos: [
         {
           slug: "e2e-owner/repo-0",
-          meta: granted,
+          target: { kind: "normal", meta: granted },
           visibility: "private",
           probeDenied: false,
           redacted: true,
@@ -572,7 +593,7 @@ describe("predictMulti rollup", () => {
 
   test("under show nothing is redacted, so the forbidden set is empty", () => {
     const granted = meta({ sections: ["labels"], mode: "apply", mask: {} });
-    const p = predictMulti(multiMeta([granted]));
+    const p = predictMulti(multiMeta([normal(granted)]));
     expect(p.forbidden).toEqual([]);
     expect(p.repos[0]?.displayKey).toBe("e2e-owner/repo-0");
   });

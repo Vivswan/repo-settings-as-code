@@ -1,15 +1,20 @@
 import { describe, expect, test } from "bun:test";
+import { parse as parseYaml } from "yaml";
 import { validateSettingsDoc } from "../../src/engine/orchestrate.js";
 import type { Io } from "../../src/io.js";
 import { SECTION_KEYS, type SectionKey } from "../../src/schema.js";
 import { sectionShape } from "../../src/sections/registry.js";
 import {
   ARTIFACT_TEST_RECIPIENT,
+  genInvalidSettings,
   genLiveWitness,
   genMultiScenario,
   genScenario,
   genSettings,
+  INVALID_SETTINGS_CASES,
   type LiveWitnessKind,
+  NON_MAPPING_YAML,
+  UNPARSEABLE_YAML,
   validateAgainstPublishedSchema,
 } from "./generators.js";
 import { Rng } from "./prng.js";
@@ -335,6 +340,52 @@ describe("genLiveWitness", () => {
   });
 });
 
+describe("genInvalidSettings", () => {
+  test("every catalog case is rejected and the error names its token", () => {
+    for (const { name, build } of INVALID_SETTINGS_CASES) {
+      for (let i = 0; i < 25; i++) {
+        const { doc, offendingToken } = build(new Rng(i * 13 + 1));
+        const error = validateSettingsDoc(doc, "settings.yml", new Set(), silentIo);
+        if (error === null) {
+          throw new Error(`case "${name}" produced a doc the validator accepts`);
+        }
+        if (!error.includes(offendingToken)) {
+          throw new Error(`case "${name}" token "${offendingToken}" missing from error: ${error}`);
+        }
+      }
+    }
+  });
+
+  test("is deterministic for a seed", () => {
+    expect(JSON.stringify(genInvalidSettings(new Rng(5)))).toBe(
+      JSON.stringify(genInvalidSettings(new Rng(5))),
+    );
+  });
+
+  test("draws every catalog case over seeds", () => {
+    const drawn = new Set<string>();
+    for (let i = 0; i < 400; i++) {
+      drawn.add(genInvalidSettings(new Rng(i)).name);
+    }
+    const catalog = INVALID_SETTINGS_CASES.map((c) => c.name);
+    // Two-way: no duplicate case names, and the drawn set equals the catalog
+    // exactly (an unexpected or never-drawn name both fail).
+    expect(new Set(catalog).size).toBe(catalog.length);
+    expect([...drawn].sort()).toEqual([...catalog].sort());
+  });
+
+  test("the raw pools fail the way their names promise", () => {
+    for (const raw of UNPARSEABLE_YAML) {
+      expect(() => parseYaml(raw)).toThrow();
+    }
+    for (const raw of NON_MAPPING_YAML) {
+      const parsed: unknown = parseYaml(raw);
+      const isMapping = typeof parsed === "object" && parsed !== null && !Array.isArray(parsed);
+      expect(isMapping).toBe(false);
+    }
+  });
+});
+
 describe("genScenario", () => {
   const KNOWN_MASK_KEYS = new Set([
     "administration",
@@ -354,7 +405,7 @@ describe("genScenario", () => {
   test("produces internally consistent, schema-valid scenarios with sound meta", () => {
     for (let i = 0; i < 200; i++) {
       const { scenario, meta } = genScenario(new Rng(i));
-      expect(() => validateAgainstPublishedSchema(scenario.settings ?? {})).not.toThrow();
+      expect(() => validateAgainstPublishedSchema(scenario.settings)).not.toThrow();
       const declared = new Set(Object.keys(scenario.settings ?? {}) as SectionKey[]);
       for (const section of meta.requiredSections) {
         expect(declared.has(section)).toBe(true);
@@ -439,9 +490,51 @@ describe("genMultiScenario", () => {
       expect(() => parseScenario(scenario, `m-${i}`)).not.toThrow();
       expect(meta.repos.length).toBeGreaterThanOrEqual(2);
       expect(meta.repos.length).toBeLessThanOrEqual(5);
-      const skipped = meta.repos.filter((r) => r.meta === null);
+      // Exactly one missing-settings target per scenario (a raw-invalid one
+      // is a separate kind and may or may not exist).
+      const skipped = meta.repos.filter((r) => r.target.kind === "missing");
       expect(skipped.length).toBe(1);
     }
+  });
+
+  test("a raw-settings target serves settings_raw, opts out of nothing, and plants no canaries", () => {
+    let sawUnparseable = 0;
+    let sawNonMapping = 0;
+    for (let i = 0; i < 400; i++) {
+      const { scenario, meta } = genMultiScenario(new Rng(i));
+      for (const repo of meta.repos) {
+        if (repo.target.kind !== "raw-invalid") {
+          continue;
+        }
+        if (repo.target.raw === "unparseable") {
+          sawUnparseable++;
+        } else {
+          sawNonMapping++;
+        }
+        const spec = scenario.repos?.[repo.slug] as {
+          settings?: unknown;
+          settings_raw?: string;
+        };
+        expect(typeof spec.settings_raw).toBe("string");
+        expect(spec.settings).toBeUndefined();
+        // The raw pool entry matches its kind: unparseable bodies throw in
+        // the yaml parser, non-mapping ones parse to a non-mapping.
+        if (repo.target.raw === "unparseable") {
+          expect(() => parseYaml(spec.settings_raw as string)).toThrow();
+        } else {
+          const parsed: unknown = parseYaml(spec.settings_raw as string);
+          expect(typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)).toBe(
+            false,
+          );
+        }
+        // Never the milestones opt-out target (there is no mapping to null a
+        // section in) and never the guaranteed leak-canary target.
+        expect(meta.milestonesOptOutSlug).not.toBe(repo.slug);
+        expect(repo.canaries).toEqual([]);
+      }
+    }
+    expect(sawUnparseable).toBeGreaterThan(0);
+    expect(sawNonMapping).toBeGreaterThan(0);
   });
 
   test("is deterministic for a seed", () => {
@@ -579,8 +672,9 @@ describe("genMultiScenario", () => {
           continue;
         }
         if (repo.canaries.length === 0) {
-          // A redacted missing-settings target has no surfaces to plant into.
-          expect(repo.meta).toBeNull();
+          // Only a normal target has surfaces to plant into: a redacted
+          // missing-settings or raw-invalid target legitimately has none.
+          expect(repo.target.kind).not.toBe("normal");
           continue;
         }
         sawCanary = true;
@@ -608,7 +702,10 @@ describe("genMultiScenario", () => {
         expect(declaredDescCanary).not.toBe(liveDescCanary); // guarantees drift
         expect(spec.live_state?.repo?.description).toBe(repoCanary);
         // The labels section must be predicted so the oracle expects the canary.
-        expect(repo.meta?.sections).toContain("labels");
+        expect(repo.target.kind).toBe("normal");
+        if (repo.target.kind === "normal") {
+          expect(repo.target.meta.sections).toContain("labels");
+        }
       }
     }
     expect(sawCanary).toBe(true);
