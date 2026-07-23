@@ -1,0 +1,52 @@
+# Repo-owned release pipeline, called by the managed ci.yml on top of the
+# all-green gate. Never overwritten by template sync. Runs the managed
+# release-please machinery, then moves the moving major tag (v1) to the new
+# release so `@v1` pins pick up every release.
+
+name: Release
+
+on:
+  workflow_call:
+
+jobs:
+  release-please:
+    uses: ./.github/workflows/release-please.yml
+    secrets: inherit
+
+  # Move the moving major tag to the release this run just published, but
+  # only when the released tag points at the commit this run tested: main
+  # can advance in the seconds between the gate and the release, and `@v1`
+  # consumers must never receive an untested commit. On a mismatch, fail
+  # loudly and repair with the Retag Major workflow after verifying that
+  # commit's CI.
+  retag-major:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Assert the release matches the tested commit
+        env:
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          git fetch --quiet origin "refs/tags/$TAG:refs/tags/$TAG"
+          released="$(git rev-parse "refs/tags/$TAG^{}")"
+          if [ "$released" != "$GITHUB_SHA" ]; then
+            echo "::error::released $TAG at $released, but this run tested $GITHUB_SHA (main moved during the release window). Verify that commit's CI, then move the major tag with the Retag Major workflow."
+            exit 1
+          fi
+      - name: Move the major tag
+        env:
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          major="${TAG%%.*}"
+          major="v${major#v}"
+          git config user.name "settings-as-code-release"
+          git config user.email "settings-as-code-release@users.noreply.github.com"
+          git tag -f "$major" "refs/tags/$TAG^{}"
+          git push --force origin "refs/tags/$major"
+          echo "moved $major -> $TAG"

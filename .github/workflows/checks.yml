@@ -1,0 +1,137 @@
+# Repo-owned CI checks, called by the managed ci.yml inside the all-green
+# gate: every job here must pass before all-green goes green. Never
+# overwritten by template sync, so edit freely.
+#
+# Two limits from running inside the `checks` caller: jobs here get no
+# secrets and are capped at the caller's permissions (contents: read), and
+# all-green only sees the aggregate result.
+
+name: Checks
+
+on:
+  workflow_call:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      # bun test includes the OpenAPI validator tests, which load the fetched,
+      # gitignored trimmed spec; restore it from cache or fetch on a miss.
+      - name: Cache the trimmed OpenAPI spec
+        id: openapi-cache
+        uses: actions/cache@v6
+        with:
+          path: test/e2e/openapi/github-openapi.trimmed.json
+          key: openapi-trimmed-${{ hashFiles('.github/scripts/trim-openapi.ts', 'test/e2e/openapi/paths.ts', 'src/sections/**', 'src/schema.ts', 'src/github/api.ts') }}
+      - name: Fetch the trimmed OpenAPI spec (cache miss)
+        if: steps.openapi-cache.outputs.cache-hit != 'true'
+        run: bun .github/scripts/trim-openapi.ts
+      - name: Lint (biome)
+        run: bun run lint
+      - name: Typecheck
+        run: bun run typecheck
+      - name: Test
+        run: bun run test
+
+  # lib/ holds committed generated artifacts: the bundled entrypoint the
+  # node24 runtime executes and the settings.yml JSON Schema; fail if
+  # either drifts from src/.
+  bundle-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Rebuild and compare
+        run: bun run build:check
+
+  # Self-test: run the action from this checkout in check mode against this
+  # repository. Drift or permission skips are fine (the default token cannot
+  # read admin surfaces); a CRASH is not - assert the action produced a
+  # result output, which an exception never does.
+  self-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run settings-as-code (check mode)
+        id: selfcheck
+        uses: ./
+        continue-on-error: true
+        with:
+          mode: check
+          on-missing-permission: warn
+      - name: Assert the action ran to completion
+        env:
+          RESULT: ${{ steps.selfcheck.outputs.result }}
+        run: |
+          case "$RESULT" in
+            clean|drift|partial|failed) echo "action completed with result=$RESULT" ;;
+            *) echo "::error::action crashed (no result output)"; exit 1 ;;
+          esac
+
+  # Diff-aware e2e smoke: on a PR, run only the scenarios and fuzz for the
+  # sections the PR touched (docs-only PRs skip; core or cross-cutting changes
+  # run every section). The action bundle runs under node24, so the smoke job
+  # installs node too. Non-PR events (push, dispatch) have no PR base to diff
+  # against, so they run the full corpus.
+  e2e-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      # The trimmed OpenAPI spec is a fetched, gitignored artifact. Restore it
+      # from cache or fetch on a miss. The key hashes every input that changes
+      # the output - the trim script (which carries UPSTREAM_REF), USED_PATHS,
+      # and the DEFAULT_API_VERSION source - so any of them changing busts the
+      # cache and re-fetches, never restoring a stale slice.
+      - name: Cache the trimmed OpenAPI spec
+        id: openapi-cache
+        uses: actions/cache@v6
+        with:
+          path: test/e2e/openapi/github-openapi.trimmed.json
+          key: openapi-trimmed-${{ hashFiles('.github/scripts/trim-openapi.ts', 'test/e2e/openapi/paths.ts', 'src/sections/**', 'src/schema.ts', 'src/github/api.ts') }}
+      - name: Fetch the trimmed OpenAPI spec (cache miss)
+        if: steps.openapi-cache.outputs.cache-hit != 'true'
+        run: bun .github/scripts/trim-openapi.ts
+      - name: Select sections from the diff
+        id: select
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ]; then
+            SECTIONS="$(bun .github/scripts/changed-sections.ts "$BASE_SHA")"
+          else
+            SECTIONS="all"
+          fi
+          echo "sections=$SECTIONS" >> "$GITHUB_OUTPUT"
+          echo "selected sections: $SECTIONS"
+      - name: Run scenarios and fuzz
+        if: steps.select.outputs.sections != 'none'
+        env:
+          SECTIONS: ${{ steps.select.outputs.sections }}
+        run: |
+          if [ "$SECTIONS" = "all" ]; then
+            bun test/e2e/run.ts
+            bun test/e2e/fuzz.ts --iterations 25
+          else
+            bun test/e2e/run.ts --sections "$SECTIONS"
+            bun test/e2e/fuzz.ts --iterations 25 --sections "$SECTIONS"
+          fi

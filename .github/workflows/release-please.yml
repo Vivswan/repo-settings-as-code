@@ -4,6 +4,13 @@ name: Release Please
 # releases and release-PR refreshes only happen on a green main.
 on:
   workflow_call:
+    outputs:
+      release_created:
+        description: "'true' when this run just published a release"
+        value: ${{ jobs.release-please.outputs.release_created }}
+      tag_name:
+        description: The tag of the release that was just published
+        value: ${{ jobs.release-please.outputs.tag_name }}
 
 # The effective token comes from the calling job; declaring the needs here
 # documents them and caps a caller that grants more.
@@ -14,6 +21,9 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       # A green run releases only the head it tested: if main moved on, skip
       # and let the newer push's own run release (after its CI passes).
