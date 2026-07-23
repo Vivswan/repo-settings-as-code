@@ -344,7 +344,11 @@ const HANDLERS: Record<string, Handler> = {
     if (findLabel(state, String(payload.name))) {
       return { status: 422, body: { message: "Validation Failed" } };
     }
+    // Spread the payload FIRST so passthrough fields the labels section sends
+    // (and later subsetDiffs) are stored and read back; the known fields are
+    // then normalized over them.
     const label: Json = {
+      ...payload,
       id: state.nextId++,
       node_id: `MDU6TGFiZWw${state.nextId}`,
       url: `https://api.github.com/repos/e2e-owner/e2e-repo/labels/${String(payload.name)}`,
@@ -371,6 +375,15 @@ const HANDLERS: Record<string, Handler> = {
     }
     if (payload.description !== undefined) {
       label.description = payload.description;
+    }
+    // Passthrough fields update verbatim, mirroring the create path, so a
+    // second apply's subsetDiff over them reads back what was written. The
+    // canonical server-owned fields stay canonical, exactly like create.
+    for (const [key, value] of Object.entries(payload)) {
+      if (LABEL_CANONICAL_KEYS.has(key)) {
+        continue;
+      }
+      label[key] = value;
     }
     return ok(label);
   },
@@ -716,6 +729,21 @@ function labelName(label: Json): string {
   return String(label.name).toLowerCase();
 }
 
+/**
+ * Label fields the server owns (or the update handler maps explicitly); the
+ * passthrough loop must never let a payload overwrite them.
+ */
+const LABEL_CANONICAL_KEYS = new Set([
+  "new_name",
+  "name",
+  "color",
+  "description",
+  "id",
+  "node_id",
+  "url",
+  "default",
+]);
+
 function findLabel(state: MockState, name: string): Json | undefined {
   return state.labels.find((l) => labelName(l) === name.toLowerCase());
 }
@@ -758,22 +786,45 @@ export function assertHandlerCompleteness(
 }
 
 /**
+ * The CORE-ROUTE fault/corruption keys: stable names for the non-section paths
+ * the pipeline serves inline, so a scenario (or the fuzzer) can fault the
+ * discovery listing, the settings-file fetch, or the private-report issue
+ * channel exactly like a section endpoint. Each fires at the same pipeline
+ * point a section fault does: after route and target resolution (a fault never
+ * masks an unknown-target violation) and before the permission gate. The
+ * values document the route each key names.
+ */
+export const CORE_FAULT_KEYS = {
+  "core.discoveryList": "GET /user/repos (multi-repo discovery listing)",
+  "core.contentsGet": "GET /repos/{owner}/{repo}/contents/{path} (settings-file fetch)",
+  "core.userGet": "GET /user (report fallback creator scan)",
+  "core.reportLabelCreate": "POST /repos/{owner}/{repo}/labels (report marker-label ensure-create)",
+  "core.issuesList": "GET /repos/{owner}/{repo}/issues (report issue lookup)",
+  "core.issueCreate": "POST /repos/{owner}/{repo}/issues (report issue create)",
+  "core.issuePatch": "PATCH /repos/{owner}/{repo}/issues/{number} (report issue update)",
+} as const;
+
+export type CoreFaultKey = keyof typeof CORE_FAULT_KEYS;
+
+/**
  * Reject fault/corrupt directives that name an unknown endpoint or duplicate a
  * fault. Keys are free-form strings, so a typo would silently never fire and a
  * duplicate fault would silently take first-match; validating at server
  * construction (the same loud-at-startup pattern as assertHandlerCompleteness)
- * turns both into an immediate throw. Exported for direct testing.
+ * turns both into an immediate throw. A key may name a section endpoint
+ * ("section.role") or a registered core route (CORE_FAULT_KEYS). Exported for
+ * direct testing.
  */
 export function assertFaultKeys(
   faults: FaultOption[] | undefined,
   corrupt: CorruptOption | undefined,
 ): void {
-  const known = new Set(Object.keys(allEndpoints()));
+  const known = new Set([...Object.keys(allEndpoints()), ...Object.keys(CORE_FAULT_KEYS)]);
   const seen = new Set<string>();
   for (const fault of faults ?? []) {
     if (!known.has(fault.key)) {
       throw new Error(
-        `E2E MOCK: fault names unknown endpoint "${fault.key}" (not in allEndpoints())`,
+        `E2E MOCK: fault names unknown endpoint "${fault.key}" (neither a section endpoint nor a core-route key)`,
       );
     }
     if (seen.has(fault.key)) {
@@ -785,7 +836,7 @@ export function assertFaultKeys(
   }
   if (corrupt && !known.has(corrupt.key)) {
     throw new Error(
-      `E2E MOCK: corrupt names unknown endpoint "${corrupt.key}" (not in allEndpoints())`,
+      `E2E MOCK: corrupt names unknown endpoint "${corrupt.key}" (neither a section endpoint nor a core-route key)`,
     );
   }
 }
@@ -806,9 +857,10 @@ export function assertFaultKeys(
  * make that error tolerated if the call site ever moved to tryCall.
  *
  * This rule governs HANDLER responses only. Transport-level faults (the fault
- * barrier's rate-limit 403 / 429, and the connection_drop status 0) fire BEFORE
- * any handler and deliberately bypass this invariant: they model wire failures
- * GitHub returns on any endpoint regardless of its declared statuses.
+ * barrier's rate-limit 403 / 429, the server_error 5xx rotation, and the
+ * connection_drop status 0) fire BEFORE any handler and deliberately bypass
+ * this invariant: they model wire failures GitHub returns on any endpoint
+ * regardless of its declared statuses.
  */
 export function statusAllowed(key: string, status: number): boolean {
   return declaredStatuses(key).has(status) || status >= 400;
@@ -826,7 +878,8 @@ export function declaredStatuses(key: string): Set<number> {
 // --- The request pipeline -------------------------------------------------
 
 /**
- * A corruption directive for a named endpoint's responses. `times` (default 1)
+ * A corruption directive for a named endpoint's responses. `key` is a
+ * "section.role" endpoint or a CORE_FAULT_KEYS core route. `times` (default 1)
  * is how many matching responses to corrupt: 1 (the default) corrupts only the
  * first, which octokit's retry plugin transparently retries away (a parse/shape
  * fault is not a 4xx, so it is retried; MAX_RETRIES=2) - a retry-resilience
@@ -841,13 +894,64 @@ export interface CorruptOption {
 
 /**
  * A transport-level fault applied to the first `times` (default 1) requests
- * matching `key` (a "section.role" endpoint). Mirrors the Fault schema; the
- * fault barrier in runPipeline turns each kind into its wire behavior.
+ * matching `key` (a "section.role" endpoint or a CORE_FAULT_KEYS core route).
+ * Mirrors the Fault schema; the fault barrier in runPipeline (and the core-route
+ * hooks) turn each kind into its wire behavior. Every kind is retried by the
+ * client (throttled 403/429 via the throttling path, drops and 5xx via the retry
+ * plugin), so `times: 1` is a transient the run recovers from and `times` >= 3
+ * (1 + MAX_RETRIES) exhausts the retries and surfaces as a hard failure.
  */
 export interface FaultOption {
   key: string;
-  kind: "rate_limit_403" | "429_then_200" | "connection_drop";
+  kind: "rate_limit_403" | "429_then_200" | "connection_drop" | "server_error";
   times?: number;
+}
+
+/**
+ * Consume one firing of the fault registered for `key`, when one remains: each
+ * fault fires on the first `times` (default 1) matching requests, counted in
+ * `faultCounts` (which doubles as the fault-fired signal the server exposes).
+ * Returns the fault kind plus the pre-increment fire index, which server_error
+ * uses to rotate its status deterministically.
+ */
+function takeFault(
+  key: string,
+  options: Pick<PipelineOptions, "faults" | "faultCounts">,
+): { kind: FaultOption["kind"]; fired: number } | null {
+  const fault = options.faults?.find((f) => f.key === key);
+  if (!fault) {
+    return null;
+  }
+  const fired = options.faultCounts.get(key) ?? 0;
+  if (fired >= (fault.times ?? 1)) {
+    return null;
+  }
+  options.faultCounts.set(key, fired + 1);
+  return { kind: fault.kind, fired };
+}
+
+/**
+ * Consume one chaos corruption of `key`'s response, when the directive names it
+ * and its `times` budget ("always" = every match) is not spent. Shared by the
+ * section pipeline and the core-route hooks so both honor the same counting.
+ */
+function takeCorruption(
+  key: string,
+  options: Pick<PipelineOptions, "corrupt" | "corruptCounts">,
+  response: MockResponse,
+  log: LoggedRequest,
+): PipelineResult | null {
+  const corrupt = options.corrupt;
+  if (!corrupt || corrupt.key !== key) {
+    return null;
+  }
+  const done = options.corruptCounts.get(key) ?? 0;
+  const limit = corrupt.times ?? 1;
+  if (limit !== "always" && done >= limit) {
+    return null;
+  }
+  options.corruptCounts.set(key, done + 1);
+  return applyCorruption(corrupt.mode, response, { ...log, status: response.status });
 }
 
 /**
@@ -979,6 +1083,16 @@ function matchEndpoint(
     }
   }
   return null;
+}
+
+/**
+ * The section a request belongs to, or null when it matches no section
+ * endpoint (core routes, unknown paths). The runner's apply-idempotence check
+ * uses it to attribute a second-apply write to its section, so the
+ * compare-before-write subset can be held to write silence.
+ */
+export function sectionForRequest(method: string, pathname: string): SectionKey | null {
+  return matchEndpoint(method, pathname)?.endpoint.section ?? null;
 }
 
 /**
@@ -1192,38 +1306,70 @@ function labelObject(name: string): Json {
 }
 
 /**
- * Resolve and Issues-gate an issue-channel request for a slug. Returns the
- * granted repo state on success, or a ready-to-send response (unknown-slug
- * violation or permission denial) the caller returns early. Shared by the
- * marker-label and issue routes so the resolve-then-grade guard is written once.
+ * Resolve the repo state an issue-channel request addresses. An unknown slug is
+ * a loud violation the caller returns early - and, matching the section
+ * pipeline's unknown-target rule, it is checked BEFORE the fault hook so a
+ * fault can never mask it.
  */
-type IssueTargetResult =
-  | { state: MockState }
-  | { response: MockResponse; deniedBy?: MaskKey; violation?: string };
-
-function gradeIssueTarget(
+function resolveIssueTarget(
   method: string,
   pathname: string,
   slug: string,
-  level: "read" | "write",
-  scenario: Scenario,
   multi: MultiMockState | undefined,
   singleState: MockState | undefined,
-): IssueTargetResult {
+): { state: MockState } | { response: MockResponse; violation: string } {
   const repoState = multi ? multi.repos.get(slug) : singleState;
   if (!repoState) {
     const message = `issue-report request ${method} ${pathname} names no known target slug`;
     return { response: violationResponse(message), violation: message };
   }
+  return { state: repoState };
+}
+
+/**
+ * Grade an issue-channel request against the report module's DECLARED
+ * permission (single-sourced, so a change to ISSUE_REPORT_PERMISSION flows
+ * here), not a hard-coded "issues". Returns the ready-to-send denial, or null
+ * when the token is allowed.
+ */
+function gradeIssueAccess(
+  slug: string,
+  level: "read" | "write",
+  scenario: Scenario,
+  multi: MultiMockState | undefined,
+): { response: MockResponse; deniedBy: MaskKey } | null {
   const mask = effectiveMask(scenario.token_permissions ?? {}, multi?.permissions.get(slug));
-  // Grade against the report module's DECLARED permission (single-sourced),
-  // not a hard-coded "issues", so a change to ISSUE_REPORT_PERMISSION flows here.
   const grading = gradeRequirement(mask, { permission: ISSUE_REPORT_PERMISSION, kind: level });
   if (!grading.allowed) {
     return { response: denialResponse(scenario.denial_style, level), deniedBy: grading.deniedBy };
   }
-  return { state: repoState };
+  return null;
 }
+
+/** The core fault key an issue route maps to, or null for an unexpected method. */
+function issueRouteKey(method: string, issueNumber: number | undefined): CoreFaultKey | null {
+  if (method === "GET" && issueNumber === undefined) {
+    return "core.issuesList";
+  }
+  if (method === "POST" && issueNumber === undefined) {
+    return "core.issueCreate";
+  }
+  if (method === "PATCH" && issueNumber !== undefined) {
+    return "core.issuePatch";
+  }
+  return null;
+}
+
+/**
+ * The issue channel's decision for one request: a transport fault passed
+ * through verbatim (`faulted`), or a handled response. `coreKey` names the
+ * core route a HANDLER response came from, so the caller can apply the chaos
+ * corruption hook to it; denials and violations carry no coreKey and are never
+ * corrupted, matching the section pipeline.
+ */
+type IssueReportOutcome =
+  | { faulted: PipelineResult }
+  | { response: MockResponse; coreKey?: CoreFaultKey; deniedBy?: MaskKey; violation?: string };
 
 /**
  * Serve the private-report issue routes against a repo's `issues` state:
@@ -1233,7 +1379,10 @@ function gradeIssueTarget(
  *   - PATCH /repos/{o}/{r}/issues/{issue_number}      -> update (Issues: write)
  * Returns null when the path is not an issue-channel route, so the caller falls
  * through to section matching. Permission denials set `deniedBy` (so the
- * OpenAPI validator skips them and the runner sees the denial).
+ * OpenAPI validator skips them and the runner sees the denial). `takeCoreFault`
+ * is the pipeline's core-route fault hook, consulted per route after target
+ * resolution and before the permission gate (the same order as the section
+ * fault barrier) and before any state mutation.
  */
 function handleIssueReport(
   method: string,
@@ -1244,7 +1393,8 @@ function handleIssueReport(
   multi: MultiMockState | undefined,
   state: MockState | undefined,
   faults: FaultOption[] | undefined,
-): { response: MockResponse; deniedBy?: MaskKey; violation?: string } | null {
+  takeCoreFault: (key: CoreFaultKey) => PipelineResult | null,
+): IssueReportOutcome | null {
   // GET /user is the fallback creator scan - served only when the run enables
   // the issue channel at all (otherwise it is not report traffic and falls
   // through to a loud no-route violation).
@@ -1252,7 +1402,14 @@ function handleIssueReport(
     if (method !== "GET" || scenario.inputs?.private_report !== "issue") {
       return null;
     }
-    return { response: ok({ login: TOKEN_USER_LOGIN, id: 1, type: "User" }) };
+    const faulted = takeCoreFault("core.userGet");
+    if (faulted) {
+      return { faulted };
+    }
+    return {
+      response: ok({ login: TOKEN_USER_LOGIN, id: 1, type: "User" }),
+      coreKey: "core.userGet",
+    };
   }
   // The marker-label ensure-create is report infrastructure (it writes even in
   // check mode), so it is served here - BEFORE the check-mode barrier - rather
@@ -1267,23 +1424,32 @@ function handleIssueReport(
     if (!isReportDeliveryTarget(slug, scenario, multi, faults)) {
       return null;
     }
-    const target = gradeIssueTarget(method, pathname, slug, "write", scenario, multi, state);
-    if (!("state" in target)) {
-      return target;
+    const resolved = resolveIssueTarget(method, pathname, slug, multi, state);
+    if (!("state" in resolved)) {
+      return resolved;
     }
-    if (findLabel(target.state, MARKER_LABEL)) {
-      return { response: { status: 422, body: { message: "Validation Failed" } } };
+    const faulted = takeCoreFault("core.reportLabelCreate");
+    if (faulted) {
+      return { faulted };
+    }
+    const denied = gradeIssueAccess(slug, "write", scenario, multi);
+    if (denied) {
+      return denied;
+    }
+    const coreKey = "core.reportLabelCreate" as const;
+    if (findLabel(resolved.state, MARKER_LABEL)) {
+      return { response: { status: 422, body: { message: "Validation Failed" } }, coreKey };
     }
     const payload = asObject(body);
     const label: Json = {
-      id: target.state.nextId++,
+      id: resolved.state.nextId++,
       name: MARKER_LABEL,
       color: payload.color ?? "ededed",
       default: false,
       description: payload.description ?? null,
     };
-    target.state.labels.push(label);
-    return { response: { status: 201, body: label } };
+    resolved.state.labels.push(label);
+    return { response: { status: 201, body: label }, coreKey };
   }
   const issuesMatch = pathname.match(/^\/repos\/([^/]+\/[^/]+)\/issues(?:\/(\d+))?$/);
   if (!issuesMatch) {
@@ -1298,14 +1464,25 @@ function handleIssueReport(
   }
   const issueNumber = issuesMatch[2] ? Number(issuesMatch[2]) : undefined;
   const level: "read" | "write" = method === "GET" ? "read" : "write";
-  const target = gradeIssueTarget(method, pathname, slug, level, scenario, multi, state);
-  if (!("state" in target)) {
-    return target;
+  const resolved = resolveIssueTarget(method, pathname, slug, multi, state);
+  if (!("state" in resolved)) {
+    return resolved;
   }
-  const repoState = target.state;
+  const coreKey = issueRouteKey(method, issueNumber);
+  if (coreKey) {
+    const faulted = takeCoreFault(coreKey);
+    if (faulted) {
+      return { faulted };
+    }
+  }
+  const denied = gradeIssueAccess(slug, level, scenario, multi);
+  if (denied) {
+    return denied;
+  }
+  const repoState = resolved.state;
   if (method === "GET" && issueNumber === undefined) {
     const matched = repoState.issues.filter((issue) => issueMatchesQuery(issue, query));
-    return { response: ok(slicePage(matched, query)) };
+    return { response: ok(slicePage(matched, query)), coreKey: "core.issuesList" };
   }
   if (method === "POST" && issueNumber === undefined) {
     const payload = asObject(body);
@@ -1323,12 +1500,15 @@ function handleIssueReport(
       html_url: issueUrl(slug, number),
     };
     repoState.issues.push(issue);
-    return { response: { status: 201, body: issue } };
+    return { response: { status: 201, body: issue }, coreKey: "core.issueCreate" };
   }
   if (method === "PATCH" && issueNumber !== undefined) {
     const issue = repoState.issues.find((i) => Number(i.number) === issueNumber);
     if (!issue) {
-      return { response: { status: 404, body: { message: "Not Found" } } };
+      return {
+        response: { status: 404, body: { message: "Not Found" } },
+        coreKey: "core.issuePatch",
+      };
     }
     const payload = asObject(body);
     if (payload.body !== undefined) {
@@ -1337,7 +1517,7 @@ function handleIssueReport(
     if (payload.state !== undefined) {
       issue.state = payload.state;
     }
-    return { response: ok(issue) };
+    return { response: ok(issue), coreKey: "core.issuePatch" };
   }
   const message = `unexpected ${method} on ${pathname}`;
   return { response: violationResponse(message), violation: message };
@@ -1480,11 +1660,30 @@ export function runPipeline(
     pathname = pathname.slice(options.basePrefix.length) || "/";
   }
 
+  // The core-route fault hook: consume a registered core fault for this request
+  // and turn it into its wire behavior. Built once here so every core handler
+  // fires against the same per-run counts the section fault barrier uses.
+  const takeCoreFault = (coreKey: CoreFaultKey): PipelineResult | null => {
+    const taken = takeFault(coreKey, options);
+    return taken ? applyFault(taken.kind, { ...baseLog }, taken.fired) : null;
+  };
+
   // 3a. Multi-repo discovery: /user/repos is not a section endpoint and is not
   // per-slug permission-gated (it is a user-level call), so it is served before
-  // route matching.
+  // route matching. Its fault/corruption hooks fire only on the legit route
+  // (never masking a violation), mirroring the section pipeline's order.
   const userRepos = handleUserRepos(request.method, pathname, request.query, options.multi);
   if (userRepos) {
+    if (!userRepos.violation) {
+      const faulted = takeCoreFault("core.discoveryList");
+      if (faulted) {
+        return faulted;
+      }
+      const corrupted = takeCorruption("core.discoveryList", options, userRepos.response, baseLog);
+      if (corrupted) {
+        return corrupted;
+      }
+    }
     return {
       response: userRepos.response,
       log: { ...baseLog, status: userRepos.response.status },
@@ -1523,6 +1722,20 @@ export function runPipeline(
         violation: message,
       };
     }
+    // Resolve the target BEFORE the fault hook, the same order the section
+    // barrier and the issue-report routes use: a request addressing an unknown
+    // slug keeps its plain not-found answer and must never consume (steal) a
+    // fault injected for the legitimate target. For a KNOWN target the fault
+    // fires before the permission gate (a wire failure happens regardless of
+    // permissions), and always after the mode/method/Accept violations above,
+    // which stay unmaskable.
+    const knownTarget = options.multi.repos.has(cSlug);
+    if (knownTarget) {
+      const contentsFault = takeCoreFault("core.contentsGet");
+      if (contentsFault) {
+        return contentsFault;
+      }
+    }
     const mask = effectiveMask(
       scenario.token_permissions ?? {},
       options.multi.permissions.get(cSlug),
@@ -1533,6 +1746,12 @@ export function runPipeline(
       return { response, log: { ...baseLog, status: response.status, deniedBy: grading.deniedBy } };
     }
     const response = contentsResponse(options.multi, cSlug);
+    if (knownTarget) {
+      const corrupted = takeCorruption("core.contentsGet", options, response, baseLog);
+      if (corrupted) {
+        return corrupted;
+      }
+    }
     // The raw settings-file body skips response-body validation, but that is
     // decided by the request's raw Accept media type in server.ts (so every
     // raw endpoint inherits it), not marked here per-endpoint.
@@ -1542,7 +1761,9 @@ export function runPipeline(
   // 3b2. Private-report issue channel (GET /user, the issues list/create/patch).
   // Served inline, before section matching, because report delivery is
   // infrastructure that writes even in check mode - so it must NOT pass through
-  // the check-mode write barrier below. Gated on the Issues permission.
+  // the check-mode write barrier below. Gated on the Issues permission. The
+  // handler consults the core-route fault hook per route; a handler response
+  // comes back tagged with its core key so the chaos hook can corrupt it.
   const issueReport = handleIssueReport(
     request.method,
     pathname,
@@ -1552,8 +1773,18 @@ export function runPipeline(
     options.multi,
     options.state,
     options.faults,
+    takeCoreFault,
   );
   if (issueReport) {
+    if ("faulted" in issueReport) {
+      return issueReport.faulted;
+    }
+    if (issueReport.coreKey) {
+      const corrupted = takeCorruption(issueReport.coreKey, options, issueReport.response, baseLog);
+      if (corrupted) {
+        return corrupted;
+      }
+    }
     return {
       response: issueReport.response,
       log: {
@@ -1682,19 +1913,15 @@ export function runPipeline(
   // unknown-target violation - that check is a harness-integrity invariant and
   // must be unmaskable. Each fault applies to the first `times` (default 1)
   // requests matching its endpoint key.
-  const fault = options.faults?.find((f) => f.key === key);
-  if (fault) {
-    const fired = options.faultCounts.get(key) ?? 0;
-    if (fired < (fault.times ?? 1)) {
-      options.faultCounts.set(key, fired + 1);
-      // A faulted probe attempt counts toward its retry budget so the exemption
-      // cannot outlast the probe's own retries (an all-faulting probe gives up,
-      // and the next repository.get is a section read that must arm).
-      if (key === "repository.get") {
-        options.probeGetFaults.set(targetSlug, (options.probeGetFaults.get(targetSlug) ?? 0) + 1);
-      }
-      return applyFault(fault.kind, { ...baseLog });
+  const taken = takeFault(key, options);
+  if (taken) {
+    // A faulted probe attempt counts toward its retry budget so the exemption
+    // cannot outlast the probe's own retries (an all-faulting probe gives up,
+    // and the next repository.get is a section read that must arm).
+    if (key === "repository.get") {
+      options.probeGetFaults.set(targetSlug, (options.probeGetFaults.get(targetSlug) ?? 0) + 1);
     }
+    return applyFault(taken.kind, { ...baseLog }, taken.fired);
   }
 
   // Past the fault barrier a real response WILL be delivered. Decide whether this
@@ -1802,20 +2029,20 @@ export function runPipeline(
   // 9. Chaos hook: corrupt the response of the named endpoint for its first
   // `times` matches ("always" = every match). Default 1 preserves the one-shot
   // behavior octokit's retry plugin transparently recovers from.
-  if (options.corrupt && options.corrupt.key === key) {
-    const done = options.corruptCounts.get(key) ?? 0;
-    const limit = options.corrupt.times ?? 1;
-    if (limit === "always" || done < limit) {
-      options.corruptCounts.set(key, done + 1);
-      return applyCorruption(options.corrupt.mode, response, {
-        ...baseLog,
-        status: response.status,
-      });
-    }
+  const corrupted = takeCorruption(key, options, response, baseLog);
+  if (corrupted) {
+    return corrupted;
   }
 
   return { response, log: { ...baseLog, status: response.status } };
 }
+
+/**
+ * The 5xx statuses a server_error fault rotates through, indexed by the fault's
+ * fire count - deterministic, so a replayed seed sees the same statuses in the
+ * same order.
+ */
+const SERVER_ERROR_ROTATION = [500, 502, 503] as const;
 
 /**
  * Turn a fault kind into its wire behavior:
@@ -1825,11 +2052,15 @@ export function runPipeline(
  *   - 429_then_200: 429 with Retry-After: 0 so the throttling plugin retries
  *     immediately (fast under RETRY_BASE_MS=1); the retried request then runs
  *     the handler normally.
+ *   - server_error: a 5xx with a JSON message body, rotating 500/502/503 on the
+ *     fault's fire count (`fired`). The client's retry plugin retries 5xx, so a
+ *     single firing is retried away and `times` >= 3 exhausts the retries.
  *   - connection_drop: signal the server to drop the connection mid-response
  *     (an erroring body stream), which undici surfaces as a network failure.
- * The log records the attempt; the fault status (403/429) or 0 (drop) is set.
+ * The log records the attempt; the fault status (403/429/5xx) or 0 (drop) is
+ * set. All are deliberately off the OpenAPI contract (offSpecBody).
  */
-function applyFault(kind: FaultOption["kind"], log: LoggedRequest): PipelineResult {
+function applyFault(kind: FaultOption["kind"], log: LoggedRequest, fired: number): PipelineResult {
   if (kind === "rate_limit_403") {
     const response: MockResponse = {
       status: 403,
@@ -1844,6 +2075,11 @@ function applyFault(kind: FaultOption["kind"], log: LoggedRequest): PipelineResu
       headers: { "retry-after": "0" },
     };
     return { response, log: { ...log, status: 429 }, offSpecBody: true };
+  }
+  if (kind === "server_error") {
+    const status = SERVER_ERROR_ROTATION[fired % SERVER_ERROR_ROTATION.length] as number;
+    const response: MockResponse = { status, body: { message: "Server Error" } };
+    return { response, log: { ...log, status }, offSpecBody: true };
   }
   // connection_drop
   return {

@@ -1,0 +1,24 @@
+# A discovery listing that keeps failing is fatal. A server_error fault on
+# GET /user/repos (core.discoveryList) answers the rotating 5xx on three
+# straight attempts - 1 + MAX_RETRIES, so the client's retries are exhausted -
+# and a repos: "*" run fails BEFORE any target executes: no repo probe, no
+# settings fetch, no section read, no per-target result. Proves discovery
+# failure is a loud fatal, not a silent empty pool.
+name: discovery-server-error-fails-run
+settings: {}
+faults:
+  - endpoint: core.discoveryList
+    kind: server_error
+    times: 3
+discovery:
+  pool:
+    - slug: e2e-owner/svc-a
+    - slug: e2e-owner/svc-b
+expect:
+  exit_code: 1
+  result: failed
+  requests_contain:
+    - "GET /user/repos"
+  never:
+    - "GET /repos/e2e-owner/svc-a"
+    - "GET /repos/e2e-owner/svc-b"

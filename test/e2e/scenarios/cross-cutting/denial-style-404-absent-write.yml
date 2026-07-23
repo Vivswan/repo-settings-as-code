@@ -1,0 +1,34 @@
+# denial_style: 404 end to end: every denial answers 404 "Not Found", writes
+# included. On an absent-semantics section (environments) the denied probe READ
+# is a tolerated 404 that reads as "no such environment yet", so the section
+# proceeds to its PUT - which the mock also denies with 404. The engine's
+# classifier treats a 404 write as a permission denial (fine-grained tokens
+# hide resources they deny), so the warn policy skips the section while the
+# granted labels section still applies. The PUT reaching the mock at all is
+# the 404-style discriminator: under denial_style 403 the probe read itself
+# would have been denied and no environments write would ever be sent.
+name: denial-style-404-absent-write
+denial_style: 404
+settings:
+  labels:
+    - name: bug
+      color: d73a4a
+  environments:
+    - name: staging
+      wait_timer: 5
+token_permissions:
+  environments: none
+  issues: write
+inputs:
+  mode: apply
+  on_missing_permission: warn
+expect:
+  exit_code: 0
+  result: partial
+  outcomes:
+    labels: applied
+    environments: skipped
+  mutations:
+    - "POST /repos/{repo}/labels"
+  requests_contain:
+    - "PUT /repos/e2e-owner/e2e-repo/environments/staging"

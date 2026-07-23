@@ -110,10 +110,9 @@ describe("scenario schema", () => {
     ).toThrow(/denial_style/);
   });
 
-  test("a missing required field is reported against its path", () => {
-    // settings is required; the error names it.
+  test("a scenario declaring neither settings nor settings_raw is rejected", () => {
     expect(() => parseScenario({ name: "x", expect: { exit_code: 0 } }, "d.yml")).toThrow(
-      /settings/,
+      /one of `settings` or `settings_raw` is required/,
     );
   });
 
@@ -133,6 +132,40 @@ describe("scenario schema", () => {
         "both.yml",
       ),
     ).toThrow(/only one of `settings` or `settings_raw`/);
+  });
+
+  test("rejects a top-level scenario that sets both `settings` and `settings_raw`", () => {
+    expect(() =>
+      parseScenario(
+        { name: "x", settings: {}, settings_raw: "labels: [oops", expect: { exit_code: 0 } },
+        "both.yml",
+      ),
+    ).toThrow(/only one of `settings` or `settings_raw`/);
+  });
+
+  test("accepts a single-repo scenario with only settings_raw, kept verbatim", () => {
+    const s = parseScenario(
+      { name: "x", settings_raw: "labels: [oops, unclosed", expect: { exit_code: 0 } },
+      "raw.yml",
+    );
+    expect(s.settings_raw).toBe("labels: [oops, unclosed");
+    expect(s.settings).toBeUndefined();
+  });
+
+  test("rejects a top-level settings_raw on a multi-repo scenario", () => {
+    // The single-repo settings file is never read in multi mode, so a top-level
+    // settings_raw there would be silently dead configuration.
+    expect(() =>
+      parseScenario(
+        {
+          name: "x",
+          settings_raw: "labels: [oops",
+          repos: { "e2e-owner/svc-a": { settings: {} } },
+          expect: { exit_code: 0 },
+        },
+        "multi-raw.yml",
+      ),
+    ).toThrow(/single-repo only/);
   });
 
   test("accepts the numeric denial styles", () => {

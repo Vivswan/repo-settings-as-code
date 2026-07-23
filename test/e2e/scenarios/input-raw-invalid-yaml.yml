@@ -1,0 +1,15 @@
+# The single-repo settings file is local and operator-authored, read and
+# parsed BEFORE the API client is ever used. Raw invalid YAML (an unclosed
+# flow sequence, servable only via settings_raw - a serialized object always
+# parses) must fail the run at that read with the actionable "valid YAML"
+# advice, and the mock must see ZERO requests: a parse failure that reached
+# the API first would mean the action touched the repo on garbage input.
+name: input-raw-invalid-yaml
+settings_raw: "labels: [oops, unclosed"
+expect:
+  exit_code: 1
+  result: failed
+  stdout_contains:
+    - "cannot read settings from"
+    - "is valid YAML"
+  zero_requests: true

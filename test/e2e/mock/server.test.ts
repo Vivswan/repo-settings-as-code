@@ -733,6 +733,40 @@ describe("writes mutate state", () => {
     expect(singleState(h).labels).toHaveLength(1);
   });
 
+  test("label create and update preserve passthrough fields the section diffs", async () => {
+    // The labels section sends unknown (future) fields verbatim and subsetDiffs
+    // them on the next read; a mock that dropped them would make a converged
+    // second apply read as drift and re-PATCH, falsely failing the
+    // COMPARE_BEFORE_WRITE zero-write assertion.
+    const h = await start(scenario());
+    const created = await call(h, "POST", labelsPath, {
+      body: { name: "feature", color: "00ff00", tone: "warm" },
+    });
+    expect(created.status).toBe(201);
+    let list = await jsonArray(await call(h, "GET", labelsPath));
+    expect(list[0]?.tone).toBe("warm");
+    // Known fields stay normalized over the spread payload.
+    expect(list[0]?.default).toBe(false);
+    const patched = await call(h, "PATCH", `${labelsPath}/feature`, {
+      body: {
+        new_name: "feature",
+        tone: "cool",
+        id: 999,
+        node_id: "FAKE",
+        url: "u",
+        default: true,
+      },
+    });
+    expect(patched.status).toBe(200);
+    list = await jsonArray(await call(h, "GET", labelsPath));
+    expect(list[0]?.tone).toBe("cool");
+    // The server-owned fields survive a PATCH payload that tries to set them.
+    expect(list[0]?.id).not.toBe(999);
+    expect(list[0]?.node_id).not.toBe("FAKE");
+    expect(list[0]?.url).not.toBe("u");
+    expect(list[0]?.default).toBe(false);
+  });
+
   test("a branch protection PUT stores the flattened GET shape; DELETE clears it", async () => {
     const h = await start(scenario());
     const branch = `/repos/${OWNER}/${REPO}/branches/main/protection`;
@@ -869,6 +903,135 @@ describe("chaos hook", () => {
       await expect((await call(h, "GET", labelsPath)).json()).rejects.toThrow();
     }
     expect(await jsonArray(await call(h, "GET", labelsPath))).toEqual([]);
+  });
+});
+
+describe("core-route faults and server_error", () => {
+  const RAW_ACCEPT = "application/vnd.github.raw+json";
+  const contentsPath = (slug: string) => `/repos/${slug}/contents/.github/settings.yml`;
+
+  test("assertFaultKeys accepts registered core keys and still rejects unknown ones", () => {
+    expect(() =>
+      assertFaultKeys([{ key: "core.contentsGet", kind: "server_error" }], undefined),
+    ).not.toThrow();
+    expect(() =>
+      assertFaultKeys(undefined, { key: "core.discoveryList", mode: "invalid_json" }),
+    ).not.toThrow();
+    expect(() => assertFaultKeys([{ key: "core.bogus", kind: "server_error" }], undefined)).toThrow(
+      /unknown endpoint/,
+    );
+  });
+
+  test("server_error rotates 500/502/503 on the fire count, then serves the real response", async () => {
+    const h = await start(scenario(), {
+      faults: [{ key: "labels.list", kind: "server_error", times: 4 }],
+    });
+    const statuses: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      statuses.push((await call(h, "GET", labelsPath)).status);
+    }
+    // Deterministic rotation, wrapping after 503; the 5th request is real.
+    expect(statuses).toEqual([500, 502, 503, 500, 200]);
+    expect(h.faultCounts.get("labels.list")).toBe(4);
+  });
+
+  test("a core.contentsGet fault hits the settings fetch, then the real body follows", async () => {
+    const target = "e2e-owner/svc-a";
+    const h = await start(
+      scenario({ repos: { [target]: { settings: { labels: [{ name: "x" }] } } } }),
+      { faults: [{ key: "core.contentsGet", kind: "server_error" }] },
+    );
+    const faulted = await call(h, "GET", contentsPath(target), {
+      headers: { accept: RAW_ACCEPT },
+    });
+    expect(faulted.status).toBe(500);
+    const real = await call(h, "GET", contentsPath(target), { headers: { accept: RAW_ACCEPT } });
+    expect(real.status).toBe(200);
+    expect(await real.text()).toContain("labels");
+    expect(h.faultCounts.get("core.contentsGet")).toBe(1);
+    expect(h.violations).toHaveLength(0);
+  });
+
+  test("a contents fault cannot mask the missing-Accept violation", async () => {
+    const target = "e2e-owner/svc-a";
+    const h = await start(scenario({ repos: { [target]: { settings: {} } } }), {
+      faults: [{ key: "core.contentsGet", kind: "server_error" }],
+    });
+    const res = await call(h, "GET", contentsPath(target));
+    expect(res.status).toBe(400);
+    expect(h.violations.some((v) => v.includes("Accept"))).toBe(true);
+    // The violation answered; the fault did not fire (and so never masked it).
+    expect(h.faultCounts.get("core.contentsGet")).toBeUndefined();
+  });
+
+  test("an UNKNOWN-target contents request cannot steal a core.contentsGet fault", async () => {
+    // Target resolution comes before the fault hook: a request for a slug the
+    // multi state does not know keeps its plain 404 and must not consume the
+    // fault budget, which stays armed for the legitimate target.
+    const target = "e2e-owner/svc-a";
+    const h = await start(
+      scenario({ repos: { [target]: { settings: { labels: [{ name: "x" }] } } } }),
+      { faults: [{ key: "core.contentsGet", kind: "server_error" }] },
+    );
+    const ghost = await call(h, "GET", contentsPath("e2e-owner/ghost"), {
+      headers: { accept: RAW_ACCEPT },
+    });
+    expect(ghost.status).toBe(404);
+    expect(h.faultCounts.get("core.contentsGet")).toBeUndefined();
+    const faulted = await call(h, "GET", contentsPath(target), {
+      headers: { accept: RAW_ACCEPT },
+    });
+    expect(faulted.status).toBe(500);
+    expect(h.faultCounts.get("core.contentsGet")).toBe(1);
+  });
+
+  test("a core.discoveryList fault answers 5xx on /user/repos, then the pool", async () => {
+    const h = await start(
+      scenario({ discovery: { inputs: {}, pool: [{ slug: "e2e-owner/repo-0" }] } }),
+      { faults: [{ key: "core.discoveryList", kind: "server_error", times: 2 }] },
+    );
+    expect((await call(h, "GET", "/user/repos")).status).toBe(500);
+    expect((await call(h, "GET", "/user/repos")).status).toBe(502);
+    const real = await call(h, "GET", "/user/repos");
+    expect(real.status).toBe(200);
+    expect(await jsonArray(real)).toHaveLength(1);
+    expect(h.faultCounts.get("core.discoveryList")).toBe(2);
+  });
+
+  test("a core.issueCreate fault fires before the create mutates state", async () => {
+    const target = "e2e-owner/svc-priv";
+    const h = await start(
+      scenario({
+        inputs: { private_report: "issue" },
+        repos: {
+          [target]: {
+            settings: {},
+            live_state: { repo: { private: true, visibility: "private" } },
+          },
+        },
+      }),
+      { faults: [{ key: "core.issueCreate", kind: "server_error" }] },
+    );
+    const faulted = await call(h, "POST", `/repos/${target}/issues`, {
+      body: { title: "x", body: "y" },
+    });
+    expect(faulted.status).toBe(500);
+    expect(h.multi?.repos.get(target)?.issues).toHaveLength(0);
+    const retried = await call(h, "POST", `/repos/${target}/issues`, {
+      body: { title: "x", body: "y" },
+    });
+    expect(retried.status).toBe(201);
+    expect(h.multi?.repos.get(target)?.issues).toHaveLength(1);
+    expect(h.violations).toHaveLength(0);
+  });
+
+  test("a core-route corruption mangles the discovery listing, honoring times", async () => {
+    const h = await start(
+      scenario({ discovery: { inputs: {}, pool: [{ slug: "e2e-owner/repo-0" }] } }),
+      { corrupt: { key: "core.discoveryList", mode: "invalid_json" } },
+    );
+    await expect((await call(h, "GET", "/user/repos")).json()).rejects.toThrow();
+    expect(await jsonArray(await call(h, "GET", "/user/repos"))).toHaveLength(1);
   });
 });
 

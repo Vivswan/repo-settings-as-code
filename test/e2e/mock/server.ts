@@ -51,6 +51,13 @@ export interface MockHandle {
   requests: LoggedRequest[];
   violations: string[];
   /**
+   * How many times each injected fault key actually FIRED (key -> count), live
+   * over the run. A fuzz/scenario consumer asserts non-vacuity against it: an
+   * injected fault whose key never appears here targeted a route the run never
+   * reached, so the iteration proved nothing about fault handling.
+   */
+  faultCounts: ReadonlyMap<string, number>;
+  /**
    * Arm the check-mode write barrier for all SUBSEQUENT requests. One-way (no
    * exit): the convergence re-run spawns a check-mode child against this same
    * already-running server, whose scenario is still apply-mode, so the runner
@@ -222,6 +229,7 @@ export async function startMockServer(
     multi,
     requests,
     violations,
+    faultCounts: runState.faultCounts,
     enterCheckMode() {
       checkModeOverride = true;
     },

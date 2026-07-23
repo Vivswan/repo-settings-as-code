@@ -1,0 +1,42 @@
+# Core-route fault isolation. A server_error fault on the settings-file
+# contents fetch (core.contentsGet) answers the rotating 5xx (500/502/503) on
+# the first three requests - exactly 1 + MAX_RETRIES, all consumed by the FIRST
+# target's fetch and its retries - so svc-faulted's settings never load and that
+# target fails with the transport error. The second target's fetch arrives after
+# the fault budget is spent, succeeds, and applies normally: a faulted core
+# route is isolated per target, exactly like a failing section.
+name: multi-contents-server-error-isolated
+settings: {}
+faults:
+  - endpoint: core.contentsGet
+    kind: server_error
+    times: 3
+repos:
+  e2e-owner/svc-faulted:
+    settings:
+      labels:
+        - name: never-applied
+          color: "d73a4a"
+    expect:
+      result: failed
+  e2e-owner/svc-ok:
+    settings:
+      labels:
+        - name: healthy
+          color: "00ff00"
+    expect:
+      result: applied
+token_permissions:
+  contents: read
+  issues: write
+expect:
+  exit_code: 1
+  result: failed
+  # The last (third) faulted attempt is the one the client surfaces, and the
+  # rotation is deterministic (500, 502, 503), so the annotation names 503.
+  stdout_contains:
+    - "failed: 503"
+  mutations:
+    - "POST /repos/e2e-owner/svc-ok/labels"
+  never:
+    - "POST /repos/e2e-owner/svc-faulted/labels"

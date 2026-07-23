@@ -1,0 +1,32 @@
+# Multi-repo apply is a fixpoint, redaction included. Run 1 applies labels on a
+# public and a private (redacted) target; the second apply
+# (expect.apply_idempotent) must issue no writes at all - labels compare before
+# writing - and leave every per-slug state unchanged, and the final check run
+# reads back clean. The private target keeps the redaction path (visibility
+# probe, placeholder keying) in the loop across all three runs. No report
+# channel: the issue channel is rejected under apply_idempotent because its
+# delivery timestamps and marker-label injection make no run a fixpoint.
+name: multi-apply-idempotent
+settings: {}
+repos:
+  e2e-owner/svc-public:
+    settings:
+      labels:
+        - name: stable
+          color: "0e8a16"
+  e2e-owner/svc-private:
+    settings:
+      labels:
+        - name: internal
+          color: "d73a4a"
+    live_state:
+      repo:
+        private: true
+        visibility: private
+expect:
+  exit_code: 0
+  result: applied
+  apply_idempotent: true
+  repos_result:
+    e2e-owner/svc-public: applied
+    "private repository #1": applied

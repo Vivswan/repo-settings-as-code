@@ -354,8 +354,8 @@ describe("genScenario", () => {
   test("produces internally consistent, schema-valid scenarios with sound meta", () => {
     for (let i = 0; i < 200; i++) {
       const { scenario, meta } = genScenario(new Rng(i));
-      expect(() => validateAgainstPublishedSchema(scenario.settings)).not.toThrow();
-      const declared = new Set(Object.keys(scenario.settings) as SectionKey[]);
+      expect(() => validateAgainstPublishedSchema(scenario.settings ?? {})).not.toThrow();
+      const declared = new Set(Object.keys(scenario.settings ?? {}) as SectionKey[]);
       for (const section of meta.requiredSections) {
         expect(declared.has(section)).toBe(true);
       }
@@ -371,7 +371,7 @@ describe("genScenario", () => {
   test("honors the sections option", () => {
     for (let i = 0; i < 30; i++) {
       const { scenario, meta } = genScenario(new Rng(i), { sections: ["labels"] });
-      expect(Object.keys(scenario.settings)).toEqual(["labels"]);
+      expect(Object.keys(scenario.settings ?? {})).toEqual(["labels"]);
       expect(meta.sections).toEqual(["labels"]);
     }
   });
@@ -410,14 +410,14 @@ describe("genScenario", () => {
     // path must appear in the seeded live_state.
     for (let i = 0; i < 200; i++) {
       const { scenario } = genScenario(new Rng(i));
-      const branches = scenario.settings.branches as Array<{ name: string }> | undefined;
+      const branches = scenario.settings?.branches as Array<{ name: string }> | undefined;
       if (branches) {
         const live = new Set((scenario.live_state?.branches as string[] | undefined) ?? []);
         for (const b of branches) {
           expect(live.has(b.name)).toBe(true);
         }
       }
-      const workflows = scenario.settings.workflows as Array<{ path: string }> | undefined;
+      const workflows = scenario.settings?.workflows as Array<{ path: string }> | undefined;
       if (workflows) {
         const livePaths = new Set(
           ((scenario.live_state?.workflows as Array<{ path: string }> | undefined) ?? []).map(

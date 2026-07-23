@@ -163,10 +163,31 @@ export const ExpectSchema = z
      */
     requests_contain: z.array(z.string()).optional(),
     /**
+     * When true, the mock must have received ZERO requests: the failure under
+     * test (e.g. a settings_raw parse failure, read from the local filesystem
+     * before the client is ever used) must fire before any API contact. The
+     * same invariant the input fuzzer asserts, available to curated scenarios.
+     */
+    zero_requests: z.boolean().optional(),
+    /**
      * When true, the runner reruns the scenario in check mode against the SAME
      * mutated mock and expects exit 0 with zero writes (the convergence proof).
      */
     converges: z.boolean().optional(),
+    /**
+     * When true, the runner re-runs the scenario in APPLY mode a second time
+     * against the SAME mutated mock and proves apply is a fixpoint: the second
+     * apply exits 0; no compare-before-write section (COMPARE_BEFORE_WRITE in
+     * apply-idempotence.ts) issues a write; the mock's working state is
+     * unchanged family by family (unconditional-PUT sections may write again,
+     * but must rewrite the same state); and a final check-mode run converges
+     * (exit 0, zero writes), so `converges` need not be set alongside.
+     * Requires an apply-mode scenario WITHOUT the issue report channel: that
+     * channel embeds a fresh timestamp in the report issue (state moves every
+     * run) and injects the marker label into the labels declaration, so no
+     * run under it is a fixpoint.
+     */
+    apply_idempotent: z.boolean().optional(),
     /**
      * Multi-repo: the expected per-target rollup, parsed from the action's
      * `repos-result` JSON output, keyed by "owner/name" slug -> result string
@@ -247,18 +268,26 @@ const DiscoverySchema = z
 
 /**
  * A transport-level fault the mock injects on the first `times` (default 1)
- * requests that match `endpoint` (a "section.role" key). These model failures
- * the permission/handler layers cannot: `rate_limit_403` answers 403 with "rate
- * limit" in the body (the client's classifier must read it as throttling, NOT a
- * permission denial); `429_then_200` answers 429 with Retry-After: 0 so the
- * client's retry plugin retries and the next request succeeds (the retry path,
- * fast under RETRY_BASE_MS=1); `connection_drop` destroys the socket before any
- * response (a network failure the client surfaces after its retries are spent).
+ * requests that match `endpoint` - a "section.role" key, or a core-route key
+ * from CORE_FAULT_KEYS in mock/routes.ts (e.g. "core.discoveryList" for the
+ * /user/repos discovery listing, "core.contentsGet" for the settings-file
+ * fetch, and the "core.issue*" / "core.reportLabelCreate" / "core.userGet"
+ * report routes). These model failures the permission/handler layers cannot:
+ * `rate_limit_403` answers 403 with "rate limit" in the body (the client's
+ * classifier must read it as throttling, NOT a permission denial);
+ * `429_then_200` answers 429 with Retry-After: 0 so the client's retry plugin
+ * retries and the next request succeeds (the retry path, fast under
+ * RETRY_BASE_MS=1); `server_error` answers a 5xx with a JSON message body,
+ * rotating 500/502/503 deterministically on the fault's fire count - the
+ * client retries 5xx, so times: 1 is a transient the run recovers from and
+ * times >= 3 (1 + MAX_RETRIES) exhausts the retries into a hard failure;
+ * `connection_drop` destroys the socket before any response (a network failure
+ * the client surfaces after its retries are spent).
  */
 const FaultSchema = z
   .object({
     endpoint: z.string(),
-    kind: z.enum(["rate_limit_403", "429_then_200", "connection_drop"]),
+    kind: z.enum(["rate_limit_403", "429_then_200", "connection_drop", "server_error"]),
     times: z.number().int().positive().optional(),
   })
   .strict();
@@ -268,7 +297,18 @@ export const ScenarioSchema = z
     name: z.string(),
     description: z.string().optional(),
     tiers: z.array(TierSchema).default(["mock"]),
-    settings: SettingsSchema,
+    settings: SettingsSchema.optional(),
+    /**
+     * The EXACT settings.yml text the single-repo run reads, written verbatim
+     * (no YAML round-trip), for inputs a serialized object cannot produce: raw
+     * unparseable YAML (the "cannot read settings ... valid YAML" path) or a
+     * document that parses to a non-mapping (the "must be a YAML mapping"
+     * validator path). The file is read from the LOCAL filesystem before any
+     * API call, so such a scenario must see zero requests (assert with
+     * expect.zero_requests). Exactly one of `settings`/`settings_raw` is set;
+     * a multi-repo target's raw file is `repos.<slug>.settings_raw` instead.
+     */
+    settings_raw: z.string().optional(),
     inputs: InputsSchema.optional(),
     /** Resource -> granted access; unspecified resources default to "write". */
     token_permissions: TokenPermissionsSchema.optional(),
@@ -295,7 +335,22 @@ export const ScenarioSchema = z
     faults: z.array(FaultSchema).optional(),
     expect: ExpectSchema,
   })
-  .strict();
+  .strict()
+  // Both fields define the served settings.yml, and setting both would
+  // silently favor one; setting neither leaves the run without a settings
+  // document at all. Reject each ambiguity loudly, mirroring MultiRepoSchema.
+  .refine((s) => !(s.settings !== undefined && s.settings_raw !== undefined), {
+    message: "set only one of `settings` or `settings_raw`, not both",
+  })
+  .refine((s) => s.settings !== undefined || s.settings_raw !== undefined, {
+    message: "one of `settings` or `settings_raw` is required",
+  })
+  // The single-repo settings file is not read at all in multi mode, so a
+  // top-level settings_raw there would be silently dead configuration.
+  .refine((s) => s.settings_raw === undefined || (!s.repos && !s.discovery), {
+    message:
+      "settings_raw is single-repo only; a multi-repo target's raw file is `repos.<slug>.settings_raw`",
+  });
 
 export type Tier = z.infer<typeof TierSchema>;
 export type MaskKey = z.infer<typeof MaskKeySchema>;

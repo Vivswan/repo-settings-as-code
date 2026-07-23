@@ -1,12 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { parseRecipient } from "../../src/report/artifact-report.js";
 import { ARTIFACT_TEST_RECIPIENT } from "./generators.js";
+import type { LoggedRequest } from "./mock/routes.js";
 import {
+  changedFamilies,
   checkLeaks,
   forbiddenPresent,
   isSubsequence,
   parseGithubOutput,
   parseSummaryOutcomes,
+  secondApplyWriteFailures,
   stripDebugLines,
   stripMaskLines,
 } from "./runner.js";
@@ -227,5 +230,77 @@ describe("checkLeaks (redaction leak invariant)", () => {
     expect(checkLeaks(observed, ["acme/secret"])).toEqual([
       'leak: "acme/secret" present in the "repos-result" output',
     ]);
+  });
+});
+
+describe("secondApplyWriteFailures (apply-idempotence zero-write subset)", () => {
+  const write = (method: string, pathname: string): LoggedRequest => ({
+    method,
+    pathname,
+    query: "",
+    status: 200,
+  });
+
+  test("a write to a compare-before-write section fires the assertion", () => {
+    const failures = secondApplyWriteFailures([write("POST", "/repos/e2e-owner/e2e-repo/labels")]);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain('"labels"');
+    expect(failures[0]).toContain("compares before writing");
+  });
+
+  test("a write to an unconditional-PUT section passes", () => {
+    // Rulesets and environments PUT existing resources on every apply, so a
+    // second-apply write there is legitimate; only state stability binds them.
+    expect(
+      secondApplyWriteFailures([
+        write("PUT", "/repos/e2e-owner/e2e-repo/rulesets/90000000"),
+        write("PUT", "/repos/e2e-owner/e2e-repo/environments/production"),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("a write matching no section endpoint fires the outside-section failure", () => {
+    // Report traffic (the issue channel) is the realistic offender: an
+    // idempotence re-run must not deliver a report at all.
+    const failures = secondApplyWriteFailures([
+      write("POST", "/repos/e2e-owner/svc-private/issues"),
+    ]);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain("outside any section endpoint");
+  });
+
+  test("every compare-before-write section's own writes are flagged, per offender", () => {
+    const failures = secondApplyWriteFailures([
+      write("PATCH", "/repos/e2e-owner/e2e-repo/labels/bug"),
+      write("POST", "/repos/e2e-owner/e2e-repo/milestones"),
+      write("DELETE", "/repos/e2e-owner/e2e-repo/autolinks/1"),
+      write("PUT", "/repos/e2e-owner/e2e-repo/collaborators/alice"),
+      write("PUT", "/repos/e2e-owner/e2e-repo/actions/workflows/7/enable"),
+    ]);
+    expect(failures).toHaveLength(5);
+  });
+});
+
+describe("changedFamilies (apply-idempotence state stability)", () => {
+  test("names exactly the families whose serialized state moved", () => {
+    const before = new Map([
+      ["state.labels", '[{"name":"bug"}]'],
+      ["state.rulesets", "[]"],
+    ]);
+    const after = new Map([
+      ["state.labels", "[]"],
+      ["state.rulesets", "[]"],
+    ]);
+    expect(changedFamilies(before, after)).toEqual(["state.labels"]);
+  });
+
+  test("identical snapshots report no change", () => {
+    const snap = new Map([["state.repo", '{"name":"x"}']]);
+    expect(changedFamilies(snap, new Map(snap))).toEqual([]);
+  });
+
+  test("a family present on only one side counts as changed", () => {
+    expect(changedFamilies(new Map(), new Map([["a/b.issues", "[]"]]))).toEqual(["a/b.issues"]);
+    expect(changedFamilies(new Map([["a/b.issues", "[]"]]), new Map())).toEqual(["a/b.issues"]);
   });
 });

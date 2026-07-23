@@ -1,0 +1,48 @@
+# Apply is a fixpoint across write disciplines. One apply converges a mixed bag
+# of sections; the second apply (expect.apply_idempotent) must then be
+# write-QUIET for every compare-before-write section here (labels, milestones,
+# autolinks, collaborators, workflows), may re-PUT the unconditional ones
+# (rulesets, environments), and must leave the mock state byte-identical either
+# way; a final check run reads back clean with zero writes. This pins the
+# payload/read-back round trip for the quiet sections and state stability for
+# the loud ones.
+name: apply-idempotent-mixed
+settings:
+  labels:
+    - name: bug
+      color: d73a4a
+    - name: feature
+      color: "00ff00"
+      description: new functionality
+  milestones:
+    - title: v1
+      state: open
+      description: first release
+  autolinks:
+    - key_prefix: "TICKET-"
+      url_template: "https://example.com/TICKET-<num>"
+  collaborators:
+    - username: alice
+      permission: push
+  workflows:
+    - path: ci.yml
+      state: active
+  rulesets:
+    - name: main-protect
+      target: branch
+      enforcement: active
+  environments:
+    - name: production
+      wait_timer: 30
+live_state:
+  # Workflows cannot be created by the action, so the file must already exist;
+  # it starts disabled so the first apply has a real enable to perform.
+  workflows:
+    - id: 7
+      name: CI
+      path: .github/workflows/ci.yml
+      state: disabled_manually
+expect:
+  exit_code: 0
+  result: applied
+  apply_idempotent: true

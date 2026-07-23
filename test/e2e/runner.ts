@@ -17,8 +17,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 import { MARKER_LABEL } from "../../src/report/issue-report.js";
-import type { LoggedRequest } from "./mock/routes.js";
-import { type ServerOptions, startMockServer } from "./mock/server.js";
+import { COMPARE_BEFORE_WRITE } from "./apply-idempotence.js";
+import { type LoggedRequest, sectionForRequest } from "./mock/routes.js";
+import { type MockHandle, type ServerOptions, startMockServer } from "./mock/server.js";
+import type { MockState } from "./mock/state.js";
 import { sharedValidator } from "./openapi/validate.js";
 import type { Expect, Scenario } from "./schema.js";
 
@@ -48,6 +50,23 @@ export interface ScenarioReport {
   artifactDir?: string;
   /** Full request log snapshot, for coverage and validation consumers. */
   requests: LoggedRequest[];
+  /**
+   * How many times each injected fault key fired during the PRIMARY invocation
+   * (key -> count), snapshotted immediately after it - the optional re-runs
+   * (converges / apply_idempotent) never inflate it, so it describes the same
+   * run as exitCode/outputs/reposResult. The fuzzer's non-vacuity assertion
+   * reads it: a declared fault absent from this map never fired, so the
+   * iteration did not actually test fault handling.
+   */
+  faultsFired: Record<string, number>;
+  /**
+   * The multi-repo per-target rollup, parsed from the `repos-result` output:
+   * display key (the slug, or "private repository #N" under redaction) ->
+   * result string. Empty for single-repo runs AND for multi runs that failed
+   * before any target executed - a config or discovery fatal never writes the
+   * output, which is the mechanical marker for "no per-target results exist".
+   */
+  reposResult: Record<string, string>;
 }
 
 /** The result of one child process invocation against a running mock. */
@@ -175,6 +194,16 @@ function expectedReposResult(scenario: Scenario): Record<string, string> | null 
     merged[slug] = want;
   }
   return Object.keys(merged).length > 0 ? merged : null;
+}
+
+/**
+ * The settings.yml body the single-repo child reads: `settings_raw` verbatim
+ * when set (raw text can be unparseable YAML or a non-mapping document, which
+ * a serialized object cannot produce), else the settings object serialized to
+ * YAML. Mirrors settingsYamlFor in mock/server.ts for multi-repo targets.
+ */
+function settingsFileBody(scenario: Scenario): string {
+  return scenario.settings_raw ?? stringifyYaml(scenario.settings ?? {});
 }
 
 /** Build the child environment from scratch: nothing leaks from process.env. */
@@ -494,6 +523,161 @@ export function forbiddenPresent(patterns: string[], log: string[]): string[] {
 }
 
 /**
+ * One labeled entry per mutable state the mock holds: the single-repo state,
+ * or every per-slug repo state plus the shared org state in multi mode. The
+ * multi settings/permissions maps and the discovery pool are run CONFIG the
+ * pipeline never mutates, so they are not part of the stability snapshot.
+ */
+function mutableStates(handle: MockHandle): Array<[string, MockState]> {
+  if (handle.state) {
+    return [["state", handle.state]];
+  }
+  const out: Array<[string, MockState]> = [...(handle.multi?.repos ?? new Map())];
+  if (handle.multi) {
+    out.push(["(org)", handle.multi.orgState]);
+  }
+  return out;
+}
+
+/**
+ * Serialize every mutable state family to a "label.family" -> JSON map, so a
+ * before/after comparison can name exactly which repo and family moved instead
+ * of reporting one opaque inequality.
+ */
+function snapshotFamilies(handle: MockHandle): Map<string, string> {
+  const snapshot = new Map<string, string>();
+  for (const [label, state] of mutableStates(handle)) {
+    for (const [family, value] of Object.entries(state)) {
+      snapshot.set(`${label}.${family}`, JSON.stringify(value));
+    }
+  }
+  return snapshot;
+}
+
+/**
+ * The "label.family" keys whose serialized state differs between two
+ * snapshots, including keys present on only one side. Exported for direct
+ * testing, so the state-stability assertion is provably able to fire.
+ */
+export function changedFamilies(before: Map<string, string>, after: Map<string, string>): string[] {
+  return [...new Set([...before.keys(), ...after.keys()])]
+    .filter((key) => before.get(key) !== after.get(key))
+    .sort();
+}
+
+/**
+ * Classify the mutating requests a SECOND apply issued, one failure line per
+ * offender: a write matching no section endpoint is report/core traffic that
+ * has no business in an idempotence re-run, and a write to a
+ * compare-before-write section (COMPARE_BEFORE_WRITE) proves the engine's
+ * payload and its read-back no longer round-trip - that section diffs live
+ * state first, and the live state already matched. Writes to unconditional-PUT
+ * sections pass (their state stability is asserted separately). Exported for
+ * direct testing, so the zero-write assertion is provably able to fire.
+ */
+export function secondApplyWriteFailures(writes: LoggedRequest[]): string[] {
+  const failures: string[] = [];
+  for (const write of writes) {
+    const section = sectionForRequest(write.method, write.pathname);
+    if (section === null) {
+      failures.push(
+        `apply-idempotence: second apply wrote outside any section endpoint: ${write.method} ${write.pathname}`,
+      );
+      continue;
+    }
+    if (COMPARE_BEFORE_WRITE[section]) {
+      failures.push(
+        `apply-idempotence: second apply wrote to "${section}" (${write.method} ${write.pathname}), but that section compares before writing and the live state already matched`,
+      );
+    }
+  }
+  return failures;
+}
+
+/**
+ * The apply-idempotence proof (expect.apply_idempotent): re-run the scenario
+ * in apply mode against the SAME mutated mock and require apply to be a
+ * fixpoint. Three properties, each its own regression class:
+ *   - the second apply exits 0: a fresh apply over converged state must not
+ *     trip over its own output;
+ *   - no compare-before-write section writes (COMPARE_BEFORE_WRITE): those
+ *     sections diff live state before writing, so a write here means the
+ *     engine's payload and its read-back no longer round-trip;
+ *   - the mock state is unchanged family by family: unconditional-PUT sections
+ *     may write again, but a second apply must rewrite the SAME state.
+ * A final check-mode run then converges (exit 0, zero writes) - the same proof
+ * `converges` makes, so scenarios set one or the other, not both.
+ *
+ * The issue report channel is rejected, not neutralized: its delivery embeds a
+ * fresh ISO timestamp (the report issue legitimately moves every run), and it
+ * injects the marker label into the labels section's declared set - so
+ * flipping the channel off for the re-run would change what the labels section
+ * deletes, which is a different scenario, not a second run of this one.
+ */
+async function assertApplyIdempotent(
+  scenario: Scenario,
+  dir: string,
+  handle: MockHandle,
+): Promise<string[]> {
+  if (scenario.inputs?.mode === "check") {
+    return ["apply_idempotent requires an apply-mode scenario"];
+  }
+  if (scenario.inputs?.private_report === "issue") {
+    return [
+      "apply_idempotent cannot run under private_report: issue - the report issue embeds a fresh timestamp (state moves every run) and the injected marker label ties the labels declaration to the channel; use private_report: none or artifact",
+    ];
+  }
+  const failures: string[] = [];
+  const rerun: Scenario = { ...scenario, inputs: { ...scenario.inputs, mode: "apply" } };
+  const before = snapshotFamilies(handle);
+  const requestsBefore = handle.requests.length;
+  const violationsBefore = handle.violations.length;
+
+  const second = await invoke(rerun, dir, handle.url);
+  if (second.exitCode !== 0) {
+    failures.push(`apply-idempotence: second apply exited ${second.exitCode}, expected 0`);
+  }
+  const secondViolations = handle.violations.slice(violationsBefore);
+  if (secondViolations.length > 0) {
+    failures.push(`apply-idempotence: mock violations:\n  ${secondViolations.join("\n  ")}`);
+  }
+  const writes = handle.requests.slice(requestsBefore).filter((r) => r.method !== "GET");
+  failures.push(...secondApplyWriteFailures(writes));
+  const changed = changedFamilies(before, snapshotFamilies(handle));
+  if (changed.length > 0) {
+    failures.push(`apply-idempotence: second apply changed mock state: ${changed.join(", ")}`);
+  }
+
+  // A converged apply must read back clean: check mode, exit 0, zero writes.
+  const checkRequestsBefore = handle.requests.length;
+  const checkViolationsBefore = handle.violations.length;
+  handle.enterCheckMode();
+  const check = await invoke(
+    { ...rerun, inputs: { ...rerun.inputs, mode: "check" } },
+    dir,
+    handle.url,
+  );
+  if (check.exitCode !== 0) {
+    failures.push(
+      `apply-idempotence: the check run after the second apply exited ${check.exitCode}, expected 0`,
+    );
+  }
+  const checkWrites = handle.requests.slice(checkRequestsBefore).filter((r) => r.method !== "GET");
+  if (checkWrites.length > 0) {
+    failures.push(
+      `apply-idempotence: the check run wrote ${checkWrites.length} time(s): ${checkWrites.map((r) => renderRequest(r, false)).join(", ")}`,
+    );
+  }
+  const checkViolations = handle.violations.slice(checkViolationsBefore);
+  if (checkViolations.length > 0) {
+    failures.push(
+      `apply-idempotence: check-run mock violations:\n  ${checkViolations.join("\n  ")}`,
+    );
+  }
+  return failures;
+}
+
+/**
  * Run one scenario end to end: start a fresh mock, spawn the bundle, assert
  * every declared expectation in a fixed order (violations first, then exit
  * code, then outputs, outcomes, mutations, never-patterns, substring checks),
@@ -530,8 +714,13 @@ export async function runScenario(
         : {}),
       ...opts?.serverOptions,
     });
-    writeFileSync(join(dir, "settings.yml"), stringifyYaml(scenario.settings));
+    writeFileSync(join(dir, "settings.yml"), settingsFileBody(scenario));
     first = await invoke(scenario, dir, handle.url);
+    // Snapshot the fault fire counts NOW: every other report field (exit code,
+    // outputs, reposResult) describes this primary invocation, so a fault that
+    // only fires during an optional re-run (converges / apply_idempotent) must
+    // not read as non-vacuous for the primary outcome.
+    const faultsFired = Object.fromEntries(handle.faultCounts);
     const exp = scenario.expect;
 
     // 1. Mock-detected contract violations are always fatal and come first.
@@ -541,6 +730,18 @@ export async function runScenario(
     // 2. Exit code.
     if (first.exitCode !== exp.exit_code) {
       failures.push(`exit code ${first.exitCode} != expected ${exp.exit_code}`);
+    }
+    // 2b. Zero-request invariant: a failure that must fire before any API
+    // contact (e.g. a settings_raw parse failure, read from the local
+    // filesystem before the client is used) leaves the mock untouched.
+    if (exp.zero_requests && handle.requests.length > 0) {
+      const sample = handle.requests
+        .slice(0, 3)
+        .map((r) => renderRequest(r, false))
+        .join(", ");
+      failures.push(
+        `expected zero API requests, but the mock saw ${handle.requests.length}: ${sample}`,
+      );
     }
     // 3. The `result` output.
     if (exp.result !== undefined && first.outputs.result !== exp.result) {
@@ -650,6 +851,13 @@ export async function runScenario(
     if (exp.issue_report) {
       failures.push(...assertIssueReport(exp.issue_report, handle.requests));
     }
+    // 7d. Apply-idempotence: a second apply against the same mutated mock must
+    // be a fixpoint (see assertApplyIdempotent). Runs BEFORE the converges
+    // block because its own final step arms the one-way check-mode barrier,
+    // after which no further apply could run.
+    if (exp.apply_idempotent) {
+      failures.push(...(await assertApplyIdempotent(scenario, dir, handle)));
+    }
     // 8. Convergence: rerun in check mode against the SAME mutated server. Arm
     // the mock's check-mode write barrier first (the server still holds the
     // apply-mode scenario, so without this a stray write would not be a
@@ -700,6 +908,8 @@ export async function runScenario(
       stdout: first.stdout,
       stderr: first.stderr,
       requests: [...handle.requests],
+      faultsFired,
+      reposResult: parseReposResult(first.outputs["repos-result"]),
     };
     if (!report.ok) {
       report.artifactDir = dumpArtifacts(scenario, report, handle.requests);
