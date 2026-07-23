@@ -21,10 +21,20 @@ import { rmSync } from "node:fs";
 import type { SectionKey } from "../../src/schema.js";
 import {
   genDiscoveryScenario,
+  genLiveWitness,
   genMultiScenario,
   genScenario,
+  genSettings,
+  type LiveWitness,
+  type LiveWitnessKind,
   type MultiRepoMeta,
+  type ScenarioMeta,
+  validateAgainstPublishedSchema,
+  WITNESS_KINDS,
+  WITNESS_SECTIONS,
+  type WitnessSection,
 } from "./generators.js";
+import type { LoggedRequest } from "./mock/routes.js";
 import { predictDiscovery, predictMulti, predictOutcomes } from "./oracle.js";
 import { Rng } from "./prng.js";
 import {
@@ -77,16 +87,22 @@ function parseFlags(argv: string[]): Flags {
   return flags;
 }
 
-/** The master seed: flag, else FUZZ_SEED env, else a crypto-random 32-bit value. */
-function masterSeed(flags: Flags): number {
+/**
+ * The master seed and whether it was explicitly pinned: flag, else FUZZ_SEED
+ * env, else a crypto-random 32-bit value. `explicit` covers BOTH pinning
+ * styles, so replay detection treats `FUZZ_SEED=X --iterations 1` exactly
+ * like `--seed X --iterations 1`.
+ */
+function masterSeed(flags: Flags): { seed: number; explicit: boolean } {
   if (flags.seed !== undefined && Number.isFinite(flags.seed)) {
-    return flags.seed >>> 0;
+    return { seed: flags.seed >>> 0, explicit: true };
   }
-  const env = Number(process.env.FUZZ_SEED ?? "");
-  if (Number.isFinite(env) && env !== 0) {
-    return env >>> 0;
+  const raw = (process.env.FUZZ_SEED ?? "").trim();
+  const env = Number(raw);
+  if (raw !== "" && Number.isFinite(env)) {
+    return { seed: env >>> 0, explicit: true };
   }
-  return crypto.getRandomValues(new Uint32Array(1))[0] as number;
+  return { seed: crypto.getRandomValues(new Uint32Array(1))[0] as number, explicit: false };
 }
 
 interface IterationResult {
@@ -94,18 +110,67 @@ interface IterationResult {
   failure?: string;
   artifactDir?: string;
   sections: SectionKey[];
+  /** Mutation classes this run provably reached (witnessed sections only). */
+  coverage?: CoverageEvent[];
 }
 
 /**
- * Run one standard (single-repo) iteration: generate, predict, execute, and
- * check the observed outcome against the oracle's allowed classes. A run that
- * is fully granted also asserts convergence (the runner's converges machinery).
+ * A mutation class the coverage guard tracks per witnessed section. The write
+ * classes come from the mock's request log ("applied" alone does not prove a
+ * mutation happened; a successful PATCH in the log does); "clean" is a
+ * matching-witness check run that the engine reported clean.
  */
-async function standardIteration(
-  seed: number,
-  opts: { sections?: SectionKey[] },
-): Promise<IterationResult> {
-  const { scenario, meta } = genScenario(new Rng(seed), opts);
+type MutationClass = "create" | "update" | "delete" | "clean";
+
+type CoverageEvent = [WitnessSection, MutationClass];
+
+const CLASS_BY_METHOD: Record<string, MutationClass> = {
+  POST: "create",
+  PATCH: "update",
+  DELETE: "delete",
+};
+
+/**
+ * The mutation classes a run PROVABLY reached: successful (2xx) label and
+ * milestone writes from the mock's request log - a denied write mutated
+ * nothing and does not count - plus a "clean" event when a matching witness
+ * earned a clean check verdict.
+ */
+function witnessCoverage(
+  requests: LoggedRequest[],
+  meta: ScenarioMeta,
+  observed: Record<string, string>,
+): CoverageEvent[] {
+  const events: CoverageEvent[] = [];
+  for (const request of requests) {
+    const cls = CLASS_BY_METHOD[request.method];
+    if (cls === undefined || request.status < 200 || request.status >= 300) {
+      continue;
+    }
+    const section = request.pathname.includes("/labels")
+      ? "labels"
+      : request.pathname.includes("/milestones")
+        ? "milestones"
+        : undefined;
+    if (section !== undefined) {
+      events.push([section, cls]);
+    }
+  }
+  for (const key of WITNESS_SECTIONS) {
+    if (meta.liveKinds?.[key] === "matching" && observed[key] === "clean") {
+      events.push([key, "clean"]);
+    }
+  }
+  return events;
+}
+
+/**
+ * Run one generated single-repo scenario against its oracle prediction: the
+ * shared core of the standard random iteration and the directed witness
+ * battery. A fully-granted apply also asserts convergence (the runner's
+ * converges machinery).
+ */
+async function runPredicted(scenario: Scenario, meta: ScenarioMeta): Promise<IterationResult> {
   const prediction = predictOutcomes(meta);
   // The runner requires an expect.exit_code; we assert the exit code against
   // the oracle's ALLOWED SET in fuzz.ts instead (a set cannot be expressed as
@@ -160,7 +225,77 @@ async function standardIteration(
     failure: problems.length > 0 ? problems.join("; ") : undefined,
     artifactDir: report.artifactDir,
     sections: meta.sections,
+    coverage: witnessCoverage(report.requests, meta, observed),
   };
+}
+
+/**
+ * Run one standard (single-repo) iteration: generate, predict, execute, and
+ * check the observed outcome against the oracle's allowed classes.
+ */
+async function standardIteration(
+  seed: number,
+  opts: { sections?: SectionKey[] },
+): Promise<IterationResult> {
+  const { scenario, meta } = genScenario(new Rng(seed), opts);
+  return runPredicted(scenario, meta);
+}
+
+/**
+ * A directed witness iteration: one (section, witness kind, mode) with a fully
+ * granted token and warn policy, so the witness alone decides the outcome
+ * class. The random stream reaches these combinations only probabilistically;
+ * this battery makes the mutation-class coverage guard deterministic, so a
+ * generator regression that stops producing real witnesses fails the run
+ * instead of silently starving the histogram.
+ */
+async function witnessIteration(
+  seed: number,
+  key: WitnessSection,
+  kind: LiveWitnessKind,
+  mode: "apply" | "check",
+): Promise<IterationResult> {
+  const rng = new Rng(seed);
+  // milestones' drift-update degrades to matching when no milestone declares a
+  // perturbable field; redraw (deterministically) until the kind holds.
+  let settings: unknown;
+  let witness: LiveWitness | undefined;
+  for (let attempt = 0; attempt < 20 && witness?.kind !== kind; attempt++) {
+    const draw = rng.fork(`draw:${attempt}`);
+    settings = genSettings(draw.fork("settings"), key);
+    witness = genLiveWitness(draw.fork("live"), key, settings, kind);
+  }
+  if (witness === undefined || witness.kind !== kind) {
+    return {
+      ok: false,
+      failure: `could not draw a "${kind}" ${key} witness in 20 attempts`,
+      sections: [key],
+    };
+  }
+
+  const settingsDoc = { [key]: settings };
+  validateAgainstPublishedSchema(settingsDoc);
+  const meta: ScenarioMeta = {
+    sections: [key],
+    mask: {},
+    mode,
+    policy: "warn",
+    ownerKind: "org",
+    denialStyle: "fine_grained",
+    requiredSections: [],
+    liveKinds: { [key]: witness.kind },
+  };
+  const scenario: Scenario = {
+    name: `fuzz-witness-${key}-${kind}-${mode}-${seed}`,
+    tiers: ["mock"],
+    settings: settingsDoc,
+    inputs: { mode, on_missing_permission: "warn" },
+    denial_style: "fine_grained",
+    owner_kind: "org",
+    live_state: witness.state,
+    expect: { exit_code: 0 },
+  };
+  return runPredicted(scenario, meta);
 }
 
 /**
@@ -586,20 +721,29 @@ async function discoveryFuzzIteration(seed: number): Promise<IterationResult> {
 
 async function main(): Promise<number> {
   const flags = parseFlags(process.argv.slice(2));
-  const master = masterSeed(flags);
-  // Replay convenience: `--seed <iterSeed> --iterations 1` runs that exact
-  // iteration seed, so a failing iteration reproduces directly from its
-  // printed seed. Otherwise the per-iteration seed is hash(master, i).
-  const replayOne = flags.iterations === 1 && flags.seed !== undefined;
+  const { seed: master, explicit } = masterSeed(flags);
+  // Replay convenience: one iteration under an EXPLICIT seed (--seed flag or
+  // FUZZ_SEED env, treated identically) runs that exact iteration seed, so a
+  // failing iteration reproduces directly from its printed seed. Otherwise
+  // the per-iteration seed is hash(master, i).
+  const replayOne = flags.iterations === 1 && explicit;
   console.log(`fuzz master seed: ${master} (replay: --seed ${master})`);
   console.log(`iterations: ${flags.iterations}`);
 
   const coverage = new Map<SectionKey, number>();
+  const mutationHistogram = new Map<WitnessSection, Map<MutationClass, number>>();
+  const recordCoverage = (events: CoverageEvent[] | undefined): void => {
+    for (const [section, cls] of events ?? []) {
+      const counts = mutationHistogram.get(section) ?? new Map<MutationClass, number>();
+      counts.set(cls, (counts.get(cls) ?? 0) + 1);
+      mutationHistogram.set(section, counts);
+    }
+  };
   const failingSeeds: number[] = [];
   let failures = 0;
 
   for (let i = 0; i < flags.iterations; i++) {
-    const seed = replayOne ? (flags.seed as number) : iterationSeed(master, i);
+    const seed = replayOne ? master : iterationSeed(master, i);
     // Mode selection over an 8-way roll: ~1/4 multi-repo (when enabled), 1/8
     // input fuzz, 1/8 chaos, 1/8 discovery, the rest standard single-repo.
     const roll = new Rng(seed ^ 0x5bd1e995).int(8);
@@ -624,6 +768,7 @@ async function main(): Promise<number> {
     for (const section of result.sections) {
       coverage.set(section, (coverage.get(section) ?? 0) + 1);
     }
+    recordCoverage(result.coverage);
     if (!result.ok) {
       failures++;
       failingSeeds.push(seed);
@@ -654,18 +799,90 @@ async function main(): Promise<number> {
     }
   }
 
+  // Directed witness battery: every (section, witness kind, mode) combination,
+  // deterministically derived from the master seed. The random stream reaches
+  // these only probabilistically, so the mutation-class guard below would be
+  // flaky without it. Skipped on a single-seed replay, which reproduces one
+  // random iteration and must not drag ten extra runs along.
+  let batteryFailures = 0;
+  if (!replayOne) {
+    const combos: Array<[WitnessSection, LiveWitnessKind, "apply" | "check"]> = [];
+    for (const key of WITNESS_SECTIONS) {
+      for (const kind of WITNESS_KINDS[key]) {
+        combos.push([key, kind, "apply"], [key, kind, "check"]);
+      }
+    }
+    console.log("\nwitness battery (directed live-state witnesses):");
+    for (const [index, [key, kind, mode]] of combos.entries()) {
+      const seed = iterationSeed(master, 0x100000 + index);
+      const result = await witnessIteration(seed, key, kind, mode);
+      recordCoverage(result.coverage);
+      if (result.ok) {
+        if (result.artifactDir) {
+          rmSync(result.artifactDir, { recursive: true, force: true });
+        }
+        console.log(`  ${key}/${kind}/${mode} ok`);
+        continue;
+      }
+      batteryFailures++;
+      console.log(`  ${key}/${kind}/${mode} seed ${seed} FAIL: ${result.failure}`);
+      // `--iterations 0` runs ZERO random iterations and then the battery, so
+      // this command reproduces exactly the failing battery (which derives
+      // from the master seed alone) without re-running the random stream.
+      console.log(`    replay: bun test/e2e/fuzz.ts --seed ${master} --iterations 0`);
+      if (result.artifactDir) {
+        console.log(`    artifact: ${result.artifactDir}`);
+      }
+    }
+  }
+
   console.log("\ncoverage (sections exercised):");
   for (const key of [...coverage.keys()].sort()) {
     console.log(`  ${key}: ${coverage.get(key)}`);
   }
+  // The mutation-class guard: over the whole run (random stream + battery),
+  // labels must provably reach an update write, a delete write, and a clean
+  // verdict; milestones an update write and a clean verdict (delete is
+  // labels-only by design - milestones keep undeclared entries). "create" is
+  // tracked in the histogram but not required: it needs absent live state,
+  // which the battery deliberately never seeds.
+  const REQUIRED_CLASSES: Record<WitnessSection, MutationClass[]> = {
+    labels: ["update", "delete", "clean"],
+    milestones: ["update", "clean"],
+  };
+  console.log("\nmutation-class coverage (successful writes from the mock's request log):");
+  let coverageFailures = 0;
+  for (const key of WITNESS_SECTIONS) {
+    const counts = mutationHistogram.get(key) ?? new Map<MutationClass, number>();
+    const rendered =
+      [...counts.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([cls, count]) => `${cls}=${count}`)
+        .join(" ") || "(none)";
+    console.log(`  ${key}: ${rendered}`);
+    if (replayOne) {
+      continue;
+    }
+    const missing = REQUIRED_CLASSES[key].filter((cls) => !counts.has(cls));
+    if (missing.length > 0) {
+      coverageFailures++;
+      console.log(
+        `  ${key}: MISSING required class(es) ${missing.join(", ")} - the witness generator or the engine stopped producing real mutations`,
+      );
+    }
+  }
+
   console.log(`\n${flags.iterations - failures}/${flags.iterations} iterations ok`);
+  if (batteryFailures > 0) {
+    console.log(`witness battery failures: ${batteryFailures}`);
+  }
   if (failingSeeds.length > 0) {
     console.log(`failing seeds: ${failingSeeds.join(", ")}`);
     console.log(
       "replay one with the per-failure `replay:` line above (it carries --sections when set)",
     );
   }
-  return failures > 0 ? 1 : 0;
+  return failures + batteryFailures + coverageFailures > 0 ? 1 : 0;
 }
 
 try {

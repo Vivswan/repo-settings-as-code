@@ -83,12 +83,32 @@ export interface SectionPrediction {
 /**
  * Predict one section's allowed outcome set from its grade, the mode, policy,
  * denial style, and its denial semantics. Mirrors the plan's rule table.
+ *
+ * When the generator seeded a live-state WITNESS for the section (labels or
+ * milestones), the prediction tightens from {clean, drift} to the exact
+ * outcome the witness dictates. The permission/mode/policy fold always comes
+ * FIRST: a denied or preflight-aborted section stays skipped/failed no matter
+ * what the live state looks like; the witness only refines outcomes that are
+ * still reachable successes.
  */
 export function predictSection(key: SectionKey, meta: ScenarioMeta): SectionPrediction {
   const grade = sectionGrade(key, meta.mask, meta.orgMask ?? meta.mask);
   const check = meta.mode === "check";
   const required = meta.requiredSections.includes(key);
   const semantics = DENIAL_SEMANTICS[key];
+  const witness = meta.liveKinds?.[key];
+  // A declared section outside the `sections` allowlist never runs: the engine
+  // reports it "excluded" before any read (orchestrate.ts), so exclusion folds
+  // before EVERYTHING - grades, denial semantics, and witnesses alike. An
+  // EMPTY allowlist means unrestricted, mirroring orchestrate.ts's size > 0
+  // gate, so only a non-empty list excludes.
+  if (
+    meta.onlySections !== undefined &&
+    meta.onlySections.length > 0 &&
+    !meta.onlySections.includes(key)
+  ) {
+    return { key, grade, allowed: new Set(["excluded"]), mayWrite: false };
+  }
   // teams on a personal account no-ops regardless of mask: the org probe 404s,
   // the section returns with only a note, so check reports clean and apply
   // reports applied - never both in one mode.
@@ -97,6 +117,16 @@ export function predictSection(key: SectionKey, meta: ScenarioMeta): SectionPred
   }
 
   if (grade === "write") {
+    if (witness === "matching") {
+      // The live state mirrors every field the handler diffs, so no write is
+      // ever attempted: check is exactly clean and apply a no-op applied.
+      return { key, grade, allowed: new Set([check ? "clean" : "applied"]), mayWrite: false };
+    }
+    if (witness !== undefined) {
+      // A seeded drift witness: check MUST report drift (a clean here is a
+      // false-negative drift detector); apply writes and reports applied.
+      return { key, grade, allowed: new Set([check ? "drift" : "applied"]), mayWrite: !check };
+    }
     return {
       key,
       grade,
@@ -129,7 +159,26 @@ export function predictSection(key: SectionKey, meta: ScenarioMeta): SectionPred
   // resources, so check reports clean/drift and apply attempts the first write
   // (which is 403-denied). grade read: reads pass, first write 403-denied.
   if (check) {
+    if (witness === "matching") {
+      return { key, grade, allowed: new Set(["clean"]), mayWrite: false };
+    }
+    if (witness !== undefined) {
+      return { key, grade, allowed: new Set(["drift"]), mayWrite: false };
+    }
     return { key, grade, allowed: new Set(["clean", "drift"]), mayWrite: false };
+  }
+  if (witness === "matching") {
+    // No write is needed, so the missing write grant is never exercised: the
+    // section lands applied even though a write would have been denied.
+    return { key, grade, allowed: new Set(["applied"]), mayWrite: false };
+  }
+  if (witness !== undefined) {
+    // The witness forces exactly one write, and every write is denied at this
+    // grade: the section can never be a no-op "applied". Mirrors the mid-apply
+    // PermissionDenied fold in orchestrate.ts.
+    const allowed: Set<Outcome> =
+      required || meta.policy === "fail" ? new Set(["failed"]) : new Set(["skipped"]);
+    return { key, grade, allowed, mayWrite: false };
   }
   // Apply: a needed write is denied mid-run. A required section (or fail
   // policy) cannot be skipped, so it fails; warn skips a non-required section.
@@ -186,6 +235,11 @@ export interface RunPrediction {
  * absent" and does not arm the barrier either.
  */
 function preflightDeniable(section: SectionPrediction, meta: ScenarioMeta): boolean {
+  // Preflight only probes ACTIVE sections (orchestrate.ts filters by the
+  // allowlist first), so an excluded section can never arm the barrier.
+  if (section.allowed.has("excluded")) {
+    return false;
+  }
   if (section.grade !== "none") {
     return false;
   }

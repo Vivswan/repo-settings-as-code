@@ -347,73 +347,244 @@ export function genSettings(rng: Rng, key: SectionKey): unknown {
   return SETTINGS_GENERATORS[key](rng);
 }
 
-/** How generated live state relates to the declared settings. */
-export type LiveStateKind = "absent" | "divergent" | "matching";
+/**
+ * How a section's seeded live state relates to its declared settings, as a
+ * SEMANTIC WITNESS the oracle can predict from exactly:
+ *
+ * - "matching": the live state mirrors EVERY field the handler diffs, so a
+ *   correct engine reports exactly clean (check) or a no-op applied (apply).
+ * - "drift-update": one DECLARED field diverges (never an omitted optional -
+ *   a divergent value in a field the settings do not declare is not drift),
+ *   so check must report drift and apply must issue an update.
+ * - "extra-undeclared" (labels only): a live label the settings do not
+ *   declare, so check reports undeclared drift and apply DELETEs it.
+ *   Milestones KEEP undeclared entries by design (no delete endpoint), so
+ *   this kind is never generated for them.
+ */
+export type LiveWitnessKind = "matching" | "drift-update" | "extra-undeclared";
 
 /**
- * Random mock live state for one section, keyed by the section's LiveState
- * family. "absent" leaves the resource missing (drift or a create), "matching"
- * mirrors the settings (convergence), "divergent" differs (drift or an update).
- * Only the families the mock reads as GET-side bodies are populated; the mock
- * fills the rest from fixtures.
+ * The sections the witness generator models. Repository is deferred: a
+ * faithful matching witness needs normalized topics, the enable_* toggles,
+ * and fixture-aware treatment of absent fields.
  */
-export function genLiveState(
-  rng: Rng,
-  key: SectionKey,
-  settings: unknown,
-): { kind: LiveStateKind; state: Json } {
-  const kind = rng.pick(["absent", "divergent", "matching"] as const);
-  if (kind === "absent") {
-    return { kind, state: {} };
-  }
+export const WITNESS_SECTIONS = ["labels", "milestones"] as const;
+export type WitnessSection = (typeof WITNESS_SECTIONS)[number];
 
-  switch (key) {
-    case "labels": {
-      const declared = settings as Json[];
-      const labels = declared.map((label) => ({
-        name: label.name,
-        color: kind === "matching" ? (label.color ?? "ededed") : "123456",
-        description: kind === "matching" ? (label.description ?? "") : "changed",
-      }));
-      return { kind, state: { labels } };
-    }
-    case "repository": {
-      const declared = settings as Json;
-      const repo: Json = {};
-      for (const [k, v] of Object.entries(declared)) {
-        if (k === "topics" || k.startsWith("enable_")) {
-          continue;
-        }
-        repo[k] = kind === "matching" ? v : negate(v);
-      }
-      return { kind, state: { repo } };
-    }
-    case "milestones": {
-      const declared = settings as Json[];
-      const milestones = declared.map((m, i) => ({
-        number: i + 1,
-        title: m.title,
-        description: kind === "matching" ? (m.description ?? null) : "changed",
-        state: kind === "matching" ? (m.state ?? "open") : "closed",
-      }));
-      return { kind, state: { milestones } };
-    }
-    default:
-      // For families whose GET shape the generator does not model precisely,
-      // fall back to absent state; the section still exercises a create path.
-      return { kind: "absent", state: {} };
+/** The witness kinds each modeled section supports. */
+export const WITNESS_KINDS: Record<WitnessSection, readonly LiveWitnessKind[]> = {
+  labels: ["matching", "drift-update", "extra-undeclared"],
+  milestones: ["matching", "drift-update"],
+};
+
+/** Perturbation color: absent from HEX_COLORS, so it always reads as drift. */
+const DRIFT_COLOR = "123456";
+/** Perturbation description: absent from every description pool. */
+const DRIFT_DESCRIPTION = "witness-drift";
+/** The extra-undeclared live label; no generated name collides with it. */
+const UNDECLARED_LABEL: Json = {
+  name: "zz-undeclared-witness",
+  color: "cccccc",
+  description: "live label the settings never declare",
+};
+
+/** A generated live-state witness: the kind that actually holds, plus state. */
+export interface LiveWitness {
+  /**
+   * The kind the state actually witnesses. May fall back to "matching" when
+   * "drift-update" was requested but no entry declares a perturbable field.
+   */
+  kind: LiveWitnessKind;
+  state: LiveState;
+}
+
+/**
+ * Loud disjointness guard: a perturbation sentinel that collides with a
+ * generated value would silently turn a drift witness into a matching one
+ * (or an "undeclared" label into a declared one), so the collision throws
+ * instead of degrading the witness.
+ */
+function assertSentinelDisjoint(condition: boolean, detail: string): void {
+  if (!condition) {
+    throw new Error(`witness sentinel collision: ${detail}`);
   }
 }
 
-/** Flip a boolean; leave other JSON values as a sentinel-different value. */
-function negate(value: unknown): unknown {
-  if (typeof value === "boolean") {
-    return !value;
+/**
+ * A live label body that the labels handler diffs as EXACTLY equal
+ * (src/sections/labels.ts): the live label carries the FINAL name (new_name
+ * wins - the handler matches by source or target key and treats any other
+ * live name as rename drift), the declared color/description verbatim (they
+ * are diffed only when DECLARED, so undeclared ones take fixed fillers), and
+ * every extra declared key verbatim (extras are subsetDiffed as passthrough
+ * fields, so a hardcoded field list would silently read as drift).
+ */
+function matchingLiveLabel(label: Json): Json {
+  const { name, new_name, color, description, ...extras } = label;
+  return {
+    name: new_name ?? name,
+    color: color ?? "ededed",
+    description: description ?? null,
+    ...extras,
+  };
+}
+
+/**
+ * True when uppercasing changes the name but keeps its case-insensitive key,
+ * so the flipped live name still matches the declared label and the handler
+ * reads it as rename drift (existing.name !== finalName).
+ */
+function caseFlippable(name: string): boolean {
+  const flipped = name.toUpperCase();
+  return flipped !== name && flipped.toLowerCase() === name.toLowerCase();
+}
+
+/**
+ * The fields of one declared label a drift-update witness may perturb. The
+ * name candidate flips the case of the FINAL name (new_name resolved), so the
+ * divergence reads as rename drift against the post-rename state.
+ */
+function labelDriftFields(label: Json): Array<"color" | "description" | "name"> {
+  const fields: Array<"color" | "description" | "name"> = [];
+  if (label.color !== undefined) {
+    fields.push("color");
   }
-  if (typeof value === "number") {
-    return value + 1;
+  if (label.description !== undefined) {
+    fields.push("description");
   }
-  return "divergent";
+  if (caseFlippable(String(label.new_name ?? label.name))) {
+    fields.push("name");
+  }
+  return fields;
+}
+
+function labelsWitness(rng: Rng, declared: Json[], kind: LiveWitnessKind): LiveWitness {
+  const labels = declared.map(matchingLiveLabel);
+  if (kind === "matching") {
+    return { kind, state: { labels } };
+  }
+  if (kind === "extra-undeclared") {
+    const undeclaredKey = String(UNDECLARED_LABEL.name).toLowerCase();
+    for (const label of declared) {
+      assertSentinelDisjoint(
+        String(label.name).toLowerCase() !== undeclaredKey &&
+          String(label.new_name ?? label.name).toLowerCase() !== undeclaredKey,
+        `a declared label resolves to the undeclared sentinel "${undeclaredKey}"`,
+      );
+    }
+    return { kind, state: { labels: [...labels, { ...UNDECLARED_LABEL }] } };
+  }
+  const eligible = declared
+    .map((label, index) => ({ index, fields: labelDriftFields(label) }))
+    .filter((entry) => entry.fields.length > 0);
+  if (eligible.length === 0) {
+    return { kind: "matching", state: { labels } };
+  }
+  const { index, fields } = rng.pick(eligible);
+  const source = declared[index] as Json;
+  const live = labels[index] as Json;
+  const field = rng.pick(fields);
+  if (field === "color") {
+    assertSentinelDisjoint(
+      source.color !== DRIFT_COLOR,
+      `the label color pool contains ${DRIFT_COLOR}`,
+    );
+    live.color = DRIFT_COLOR;
+  } else if (field === "description") {
+    assertSentinelDisjoint(
+      source.description !== DRIFT_DESCRIPTION,
+      `the label description pool contains "${DRIFT_DESCRIPTION}"`,
+    );
+    live.description = DRIFT_DESCRIPTION;
+  } else {
+    live.name = String(source.new_name ?? source.name).toUpperCase();
+  }
+  return { kind: "drift-update", state: { labels } };
+}
+
+/**
+ * A live milestone body the milestones handler diffs as EXACTLY equal
+ * (src/sections/milestones.ts): the handler subsetDiffs EVERY declared field
+ * verbatim, passthrough fields included, so the whole declaration is spread
+ * over the handler-visible defaults - a future passthrough field is mirrored
+ * automatically instead of silently reading as drift.
+ */
+function matchingLiveMilestone(milestone: Json, index: number): Json {
+  return {
+    id: 910_000 + index,
+    number: index + 1,
+    state: "open",
+    description: null,
+    ...milestone,
+  };
+}
+
+/** The fields of one declared milestone a drift-update witness may perturb. */
+function milestoneDriftFields(milestone: Json): Array<"description" | "state" | "due_on"> {
+  const fields: Array<"description" | "state" | "due_on"> = [];
+  if (milestone.description !== undefined) {
+    fields.push("description");
+  }
+  if (milestone.state !== undefined) {
+    fields.push("state");
+  }
+  if (milestone.due_on !== undefined) {
+    fields.push("due_on");
+  }
+  return fields;
+}
+
+function milestonesWitness(rng: Rng, declared: Json[], kind: LiveWitnessKind): LiveWitness {
+  const milestones = declared.map(matchingLiveMilestone);
+  if (kind === "matching") {
+    return { kind, state: { milestones } };
+  }
+  const eligible = declared
+    .map((milestone, index) => ({ index, fields: milestoneDriftFields(milestone) }))
+    .filter((entry) => entry.fields.length > 0);
+  if (eligible.length === 0) {
+    // Every milestone declares only its title: no field can legitimately
+    // diverge, so the witness degrades to matching (and says so).
+    return { kind: "matching", state: { milestones } };
+  }
+  const { index, fields } = rng.pick(eligible);
+  const source = declared[index] as Json;
+  const live = milestones[index] as Json;
+  const field = rng.pick(fields);
+  if (field === "description") {
+    assertSentinelDisjoint(
+      source.description !== DRIFT_DESCRIPTION,
+      `the milestone description pool contains "${DRIFT_DESCRIPTION}"`,
+    );
+    live.description = DRIFT_DESCRIPTION;
+  } else if (field === "state") {
+    live.state = source.state === "open" ? "closed" : "open";
+  } else {
+    live.due_on = rng.pick(DUE_DATES.filter((d) => d !== source.due_on));
+  }
+  return { kind: "drift-update", state: { milestones } };
+}
+
+/**
+ * A live-state witness for one section: mock live state with a KNOWN semantic
+ * relation to the declared settings, so the oracle can pin the exact outcome
+ * class instead of accepting {clean, drift} either way. Returns the kind that
+ * actually holds (drift-update falls back to matching when nothing is
+ * perturbable); callers that need a specific kind must check it.
+ */
+export function genLiveWitness(
+  rng: Rng,
+  key: WitnessSection,
+  settings: unknown,
+  kind: LiveWitnessKind,
+): LiveWitness {
+  if (!WITNESS_KINDS[key].includes(kind)) {
+    throw new Error(`genLiveWitness: ${key} does not support the "${kind}" witness`);
+  }
+  const declared = settings as Json[];
+  return key === "labels"
+    ? labelsWitness(rng, declared, kind)
+    : milestonesWitness(rng, declared, kind);
 }
 
 /**
@@ -502,6 +673,24 @@ export interface ScenarioMeta {
   denialStyle: DenialStyle;
   requiredSections: SectionKey[];
   /**
+   * The `sections` (INPUT_SECTIONS) allowlist the run was generated under,
+   * when one is set; undefined means no allowlist, every declared section
+   * runs. The engine reports a declared-but-not-allowlisted section as
+   * "excluded" BEFORE its handler runs (orchestrate.ts), so the oracle folds
+   * exclusion ahead of grades and witnesses. Generation does not set this
+   * yet; it exists so the sections-allowlist fuzz (Commit 7) cannot silently
+   * mispredict a witnessed or denied section.
+   */
+  onlySections?: SectionKey[];
+  /**
+   * The live-state witness seeded per section (labels and milestones only):
+   * the KNOWN semantic relation between the generated live state and the
+   * declared settings, so the oracle can pin the exact success outcome. A
+   * section without an entry has no witness (absent live state, or a family
+   * the witness generator does not model) and keeps the loose prediction.
+   */
+  liveKinds?: Partial<Record<SectionKey, LiveWitnessKind>>;
+  /**
    * The GLOBAL token mask, distinct from `mask` (the effective per-slug mask)
    * ONLY in multi-repo mode. teams' org-scoped endpoints are graded by the mock
    * against this global mask's org_members, not the per-slug overlay, so the
@@ -543,7 +732,32 @@ export function genScenario(
   // correct engine behavior but not what a fully-granted apply should model. So
   // the generated live state contains every declared branch name and workflow
   // path, letting apply act on them and check converge.
-  const liveState = presenceLiveState(settings);
+  const presence = presenceLiveState(settings) ?? {};
+
+  // Live-state WITNESSES for labels and milestones: seed live state whose
+  // relation to the declared settings is known (matching, drift-update,
+  // extra-undeclared), so the oracle predicts the exact outcome instead of
+  // accepting {clean, drift} either way - a false-negative drift detector
+  // would otherwise pass every iteration. A quarter of the time the section
+  // keeps absent live state, preserving the create path.
+  const liveKinds: Partial<Record<SectionKey, LiveWitnessKind>> = {};
+  const witnessState: LiveState = {};
+  for (const key of WITNESS_SECTIONS) {
+    if (!chosen.includes(key)) {
+      continue;
+    }
+    const witnessRng = rng.fork(`witness:${key}`);
+    if (witnessRng.bool(0.25)) {
+      continue;
+    }
+    const kind = witnessRng.pick(WITNESS_KINDS[key]);
+    const witness = genLiveWitness(witnessRng, key, settings[key], kind);
+    liveKinds[key] = witness.kind;
+    Object.assign(witnessState, witness.state);
+  }
+
+  const combinedLive: LiveState = { ...presence, ...witnessState };
+  const liveState = Object.keys(combinedLive).length > 0 ? combinedLive : undefined;
 
   const mask: Partial<Record<MaskKey, MaskGrade>> = {};
   for (const resource of MASK_KEYS) {
@@ -583,6 +797,7 @@ export function genScenario(
     ownerKind,
     denialStyle,
     requiredSections,
+    liveKinds,
   };
   return { scenario, meta };
 }

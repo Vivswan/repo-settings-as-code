@@ -19,6 +19,8 @@ function meta(overrides: Partial<ScenarioMeta>): ScenarioMeta {
     ownerKind: overrides.ownerKind ?? "org",
     denialStyle: overrides.denialStyle ?? "fine_grained",
     requiredSections: overrides.requiredSections ?? [],
+    onlySections: overrides.onlySections,
+    liveKinds: overrides.liveKinds,
   };
 }
 
@@ -172,6 +174,126 @@ describe("predictSection rules", () => {
       }),
     );
     expect([...p.allowed].sort()).toEqual(["applied", "failed"]);
+  });
+
+  test("a matching witness pins check to exactly clean and apply to exactly applied", () => {
+    const check = predictSection(
+      "labels",
+      meta({ mode: "check", liveKinds: { labels: "matching" } }),
+    );
+    expect([...check.allowed]).toEqual(["clean"]);
+    const apply = predictSection(
+      "labels",
+      meta({ mode: "apply", liveKinds: { labels: "matching" } }),
+    );
+    expect([...apply.allowed]).toEqual(["applied"]);
+    // No write is attempted against a matching live state.
+    expect(apply.mayWrite).toBe(false);
+  });
+
+  test("a drift witness pins check to exactly drift (a clean is a false negative)", () => {
+    for (const kind of ["drift-update", "extra-undeclared"] as const) {
+      const p = predictSection("labels", meta({ mode: "check", liveKinds: { labels: kind } }));
+      expect([...p.allowed]).toEqual(["drift"]);
+    }
+  });
+
+  test("permission folding beats the witness: a denied section stays skipped", () => {
+    // labels is denied outright (issues none + 403 style); the matching witness
+    // must NOT tighten the outcome to clean - the section never ran.
+    const p = predictSection(
+      "labels",
+      meta({
+        mask: { issues: "none" },
+        denialStyle: 403,
+        mode: "check",
+        policy: "warn",
+        liveKinds: { labels: "matching" },
+      }),
+    );
+    expect([...p.allowed]).toEqual(["skipped"]);
+  });
+
+  test("read grade + drift witness in apply: the forced write is denied", () => {
+    // The witness guarantees a write is needed, so the loose {applied, ...}
+    // tightens: the section can never be a no-op applied.
+    const base = {
+      mask: { issues: "read" as MaskGrade },
+      mode: "apply" as const,
+      liveKinds: { labels: "drift-update" as const },
+    };
+    expect([...predictSection("labels", meta({ ...base, policy: "warn" })).allowed]).toEqual([
+      "skipped",
+    ]);
+    expect([...predictSection("labels", meta({ ...base, policy: "fail" })).allowed]).toEqual([
+      "failed",
+    ]);
+  });
+
+  test("read grade + matching witness in apply: applied despite the missing write grant", () => {
+    const p = predictSection(
+      "labels",
+      meta({ mask: { issues: "read" }, mode: "apply", liveKinds: { labels: "matching" } }),
+    );
+    expect([...p.allowed]).toEqual(["applied"]);
+    expect(p.mayWrite).toBe(false);
+  });
+
+  test("exclusion folds before grades and witnesses", () => {
+    // A declared section outside the `sections` allowlist never runs: the
+    // engine reports it "excluded" before any read, so neither the denied
+    // grade nor the seeded witness may tighten the prediction.
+    const p = predictSection(
+      "labels",
+      meta({
+        sections: ["labels", "pages"],
+        onlySections: ["pages"],
+        mask: { issues: "none" },
+        denialStyle: 403,
+        mode: "check",
+        liveKinds: { labels: "drift-update" },
+      }),
+    );
+    expect([...p.allowed]).toEqual(["excluded"]);
+    expect(p.mayWrite).toBe(false);
+    // An undefined allowlist keeps today's behavior: every section runs.
+    const unrestricted = predictSection("labels", meta({ mode: "check" }));
+    expect(unrestricted.allowed.has("excluded")).toBe(false);
+  });
+
+  test("an excluded denied section never arms the preflight barrier", () => {
+    // Preflight probes only ACTIVE sections, so a permission-denied section
+    // that the allowlist excludes cannot abort the run.
+    const p = predictOutcomes(
+      meta({
+        sections: ["labels"],
+        onlySections: ["pages"],
+        mask: { issues: "none" },
+        denialStyle: 403,
+        mode: "apply",
+        policy: "fail",
+      }),
+    );
+    expect(p.preflightAborts).toBe(false);
+    expect([...p.allowedExitCodes]).toEqual([0]);
+  });
+
+  test("an EMPTY allowlist is unrestricted, mirroring the engine's size > 0 gate", () => {
+    // inputs.ts builds onlySections from a comma-split with filter(Boolean),
+    // and orchestrate.ts only excludes when the set is non-empty - so `[]`
+    // must predict exactly like an undefined allowlist: the denied section
+    // stays active and arms the preflight barrier.
+    const p = predictOutcomes(
+      meta({
+        sections: ["labels"],
+        onlySections: [],
+        mask: { issues: "none" },
+        denialStyle: 403,
+        mode: "apply",
+        policy: "fail",
+      }),
+    );
+    expect(p.preflightAborts).toBe(true);
   });
 
   test("teams + owner_kind user no-ops: applied in apply, clean in check", () => {

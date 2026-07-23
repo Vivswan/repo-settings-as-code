@@ -5,11 +5,11 @@ import { SECTION_KEYS, type SectionKey } from "../../src/schema.js";
 import { sectionShape } from "../../src/sections/registry.js";
 import {
   ARTIFACT_TEST_RECIPIENT,
-  genLiveState,
+  genLiveWitness,
   genMultiScenario,
   genScenario,
   genSettings,
-  type LiveStateKind,
+  type LiveWitnessKind,
   validateAgainstPublishedSchema,
 } from "./generators.js";
 import { Rng } from "./prng.js";
@@ -103,14 +103,235 @@ describe("generator couplings and pools", () => {
     }
     expect(hostile).toBeGreaterThan(0);
   });
+});
 
-  test("genLiveState produces all three kinds over seeds", () => {
-    const kinds = new Set<LiveStateKind>();
-    for (let i = 0; i < 100; i++) {
-      const settings = genSettings(new Rng(i), "labels");
-      kinds.add(genLiveState(new Rng(i + 1000), "labels", settings).kind);
+describe("genLiveWitness", () => {
+  type Label = { name: string; color?: string; description?: string | null; new_name?: string };
+  type Milestone = { title: string; description?: string | null; state?: string; due_on?: string };
+
+  test("matching labels mirror every field the labels handler diffs", () => {
+    for (let i = 0; i < 200; i++) {
+      const declared = genSettings(new Rng(i), "labels") as Label[];
+      const witness = genLiveWitness(new Rng(i + 500), "labels", declared, "matching");
+      expect(witness.kind).toBe("matching");
+      const live = witness.state.labels as Label[];
+      expect(live.length).toBe(declared.length);
+      declared.forEach((label, j) => {
+        // The name is compared verbatim (a case change would be rename drift);
+        // color and description are diffed only when declared, so declared
+        // values must be mirrored verbatim.
+        expect(live[j]?.name).toBe(label.new_name ?? label.name);
+        if (label.color !== undefined) {
+          expect(live[j]?.color).toBe(label.color);
+        }
+        if (label.description !== undefined) {
+          expect(live[j]?.description).toBe(label.description);
+        }
+      });
     }
-    expect([...kinds].sort()).toEqual(["absent", "divergent", "matching"]);
+  });
+
+  test("witnesses seed the FINAL post-rename state for new_name labels", () => {
+    // The handler resolves new_name to a final name and treats any other live
+    // name as rename drift, so a matching witness must seed the label AT the
+    // final name - seeding the source name would make the oracle predict clean
+    // while the engine PATCHes a rename.
+    const declared: Label[] = [
+      { name: "bug", new_name: "defect", color: "d73a4a", description: "broken" },
+      { name: "keep", description: "kept" },
+    ];
+    const matching = genLiveWitness(new Rng(1), "labels", declared, "matching");
+    const matchingLive = matching.state.labels as Label[];
+    expect(matchingLive[0]?.name).toBe("defect");
+    expect(matchingLive[0]?.color).toBe("d73a4a");
+    expect(matchingLive[0]?.description).toBe("broken");
+    expect(matchingLive[1]?.name).toBe("keep");
+    // drift-update diverges in exactly one field measured against the
+    // POST-rename state; the name candidate flips the final name's case.
+    for (let i = 0; i < 50; i++) {
+      const drift = genLiveWitness(new Rng(i), "labels", declared, "drift-update");
+      expect(drift.kind).toBe("drift-update");
+      const live = drift.state.labels as Label[];
+      let diverged = 0;
+      for (const [j, label] of declared.entries()) {
+        const entry = live[j] as Label;
+        const finalName = label.new_name ?? label.name;
+        if (entry.name !== finalName) {
+          expect(entry.name.toLowerCase()).toBe(finalName.toLowerCase());
+          diverged++;
+        }
+        if (label.color !== undefined && entry.color !== label.color) {
+          diverged++;
+        }
+        if (label.description !== undefined && entry.description !== label.description) {
+          diverged++;
+        }
+      }
+      expect(diverged).toBe(1);
+    }
+    // extra-undeclared keeps the matching (post-rename) base under the extra.
+    const extra = genLiveWitness(new Rng(2), "labels", declared, "extra-undeclared");
+    expect((extra.state.labels as Label[])[0]?.name).toBe("defect");
+  });
+
+  test("matching witnesses mirror passthrough fields verbatim", () => {
+    // Both handlers diff passthrough fields (labels via the extra-keys
+    // subsetDiff, milestones via the whole-declaration subsetDiff), so a
+    // witness built from a hardcoded field list would silently read as drift.
+    const labels = [{ name: "a", tone: "warm" }];
+    const labelWitness = genLiveWitness(new Rng(1), "labels", labels, "matching");
+    expect((labelWitness.state.labels as Array<{ tone?: string }>)[0]?.tone).toBe("warm");
+    const milestones = [{ title: "v1", due_on: "2026-01-15T00:00:00Z", closed_issues: 0 }];
+    const milestoneWitness = genLiveWitness(new Rng(1), "milestones", milestones, "matching");
+    const liveMilestone = (milestoneWitness.state.milestones as Array<Record<string, unknown>>)[0];
+    expect(liveMilestone?.due_on).toBe("2026-01-15T00:00:00Z");
+    expect(liveMilestone?.closed_issues).toBe(0);
+  });
+
+  test("labels drift-update perturbs exactly one declared field (or the name's case)", () => {
+    for (let i = 0; i < 200; i++) {
+      const declared = genSettings(new Rng(i), "labels") as Label[];
+      const witness = genLiveWitness(new Rng(i + 500), "labels", declared, "drift-update");
+      expect(witness.kind).toBe("drift-update");
+      const live = witness.state.labels as Label[];
+      expect(live.length).toBe(declared.length);
+      let drifted = 0;
+      declared.forEach((label, j) => {
+        const entry = live[j] as Label;
+        const renamed = entry.name !== label.name;
+        if (renamed) {
+          // The flipped name must keep its case-insensitive key, so the handler
+          // still matches the label and reads the divergence as rename drift.
+          expect(entry.name.toLowerCase()).toBe(label.name.toLowerCase());
+        }
+        const colorDrift = label.color !== undefined && entry.color !== label.color;
+        const descriptionDrift =
+          label.description !== undefined && entry.description !== label.description;
+        if (renamed || colorDrift || descriptionDrift) {
+          drifted++;
+        }
+      });
+      expect(drifted).toBe(1);
+    }
+  });
+
+  test("labels extra-undeclared adds exactly one undeclared label over a matching base", () => {
+    for (let i = 0; i < 200; i++) {
+      const declared = genSettings(new Rng(i), "labels") as Label[];
+      const witness = genLiveWitness(new Rng(i + 500), "labels", declared, "extra-undeclared");
+      expect(witness.kind).toBe("extra-undeclared");
+      const live = witness.state.labels as Label[];
+      expect(live.length).toBe(declared.length + 1);
+      const extra = live[live.length - 1] as Label;
+      // The extra label matches no declared identity (case-insensitively), so
+      // the handler must classify it as undeclared: delete in apply, drift in
+      // check.
+      expect(declared.some((l) => l.name.toLowerCase() === extra.name.toLowerCase())).toBe(false);
+    }
+  });
+
+  test("matching milestones mirror every declared field, due_on included", () => {
+    for (let i = 0; i < 200; i++) {
+      const declared = genSettings(new Rng(i), "milestones") as Milestone[];
+      const witness = genLiveWitness(new Rng(i + 500), "milestones", declared, "matching");
+      expect(witness.kind).toBe("matching");
+      const live = witness.state.milestones as Milestone[];
+      expect(live.length).toBe(declared.length);
+      declared.forEach((milestone, j) => {
+        const entry = live[j] as Milestone;
+        expect(entry.title).toBe(milestone.title);
+        // subsetDiff compares every DECLARED field verbatim; due_on omitted
+        // from a "matching" witness would read as drift.
+        if (milestone.state !== undefined) {
+          expect(entry.state).toBe(milestone.state);
+        }
+        if (milestone.description !== undefined) {
+          expect(entry.description).toBe(milestone.description);
+        }
+        if (milestone.due_on !== undefined) {
+          expect(entry.due_on).toBe(milestone.due_on);
+        }
+      });
+    }
+  });
+
+  test("milestones drift-update perturbs one declared field, or degrades to matching", () => {
+    let drifts = 0;
+    for (let i = 0; i < 200; i++) {
+      const declared = genSettings(new Rng(i), "milestones") as Milestone[];
+      const witness = genLiveWitness(new Rng(i + 500), "milestones", declared, "drift-update");
+      const live = witness.state.milestones as Milestone[];
+      expect(live.length).toBe(declared.length);
+      let diverged = 0;
+      declared.forEach((milestone, j) => {
+        const entry = live[j] as Milestone;
+        expect(entry.title).toBe(milestone.title);
+        for (const field of ["description", "state", "due_on"] as const) {
+          if (milestone[field] !== undefined && entry[field] !== milestone[field]) {
+            diverged++;
+          }
+        }
+      });
+      if (witness.kind === "drift-update") {
+        expect(diverged).toBe(1);
+        drifts++;
+      } else {
+        // The fallback: no milestone declares a perturbable field, so nothing
+        // can legitimately diverge and the witness says "matching".
+        expect(witness.kind).toBe("matching");
+        expect(diverged).toBe(0);
+      }
+    }
+    expect(drifts).toBeGreaterThan(0);
+  });
+
+  test("milestones reject the labels-only extra-undeclared kind", () => {
+    expect(() =>
+      genLiveWitness(new Rng(1), "milestones", [{ title: "v1" }], "extra-undeclared"),
+    ).toThrow();
+  });
+
+  test("witness sentinels stay disjoint from the generator pools", () => {
+    for (let i = 0; i < 300; i++) {
+      const labels = genSettings(new Rng(i), "labels") as Label[];
+      for (const label of labels) {
+        expect(label.color).not.toBe("123456");
+        expect(label.description).not.toBe("witness-drift");
+        expect(label.name.toLowerCase()).not.toBe("zz-undeclared-witness");
+        expect((label.new_name ?? label.name).toLowerCase()).not.toBe("zz-undeclared-witness");
+      }
+      const milestones = genSettings(new Rng(i), "milestones") as Milestone[];
+      for (const milestone of milestones) {
+        expect(milestone.description).not.toBe("witness-drift");
+      }
+    }
+  });
+
+  test("a sentinel collision fails loudly instead of degrading the witness", () => {
+    // "77" has no letters, so it is not case-flippable and the perturbation
+    // picker has exactly one candidate - the collision is guaranteed to fire.
+    expect(() =>
+      genLiveWitness(new Rng(1), "labels", [{ name: "77", color: "123456" }], "drift-update"),
+    ).toThrow(/sentinel/);
+    expect(() =>
+      genLiveWitness(
+        new Rng(1),
+        "labels",
+        [{ name: "77", description: "witness-drift" }],
+        "drift-update",
+      ),
+    ).toThrow(/sentinel/);
+    expect(() =>
+      genLiveWitness(new Rng(1), "labels", [{ name: "zz-undeclared-witness" }], "extra-undeclared"),
+    ).toThrow(/sentinel/);
+    expect(() =>
+      genLiveWitness(
+        new Rng(1),
+        "milestones",
+        [{ title: "v1", description: "witness-drift" }],
+        "drift-update",
+      ),
+    ).toThrow(/sentinel/);
   });
 });
 
@@ -153,6 +374,33 @@ describe("genScenario", () => {
       expect(Object.keys(scenario.settings)).toEqual(["labels"]);
       expect(meta.sections).toEqual(["labels"]);
     }
+  });
+
+  test("liveKinds records the seeded witness per section, and every kind surfaces", () => {
+    const seen: Record<LiveWitnessKind, number> = {
+      matching: 0,
+      "drift-update": 0,
+      "extra-undeclared": 0,
+    };
+    for (let i = 0; i < 300; i++) {
+      const { scenario, meta } = genScenario(new Rng(i));
+      for (const key of ["labels", "milestones"] as const) {
+        const kind = meta.liveKinds?.[key];
+        if (kind === undefined) {
+          // No witness: the family keeps absent live state (the create path).
+          expect(scenario.live_state?.[key]).toBeUndefined();
+          continue;
+        }
+        seen[kind]++;
+        // A recorded witness implies the section is declared and its live
+        // state family is seeded.
+        expect(meta.sections).toContain(key);
+        expect(Array.isArray(scenario.live_state?.[key])).toBe(true);
+      }
+    }
+    expect(seen.matching).toBeGreaterThan(0);
+    expect(seen["drift-update"]).toBeGreaterThan(0);
+    expect(seen["extra-undeclared"]).toBeGreaterThan(0);
   });
 
   test("declared branches and workflows are present in live_state so they converge", () => {
