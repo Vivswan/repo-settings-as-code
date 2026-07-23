@@ -43,13 +43,21 @@ import {
   type WitnessSection,
 } from "./generators.js";
 import type { LoggedRequest } from "./mock/routes.js";
-import { predictDiscovery, predictMulti, predictOutcomes } from "./oracle.js";
+import {
+  foldRepoResults,
+  foldSectionOutcomes,
+  predictDiscovery,
+  predictMulti,
+  predictOutcomes,
+} from "./oracle.js";
 import { Rng } from "./prng.js";
 import {
   checkLeaks,
   deliveredIssueBody,
+  E2E_TOKEN,
   parseReposResult,
   parseSummaryOutcomes,
+  type RerunCapture,
   runScenario,
   stripDebugLines,
   stripMaskLines,
@@ -141,6 +149,91 @@ const CLASS_BY_METHOD: Record<string, MutationClass> = {
   PATCH: "update",
   DELETE: "delete",
 };
+
+/**
+ * The token-leak invariant every iteration asserts: the runner's inert
+ * INPUT_TOKEN (E2E_TOKEN, the same constant childEnv feeds the action) must
+ * appear on NO public surface - summary, stdout, stderr (mask lines
+ * stripped), or any output - of the PRIMARY invocation or any internal
+ * re-run (second apply, convergence check, idempotence check; per-invocation
+ * delta captures). The token is never add-mask'd, so any echo is a real
+ * leak. The reruns sweep is unconditional: the array is empty when no re-run
+ * was armed, and coverage holds if a future mode arms one.
+ */
+function assertNoTokenLeak(
+  report: {
+    summary: string;
+    stdout: string;
+    stderr: string;
+    outputs: Record<string, string>;
+    reruns: RerunCapture[];
+  },
+  problems: string[],
+): void {
+  problems.push(...checkLeaks(report, [E2E_TOKEN]));
+  for (const rerun of report.reruns) {
+    problems.push(...checkLeaks(rerun, [E2E_TOKEN]).map((f) => `${rerun.label}: ${f}`));
+  }
+}
+
+/**
+ * Structural validity of the summary's section table: a header row, a
+ * separator row, and data rows that all carry the SAME cell-separator count,
+ * with at least `expectedRows` data rows. The engine escapes cells with
+ * backslash-then-pipe (summary.ts summaryCell), so a pipe is a real delimiter
+ * only after an EVEN run of backslashes - under HOSTILE_NAMES a broken escape
+ * changes a row's separator count, the regression class nothing else watches.
+ */
+function summaryTableProblems(summary: string, expectedRows: number): string[] {
+  const lines = summary.split("\n").map((line) => line.trim());
+  const start = lines.findIndex((line) => line.startsWith("|"));
+  if (start === -1) {
+    // A completed run always renders at least the header and separator, even
+    // with zero data rows - absence is an error regardless of expectedRows.
+    return ["summary carries no markdown table"];
+  }
+  const table: string[] = [];
+  for (let i = start; i < lines.length && lines[i]?.startsWith("|"); i++) {
+    table.push(lines[i] as string);
+  }
+  const separators = (row: string): number => {
+    let count = 0;
+    let backslashes = 0;
+    for (const ch of row) {
+      if (ch === "\\") {
+        backslashes++;
+        continue;
+      }
+      if (ch === "|" && backslashes % 2 === 0) {
+        count++;
+      }
+      backslashes = 0;
+    }
+    return count;
+  };
+  const problems: string[] = [];
+  if (table.length < 2 + expectedRows) {
+    problems.push(
+      `summary table has ${table.length} row(s), expected a header + separator + at least ${expectedRows} data row(s)`,
+    );
+  }
+  // Every separator cell must be a dash run with optional alignment colons -
+  // the loose "any of -:| whitespace" form would accept empty cells.
+  const separatorCells = (table[1] ?? "").split("|").slice(1, -1);
+  if (separatorCells.length === 0 || !separatorCells.every((cell) => /^\s*:?-+:?\s*$/.test(cell))) {
+    problems.push(`summary table separator row is malformed: "${table[1] ?? "(absent)"}"`);
+  }
+  const headerCount = separators(table[0] ?? "");
+  for (const [index, row] of table.entries()) {
+    if (separators(row) !== headerCount) {
+      problems.push(
+        `summary table row ${index} has ${separators(row)} cell separator(s), the header has ${headerCount} - a broken pipe escape?`,
+      );
+      break;
+    }
+  }
+  return problems;
+}
 
 /**
  * The mutation classes a run PROVABLY reached: successful (2xx) label and
@@ -275,7 +368,22 @@ async function runPredicted(
         );
       }
     }
+    // SELF-CONSISTENCY: the `result` output must equal the engine's own fold
+    // over the section outcomes it just reported (foldSectionOutcomes mirrors
+    // orchestrate.ts's rollup). Guarded by preflightAborts above: an aborted
+    // run reports "failed" with an EMPTY table by design, which the fold
+    // cannot reproduce.
+    const folded = foldSectionOutcomes(Object.values(observed), meta.mode === "check");
+    if (report.outputs.result !== folded) {
+      problems.push(
+        `self-consistency: result output "${report.outputs.result}" != "${folded}" folded from the summary outcomes`,
+      );
+    }
+    // The summary's section table must be structurally valid markdown: under
+    // HOSTILE_NAMES a broken pipe escape breaks a row's cell count.
+    problems.push(...summaryTableProblems(report.summary, prediction.sections.length));
   }
+  assertNoTokenLeak(report, problems);
 
   return {
     ok: problems.length === 0,
@@ -403,6 +511,7 @@ async function rejectionIteration(seed: number, spec: RejectionSpec): Promise<It
       `input fuzz reached the API ${report.requests.length} time(s) before rejecting the doc: ${sample}`,
     );
   }
+  assertNoTokenLeak(report, problems);
   return {
     ok: problems.length === 0,
     failure: problems.length > 0 ? `[${spec.label}] ${problems.join("; ")}` : undefined,
@@ -525,6 +634,7 @@ async function singleShotChaosIteration(
   } else if (observed.labels !== "applied") {
     problems.push(`labels observed "${observed.labels}" under ${mode}, expected applied`);
   }
+  assertNoTokenLeak(report, problems);
   return {
     ok: problems.length === 0,
     failure: problems.length > 0 ? `[single ${mode}] ${problems.join("; ")}` : undefined,
@@ -575,6 +685,7 @@ async function persistentChaosIteration(
       `persistent ${mode}: ${writes.length} label write(s) after the corrupted read - must not mutate`,
     );
   }
+  assertNoTokenLeak(report, problems);
   return {
     ok: problems.length === 0,
     failure: problems.length > 0 ? `[persist ${mode}] ${problems.join("; ")}` : undefined,
@@ -826,6 +937,9 @@ async function runMultiPredicted(
           "counterfactual: no canary surfaced in a rendered surface under private-repos: show, so the redacted leak check is vacuous",
         );
       }
+      // The counterfactual is a ScenarioReport of its own: the token-leak
+      // invariant covers it too.
+      assertNoTokenLeak(shown, problems);
     }
   }
 
@@ -916,6 +1030,22 @@ async function runMultiPredicted(
       );
     }
   }
+
+  // SELF-CONSISTENCY: the `result` output must equal the engine's worst-of
+  // fold over the per-target results it just emitted (foldRepoResults mirrors
+  // orchestrate's REPO_RESULTS order). Folded from repos-result VALUES, not
+  // summary rows - a multi summary repeats section keys per target, which
+  // parseSummaryOutcomes would overwrite. Guarded on a non-empty repos-result:
+  // a config-fatal run emits none by design.
+  if (Object.keys(report.reposResult).length > 0) {
+    const folded = foldRepoResults(Object.values(report.reposResult), meta.mode === "check");
+    if (report.outputs.result !== folded) {
+      problems.push(
+        `self-consistency: result output "${report.outputs.result}" != "${folded}" folded from repos-result`,
+      );
+    }
+  }
+  assertNoTokenLeak(report, problems);
 
   return {
     ok: problems.length === 0,
@@ -1032,6 +1162,19 @@ async function runDiscoveryPredicted(
     }
     problems.push(...checkLeaks(report, forbidden));
   }
+  // SELF-CONSISTENCY: discovery runs are multi-shaped, so the same worst-of
+  // fold over repos-result applies (discovery is always apply mode). Guarded
+  // on a non-empty repos-result: the kept-empty configuration error and the
+  // discovery-fatal fault path emit none by design.
+  if (Object.keys(report.reposResult).length > 0) {
+    const folded = foldRepoResults(Object.values(report.reposResult), false);
+    if (report.outputs.result !== folded) {
+      problems.push(
+        `self-consistency: result output "${report.outputs.result}" != "${folded}" folded from repos-result`,
+      );
+    }
+  }
+  assertNoTokenLeak(report, problems);
   return {
     ok: problems.length === 0,
     failure:
@@ -1190,6 +1333,7 @@ async function exhaustedSectionRun(
   if (/\n\s+at\s+\S+ \(/.test(report.stderr)) {
     problems.push("unhandled stack in stderr under an exhausted fault");
   }
+  assertNoTokenLeak(report, problems);
   return {
     ok: problems.length === 0,
     failure: problems.length > 0 ? `[fault ${faultKey}] ${problems.join("; ")}` : undefined,
@@ -1288,6 +1432,7 @@ async function fatalDiscoveryRun(
       `discovery-fatal: repos-result was emitted (${report.outputs["repos-result"]}), expected no output at all`,
     );
   }
+  assertNoTokenLeak(report, problems);
   return {
     ok: problems.length === 0,
     failure: problems.length > 0 ? `[fault core.discoveryList] ${problems.join("; ")}` : undefined,
@@ -1348,6 +1493,7 @@ async function preflightFaultRun(seed: number, surviving: boolean): Promise<Iter
       `preflight-consumed: labels observed "${observed.labels ?? "(absent)"}", expected applied - the probe should have eaten the budget and the apply read succeeded`,
     );
   }
+  assertNoTokenLeak(report, problems);
   return {
     ok: problems.length === 0,
     failure: problems.length > 0 ? `[preflight consumed] ${problems.join("; ")}` : undefined,
@@ -1409,47 +1555,49 @@ function injectedReportFaultRun(drawn: {
  * Directed core-fault battery entries. The random stream reaches the
  * core-path fault iterations only ~1/80 per iteration, so a 30-iteration soak
  * exercises each with only ~25% probability - vacuous coverage the batteries
- * exist to prevent. One entry pins the exhausting contentsGet victim rule
- * (drawing until the first target passes the disjointness guard); the other
- * pins the issue-channel degrade contract. Both FAIL when no eligible draw
- * lands in the fork budget, instead of silently falling back.
+ * exist to prevent. One entry pins the fatal contentsGet victim rule, one the
+ * issue-channel degrade contract. Eligibility is CONSTRUCTED via generator
+ * forces - never rejection-sampled, since any fork budget has miss seeds and
+ * live CI seeds turn each into a spurious failure; the inline asserts are
+ * drift tripwires between each force and its consumer.
  */
 async function contentsFaultBatteryRun(seed: number): Promise<IterationResult> {
-  const base = new Rng(seed);
-  for (let attempt = 0; attempt < 20; attempt++) {
-    const { scenario, meta } = genMultiScenario(base.fork(`contents:${attempt}`));
-    const victim = meta.repos[0];
-    if (
-      victim === undefined ||
-      victim.target.kind === "raw-invalid" ||
-      victim.canaries.length > 0
-    ) {
-      continue;
-    }
-    scenario.faults = [{ endpoint: "core.contentsGet", kind: "server_error", times: RETRY_BUDGET }];
-    meta.coreFault = { key: "core.contentsGet", fatal: true };
-    return runMultiPredicted(scenario, meta, {
-      faultKey: "core.contentsGet",
-      faultClass: faultClassLabel("core.contentsGet", "server_error", true),
-    });
-  }
-  return {
-    ok: false,
-    failure: "could not draw an eligible contents-fault victim in 20 forks",
-    sections: [],
-  };
-}
-
-async function reportFaultBatteryRun(seed: number): Promise<IterationResult> {
-  // 40 forks: an issue-channel draw is ~1/6 per fork, so a miss is ~(5/6)^40
-  // (under one in a thousand) - rare enough for a deterministic battery.
-  const drawn = drawIssueChannelScenario(new Rng(seed), 40);
-  if (drawn === null) {
+  // CONSTRUCTED eligibility (no rejection sampling - a fork budget always has
+  // miss seeds, and live CI seeds turn every miss into a spurious failure):
+  // the "plain-first-target" force keeps the raw target off index 0 and runs
+  // under show (no canaries anywhere), so the disjointness guard holds for
+  // every master seed by generator structure.
+  const { scenario, meta } = genMultiScenario(new Rng(seed), "plain-first-target");
+  const victim = meta.repos[0];
+  if (victim === undefined || victim.target.kind === "raw-invalid" || victim.canaries.length > 0) {
     return {
       ok: false,
-      failure: "could not draw an issue-channel scenario in 40 forks",
+      failure:
+        "the plain-first-target force produced an ineligible first target - the force and the victim guard drifted apart",
       sections: [],
     };
+  }
+  scenario.faults = [{ endpoint: "core.contentsGet", kind: "server_error", times: RETRY_BUDGET }];
+  meta.coreFault = { key: "core.contentsGet", fatal: true };
+  return runMultiPredicted(scenario, meta, {
+    faultKey: "core.contentsGet",
+    faultClass: faultClassLabel("core.contentsGet", "server_error", true),
+  });
+}
+
+function reportFaultBatteryRun(seed: number): Promise<IterationResult> {
+  // CONSTRUCTED issue channel: the "issue-report" force pins the channel roll
+  // inside generation (seed 8181 proved a 40-fork rejection draw can miss),
+  // keeping the deliverable-target and canary invariants intact by
+  // construction.
+  const drawn = genMultiScenario(new Rng(seed), "issue-report");
+  if (drawn.meta.privateReport !== "issue") {
+    return Promise.resolve({
+      ok: false,
+      failure:
+        "the issue-report force did not produce an issue-channel scenario - the force and the generator drifted apart",
+      sections: [],
+    });
   }
   return injectedReportFaultRun(drawn);
 }
@@ -1460,67 +1608,66 @@ async function reportFaultBatteryRun(seed: number): Promise<IterationResult> {
  * Directed multi apply-idempotence entry: the random gate (fully granted +
  * apply + non-issue channel + no raw target) fires on only ~5% of multi
  * iterations, so a 30-iteration soak would exercise it with ~30% probability
- * - the same near-vacuity the other batteries exist to prevent. Generation
- * forks are pure CPU, so a 200-fork eligibility draw costs milliseconds and
- * its deterministic miss probability is ~5e-5. The entry also fails when an
- * ELIGIBLE draw does not arm the gate - the tripwire that keeps this draw
- * predicate and runMultiPredicted's gate from drifting apart.
+ * - the same near-vacuity the other batteries exist to prevent. Eligibility
+ * is CONSTRUCTED via the generator's "idempotence-eligible" force, never
+ * rejection-sampled, so the entry exists for every master seed.
  */
 async function multiIdempotenceBatteryRun(seed: number): Promise<IterationResult> {
-  const base = new Rng(seed);
-  for (let attempt = 0; attempt < 200; attempt++) {
-    const { scenario, meta } = genMultiScenario(base.fork(`idempotent:${attempt}`));
-    if (!multiIdempotenceEligible(meta)) {
-      continue;
-    }
-    const result = await runMultiPredicted(scenario, meta);
-    if (result.ok && result.proof !== "apply_idempotent") {
-      return {
-        ...result,
-        ok: false,
-        failure:
-          "an eligible multi scenario did not arm the apply-idempotence gate - the exit-0 belt blocked it, which the shared predicate cannot express; investigate the prediction",
-      };
-    }
-    return result;
+  // CONSTRUCTED eligibility: the "idempotence-eligible" force pins apply
+  // mode, a non-delivering channel, no raw target, and empty masks inside
+  // generation, so the entry exists for EVERY master seed (the previous
+  // 200-fork rejection draw had miss seeds by construction). The predicate
+  // assert below is the drift tripwire between the force and the gate.
+  const { scenario, meta } = genMultiScenario(new Rng(seed), "idempotence-eligible");
+  if (!multiIdempotenceEligible(meta)) {
+    return {
+      ok: false,
+      failure:
+        "the idempotence-eligible force produced an ineligible scenario - the force and multiIdempotenceEligible drifted apart",
+      sections: [],
+    };
   }
-  return {
-    ok: false,
-    failure: "could not draw an idempotence-eligible multi scenario in 200 forks",
-    sections: [],
-  };
+  const result = await runMultiPredicted(scenario, meta);
+  if (result.ok && result.proof !== "apply_idempotent") {
+    return {
+      ...result,
+      ok: false,
+      failure:
+        "an eligible multi scenario did not arm the apply-idempotence gate - the exit-0 belt blocked it, which the shared predicate cannot express; investigate the prediction",
+    };
+  }
+  return result;
 }
 
 /**
- * Directed discovery check-convergence entry: draws until the predicted kept
- * set is non-empty (almost every draw), then requires the apply-then-check
+ * Directed discovery check-convergence entry: a CONSTRUCTED non-empty kept
+ * set (the generator's "converges" force), then the apply-then-check
  * convergence proof runDiscoveryPredicted arms for fault-free non-empty runs.
  */
 async function discoveryConvergesBatteryRun(seed: number): Promise<IterationResult> {
-  const base = new Rng(seed);
-  for (let attempt = 0; attempt < 20; attempt++) {
-    const { scenario, meta } = genDiscoveryScenario(base.fork(`converges:${attempt}`));
-    if (!discoveryConvergeEligible(meta)) {
-      continue;
-    }
-    const result = await runDiscoveryPredicted(scenario, meta);
-    if (result.ok && result.proof !== "converges") {
-      return {
-        ...result,
-        ok: false,
-        failure:
-          "a non-empty discovery scenario did not arm the converges gate - the battery draw predicate and runDiscoveryPredicted's gate drifted apart",
-      };
-    }
-    return result;
+  // CONSTRUCTED non-empty kept set: the "converges" force pins pool repo 0
+  // non-archived with no filters, so the kept set provably contains it -
+  // no draw budget, no miss seeds.
+  const { scenario, meta } = genDiscoveryScenario(new Rng(seed), "converges");
+  if (!discoveryConvergeEligible(meta)) {
+    return {
+      ok: false,
+      failure:
+        "the converges force produced an empty kept set - the force and discoveryConvergeEligible drifted apart",
+      sections: [],
+    };
   }
-  return {
-    ok: false,
-    failure: "could not draw a non-empty-kept discovery scenario in 20 forks",
-    sections: [],
-  };
+  const result = await runDiscoveryPredicted(scenario, meta);
+  if (result.ok && result.proof !== "converges") {
+    return {
+      ...result,
+      ok: false,
+      failure:
+        "a non-empty discovery scenario did not arm the converges gate - the battery draw predicate and runDiscoveryPredicted's gate drifted apart",
+    };
+  }
+  return result;
 }
-
 /**
  * The fault half of the transport-misbehavior slot: section reads get the
  * bulk of the stream (8 faultable reads x 4 kinds x 2 budgets), and the three
@@ -1753,6 +1900,7 @@ async function main(): Promise<number> {
       const seed = iterationSeed(master, 0x300000 + index);
       const mode = (index >> 1) % 2 === 0 ? ("apply" as const) : ("check" as const);
       const section = faultableSections[
+        // codeql[js/biased-cryptographic-random] -- the crypto value is a fuzz seed, not key material; modulo bias is irrelevant to coverage rotation
         (index + (master % faultableSections.length)) % faultableSections.length
       ] as FaultableSection;
       const label = `${section}:${kind}/x${exhausting ? RETRY_BUDGET : 1}`;

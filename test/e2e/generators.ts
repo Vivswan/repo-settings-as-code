@@ -1167,9 +1167,38 @@ export interface MultiScenarioMeta {
  * repo's target kind (normal with its ScenarioMeta, missing, or raw-invalid)
  * for the per-repo oracle plus the worst-of rollup.
  */
-export function genMultiScenario(rng: Rng): { scenario: Scenario; meta: MultiScenarioMeta } {
+/**
+ * Battery-construction forces: pin specific rolls so a directed battery entry
+ * EXISTS for every master seed. Rejection sampling with ANY fixed fork budget
+ * has miss seeds (live counterexample: seed 8181 missed an issue-channel draw
+ * in 40 forks), and with live CI seeds every miss is a spurious failure - so
+ * the batteries CONSTRUCT eligibility instead of sampling for it. The
+ * UNFORCED path is byte-identical to the pre-force generator (verified over
+ * 400 seeds against HEAD). FORCED paths may consume a DIFFERENT draw
+ * sequence (an overridden roll can gate later draws - e.g. a forced redact
+ * consumes the report pick a rolled show would skip), which is safe: forced
+ * generation is deterministic per (seed, force), and every battery replay
+ * (--iterations 0) reapplies its force. No consumer generates forced and
+ * replays unforced.
+ *
+ * - "issue-report": the delivering issue channel (privateRepos redact +
+ *   privateReport issue) - the report-fault battery's precondition.
+ * - "idempotence-eligible": apply mode, non-delivering channel, no raw
+ *   target, every normal target's mask empty - multiIdempotenceEligible by
+ *   construction.
+ * - "plain-first-target": privateRepos show (no canaries anywhere) and the
+ *   raw target kept off index 0 - the contents-fault victim guard by
+ *   construction.
+ */
+export type MultiBatteryForce = "issue-report" | "idempotence-eligible" | "plain-first-target";
+
+export function genMultiScenario(
+  rng: Rng,
+  force?: MultiBatteryForce,
+): { scenario: Scenario; meta: MultiScenarioMeta } {
   const count = rng.int(4) + 2; // 2..5
-  const mode = rng.pick(["apply", "check"] as const);
+  const rolledMode = rng.pick(["apply", "check"] as const);
+  const mode = force === "idempotence-eligible" ? "apply" : rolledMode;
   const policy = rng.pick(["fail", "warn"] as const);
   const denialStyle: DenialStyle = rng.pick(["fine_grained", 403] as const);
   // The private-repos policy for the run: redact (the default) or show. Under
@@ -1177,7 +1206,13 @@ export function genMultiScenario(rng: Rng): { scenario: Scenario; meta: MultiSce
   // keyed by a placeholder; under show, nothing is redacted. Chosen randomly so
   // the fuzzer covers both, and the oracle predicts the placeholder keys and the
   // leak invariant from it.
-  const privateRepos = rng.pick(["redact", "show"] as const);
+  const rolledPrivateRepos = rng.pick(["redact", "show"] as const);
+  const privateRepos =
+    force === "issue-report"
+      ? "redact"
+      : force === "plain-first-target"
+        ? "show"
+        : rolledPrivateRepos;
   // The private-report channel. `issue` delivers the full report to each
   // redacted target's own repo; `artifact` age-encrypts every report into one
   // workflow artifact (which fails with a safe warning in the harness, where the
@@ -1185,8 +1220,10 @@ export function genMultiScenario(rng: Rng): { scenario: Scenario; meta: MultiSce
   // a delivering channel + show, since show redacts nothing), so they are picked
   // only then. Randomized so the fuzzer covers delivery, reuse, denial, and the
   // artifact upload-attempt path.
-  const privateReport =
+  const rolledReport =
     privateRepos === "redact" ? rng.pick(["none", "issue", "artifact"] as const) : "none";
+  const privateReport =
+    force === "issue-report" ? "issue" : force === "idempotence-eligible" ? "none" : rolledReport;
   // The admin repo the runner runs as (GITHUB_REPOSITORY); a target whose slug
   // equals it is never redacted (the self carve-out). Kept in sync with
   // runner.ts's REPO_SLUG.
@@ -1218,9 +1255,15 @@ export function genMultiScenario(rng: Rng): { scenario: Scenario; meta: MultiSce
   // gate is the contents 404) and never the forced-private target (its canary
   // flow must stay guaranteed for the leak counterfactual).
   const rawCandidates = Array.from({ length: count }, (_, i) => i).filter(
-    (i) => i !== missingIndex && i !== forcedPrivateIndex,
+    (i) =>
+      i !== missingIndex &&
+      i !== forcedPrivateIndex &&
+      // The contents-fault battery's victim is always index 0; keep the raw
+      // target off it by construction.
+      (force !== "plain-first-target" || i !== 0),
   );
-  const rawIndex = rawCandidates.length > 0 && rng.bool(0.2) ? rng.pick(rawCandidates) : -1;
+  const rolledRawIndex = rawCandidates.length > 0 && rng.bool(0.2) ? rng.pick(rawCandidates) : -1;
+  const rawIndex = force === "idempotence-eligible" ? -1 : rolledRawIndex;
   const rawKind = rawIndex >= 0 ? rng.pick(["unparseable", "non-mapping"] as const) : undefined;
   for (let i = 0; i < count; i++) {
     const slug = `e2e-owner/repo-${i}`;
@@ -1319,7 +1362,11 @@ export function genMultiScenario(rng: Rng): { scenario: Scenario; meta: MultiSce
     // redaction must suppress. Its visibility is already private (forced above),
     // so it stays redacted regardless. The OTHER targets keep their random masks,
     // so denial coverage is unaffected.
-    if (i === forcedPrivateIndex) {
+    // The idempotence battery force clears EVERY normal target's mask: the
+    // apply-idempotence gate requires fully-granted targets (empty masks by
+    // its deliberately narrow definition). The mask rolls themselves are
+    // consumed either way; only their outcome is discarded.
+    if (i === forcedPrivateIndex || force === "idempotence-eligible") {
       for (const resource of MASK_KEYS) {
         delete mask[resource];
       }
@@ -1527,7 +1574,17 @@ export interface DiscoveryScenarioMeta {
  * meta echoes the pool and filters so predictDiscovery can compute the kept set
  * INDEPENDENTLY, and the fuzz asserts the action discovered exactly those.
  */
-export function genDiscoveryScenario(rng: Rng): {
+export function genDiscoveryScenario(
+  rng: Rng,
+  /**
+   * Battery construction: "converges" pins a non-empty kept set structurally
+   * (pool repo 0 non-archived + no filters), so the convergence battery entry
+   * exists for EVERY master seed instead of rejection-sampling for one. The
+   * unforced path is byte-identical to the pre-force generator; the forced
+   * path is deterministic per (seed, force) and battery replays reapply it.
+   */
+  force?: "converges",
+): {
   scenario: Scenario;
   meta: DiscoveryScenarioMeta;
 } {
@@ -1541,7 +1598,10 @@ export function genDiscoveryScenario(rng: Rng): {
   const pool: DiscoveryScenarioMeta["pool"] = [];
   for (let i = 0; i < count; i++) {
     const repo: DiscoveryScenarioMeta["pool"][number] = { slug: `e2e-owner/disc-${i}` };
-    if (rng.bool(0.3)) {
+    // This particular roll IS consumed either way (only the outcome is
+    // masked): the converges force keeps repo 0 non-archived so the
+    // unfiltered kept set is provably non-empty.
+    if (rng.bool(0.3) && !(force === "converges" && i === 0)) {
       repo.archived = true;
     }
     if (rng.bool(0.3)) {
@@ -1559,22 +1619,27 @@ export function genDiscoveryScenario(rng: Rng): {
 
   // A random subset of filters. Each is included ~40% of the time; the values
   // are drawn from the documented allowed sets. exclude uses a glob over slugs.
-  const filters: DiscoveryScenarioMeta["filters"] = {};
+  // Rolled into `rolledFilters` (these rolls are consumed either way) and
+  // overridden to none under the converges force.
+  const rolledFilters: DiscoveryScenarioMeta["filters"] = {};
   if (rng.bool(0.4)) {
-    filters.visibility = rng.pick(["all", "public", "private", "internal"]);
+    rolledFilters.visibility = rng.pick(["all", "public", "private", "internal"]);
   }
   if (rng.bool(0.4)) {
-    filters.archived = rng.pick(["skip", "include", "only"]);
+    rolledFilters.archived = rng.pick(["skip", "include", "only"]);
   }
   if (rng.bool(0.4)) {
-    filters.forks = rng.pick(["include", "exclude", "only"]);
+    rolledFilters.forks = rng.pick(["include", "exclude", "only"]);
   }
   if (rng.bool(0.4)) {
-    filters.topics = rng.pick(TOPIC_POOL);
+    rolledFilters.topics = rng.pick(TOPIC_POOL);
   }
   if (rng.bool(0.3)) {
-    filters.exclude = `disc-${rng.int(count)}`;
+    rolledFilters.exclude = `disc-${rng.int(count)}`;
   }
+  // Under the converges force no filter applies, so the kept set is exactly
+  // the non-archived pool - which provably contains repo 0.
+  const filters: DiscoveryScenarioMeta["filters"] = force === "converges" ? {} : rolledFilters;
 
   const repos: Record<string, unknown> = {};
   for (const repo of pool) {

@@ -29,11 +29,34 @@ const BUNDLE = join(ROOT, "lib", "index.js");
 const OWNER = "e2e-owner";
 const REPO = "e2e-repo";
 const REPO_SLUG = `${OWNER}/${REPO}`;
+/**
+ * The inert token every child run authenticates with (INPUT_TOKEN). Exported
+ * as the single source for the token-leak invariant's needle: a consumer that
+ * imported this constant stays correct if the literal ever changes, where a
+ * duplicated string would silently make the invariant vacuous.
+ */
+export const E2E_TOKEN = "e2e-token";
 /** Hard cap so a hung child never wedges the suite. */
 const KILL_AFTER_MS = 30_000;
 
 /** Monotonic per-process counter so repeated same-name failures never collide. */
 let artifactCounter = 0;
+
+/**
+ * One INTERNAL re-run's captured output surfaces: the convergence check, or
+ * apply_idempotent's second apply and its final check. Shape-compatible with
+ * checkLeaks' observed argument, so an invariant sweeps a re-run exactly the
+ * way it sweeps the primary invocation - a leak conditional on check mode or
+ * on converged state only ever appears here.
+ */
+export interface RerunCapture {
+  /** Which re-run produced this (e.g. "converges check"). */
+  label: string;
+  stdout: string;
+  stderr: string;
+  summary: string;
+  outputs: Record<string, string>;
+}
 
 /** The outcome of running one scenario: pass/fail plus everything observed. */
 export interface ScenarioReport {
@@ -67,6 +90,14 @@ export interface ScenarioReport {
    * output, which is the mechanical marker for "no per-target results exist".
    */
   reposResult: Record<string, string>;
+  /**
+   * Output surfaces of every internal re-run this scenario triggered, in
+   * execution order: the converges check, and apply_idempotent's second apply
+   * plus its final check. Leak invariants must sweep these alongside the
+   * primary surfaces - the top-level stdout/stderr/summary/outputs describe
+   * ONLY the primary invocation. Empty when the scenario declares no re-run.
+   */
+  reruns: RerunCapture[];
 }
 
 /** The result of one child process invocation against a running mock. */
@@ -76,6 +107,17 @@ interface Invocation {
   summary: string;
   stdout: string;
   stderr: string;
+}
+
+/** Capture an internal re-run's surfaces for the report (see RerunCapture). */
+function captureRerun(label: string, run: Invocation): RerunCapture {
+  return {
+    label,
+    stdout: run.stdout,
+    stderr: run.stderr,
+    summary: run.summary,
+    outputs: run.outputs,
+  };
 }
 
 /**
@@ -214,7 +256,7 @@ function childEnv(scenario: Scenario, dir: string, apiUrl: string): NodeJS.Proce
     PATH: process.env.PATH ?? "",
     HOME: process.env.HOME ?? "",
     // Inputs: @actions/core reads INPUT_<NAME> (uppercased, dashes kept).
-    INPUT_TOKEN: "e2e-token",
+    INPUT_TOKEN: E2E_TOKEN,
     GITHUB_REPOSITORY: REPO_SLUG,
     GITHUB_API_URL: apiUrl,
     GITHUB_OUTPUT: join(dir, "output.txt"),
@@ -618,22 +660,27 @@ async function assertApplyIdempotent(
   scenario: Scenario,
   dir: string,
   handle: MockHandle,
-): Promise<string[]> {
+): Promise<{ failures: string[]; reruns: RerunCapture[] }> {
   if (scenario.inputs?.mode === "check") {
-    return ["apply_idempotent requires an apply-mode scenario"];
+    return { failures: ["apply_idempotent requires an apply-mode scenario"], reruns: [] };
   }
   if (scenario.inputs?.private_report === "issue") {
-    return [
-      "apply_idempotent cannot run under private_report: issue - the report issue embeds a fresh timestamp (state moves every run) and the injected marker label ties the labels declaration to the channel; use private_report: none or artifact",
-    ];
+    return {
+      failures: [
+        "apply_idempotent cannot run under private_report: issue - the report issue embeds a fresh timestamp (state moves every run) and the injected marker label ties the labels declaration to the channel; use private_report: none or artifact",
+      ],
+      reruns: [],
+    };
   }
   const failures: string[] = [];
+  const reruns: RerunCapture[] = [];
   const rerun: Scenario = { ...scenario, inputs: { ...scenario.inputs, mode: "apply" } };
   const before = snapshotFamilies(handle);
   const requestsBefore = handle.requests.length;
   const violationsBefore = handle.violations.length;
 
   const second = await invoke(rerun, dir, handle.url);
+  reruns.push(captureRerun("apply-idempotence second apply", second));
   if (second.exitCode !== 0) {
     failures.push(`apply-idempotence: second apply exited ${second.exitCode}, expected 0`);
   }
@@ -657,6 +704,7 @@ async function assertApplyIdempotent(
     dir,
     handle.url,
   );
+  reruns.push(captureRerun("apply-idempotence check", check));
   if (check.exitCode !== 0) {
     failures.push(
       `apply-idempotence: the check run after the second apply exited ${check.exitCode}, expected 0`,
@@ -674,7 +722,7 @@ async function assertApplyIdempotent(
       `apply-idempotence: check-run mock violations:\n  ${checkViolations.join("\n  ")}`,
     );
   }
-  return failures;
+  return { failures, reruns };
 }
 
 /**
@@ -699,6 +747,7 @@ export async function runScenario(
   let dir: string | undefined;
   let handle: Awaited<ReturnType<typeof startMockServer>> | undefined;
   const failures: string[] = [];
+  const reruns: RerunCapture[] = [];
   let first: Invocation | undefined;
 
   try {
@@ -856,7 +905,9 @@ export async function runScenario(
     // block because its own final step arms the one-way check-mode barrier,
     // after which no further apply could run.
     if (exp.apply_idempotent) {
-      failures.push(...(await assertApplyIdempotent(scenario, dir, handle)));
+      const idempotence = await assertApplyIdempotent(scenario, dir, handle);
+      failures.push(...idempotence.failures);
+      reruns.push(...idempotence.reruns);
     }
     // 8. Convergence: rerun in check mode against the SAME mutated server. Arm
     // the mock's check-mode write barrier first (the server still holds the
@@ -872,6 +923,7 @@ export async function runScenario(
         dir,
         handle.url,
       );
+      reruns.push(captureRerun("converges check", converge));
       const newWrites = handle.requests.slice(writesBefore).filter((r) => r.method !== "GET");
       if (converge.exitCode !== 0) {
         failures.push(`convergence: rerun exited ${converge.exitCode}, expected 0`);
@@ -910,6 +962,7 @@ export async function runScenario(
       requests: [...handle.requests],
       faultsFired,
       reposResult: parseReposResult(first.outputs["repos-result"]),
+      reruns,
     };
     if (!report.ok) {
       report.artifactDir = dumpArtifacts(scenario, report, handle.requests);

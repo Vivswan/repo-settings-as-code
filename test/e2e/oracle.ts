@@ -370,6 +370,40 @@ function repoResultFrom(
 }
 
 /**
+ * Fold OBSERVED section outcomes into the repo result the engine reports,
+ * composing the same foldFlags + repoResultFrom mirror predictMulti proves on
+ * every multi iteration. The fuzz self-consistency invariant asserts that the
+ * `result` output equals this fold over the summary's outcome table.
+ */
+export function foldSectionOutcomes(outcomes: string[], check: boolean): string {
+  const flags = { failed: false, drifted: false, partial: false };
+  for (const outcome of outcomes) {
+    foldFlags(outcome, flags);
+  }
+  return repoResultFrom(flags, check);
+}
+
+/**
+ * The repo-result worst-first order the MULTI rollup folds with, mirroring
+ * orchestrate.ts's REPO_RESULTS exactly (multi.ts computes the overall result
+ * as worstOf over per-target results). A harness-local mirror, deliberately
+ * NOT an import: importing the engine's own order would let a src rank-order
+ * regression agree with itself - the same contradiction-path pattern as
+ * DENIAL_SEMANTICS and COMPARE_BEFORE_WRITE.
+ */
+const MULTI_RESULT_ORDER = ["failed", "drift", "partial", "skipped", "applied", "clean"] as const;
+
+/** The multi rollup fold: the worst result present, mirroring worstOf(). */
+export function foldRepoResults(results: string[], check: boolean): string {
+  for (const rank of MULTI_RESULT_ORDER) {
+    if (results.includes(rank)) {
+      return rank;
+    }
+  }
+  return check ? "clean" : "applied";
+}
+
+/**
  * The repo-level result strings a per-repo run may report, computed MECHANICALLY
  * by folding the per-section allowed outcomes through the engine's exact
  * roll-up (orchestrate.ts), not a loose union. Each section independently

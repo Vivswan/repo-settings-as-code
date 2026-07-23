@@ -19,6 +19,7 @@ import {
   UNPARSEABLE_YAML,
   validateAgainstPublishedSchema,
 } from "./generators.js";
+import { predictDiscovery } from "./oracle.js";
 import { Rng } from "./prng.js";
 import { parseScenario } from "./schema.js";
 
@@ -750,5 +751,48 @@ describe("genDiscoveryScenario", () => {
     expect(JSON.stringify(genDiscoveryScenario(new Rng(31)).scenario)).toBe(
       JSON.stringify(genDiscoveryScenario(new Rng(31)).scenario),
     );
+  });
+});
+
+describe("battery forces (constructed eligibility, never rejection-sampled)", () => {
+  test("issue-report force always yields the delivering issue channel", () => {
+    for (let i = 0; i < 200; i++) {
+      const { meta } = genMultiScenario(new Rng(i), "issue-report");
+      expect(meta.privateRepos).toBe("redact");
+      expect(meta.privateReport).toBe("issue");
+    }
+  });
+
+  test("idempotence-eligible force pins apply, none-channel, no raw, empty masks", () => {
+    for (let i = 0; i < 200; i++) {
+      const { meta } = genMultiScenario(new Rng(i), "idempotence-eligible");
+      expect(meta.mode).toBe("apply");
+      expect(meta.privateReport).toBe("none");
+      expect(meta.repos.some((r) => r.target.kind === "raw-invalid")).toBe(false);
+      for (const repo of meta.repos) {
+        if (repo.target.kind === "normal") {
+          expect(Object.keys(repo.target.meta.mask)).toEqual([]);
+        }
+      }
+    }
+  });
+
+  test("plain-first-target force keeps index 0 fault-victim-eligible", () => {
+    for (let i = 0; i < 200; i++) {
+      const { meta } = genMultiScenario(new Rng(i), "plain-first-target");
+      expect(meta.privateRepos).toBe("show");
+      const first = meta.repos[0];
+      expect(first?.target.kind).not.toBe("raw-invalid");
+      expect(first?.canaries).toEqual([]);
+    }
+  });
+
+  test("converges force always yields a non-empty kept set", () => {
+    for (let i = 0; i < 200; i++) {
+      const { scenario, meta } = genDiscoveryScenario(new Rng(i), "converges");
+      expect(predictDiscovery(meta.pool, meta.filters).length).toBeGreaterThan(0);
+      // No filter inputs ride along under the force.
+      expect(scenario.discovery?.inputs).toEqual({});
+    }
   });
 });

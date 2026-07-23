@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { MultiRepoTarget, MultiScenarioMeta, ScenarioMeta } from "./generators.js";
 import {
+  foldRepoResults,
+  foldSectionOutcomes,
   predictDiscovery,
   predictMulti,
   predictOutcomes,
@@ -700,5 +702,33 @@ describe("predictDiscovery filter rules", () => {
     expect(predictDiscovery(globPool, { exclude: "*-*" })).toEqual(["e2e-owner/UPPER"]);
     // Case-insensitive: "upper" excludes "UPPER".
     expect(predictDiscovery(globPool, { exclude: "upper" })).not.toContain("e2e-owner/UPPER");
+  });
+});
+
+describe("result folds (self-consistency mirrors)", () => {
+  test("foldSectionOutcomes mirrors the engine's section rollup", () => {
+    expect(foldSectionOutcomes(["applied", "applied"], false)).toBe("applied");
+    expect(foldSectionOutcomes(["applied", "skipped"], false)).toBe("partial");
+    expect(foldSectionOutcomes(["clean", "drift"], true)).toBe("drift");
+    expect(foldSectionOutcomes(["clean", "skipped"], true)).toBe("partial");
+    // excluded sets no flag, matching orchestrate's fold.
+    expect(foldSectionOutcomes(["clean", "excluded"], true)).toBe("clean");
+    expect(foldSectionOutcomes(["applied", "failed", "drift"], false)).toBe("failed");
+  });
+
+  test("foldRepoResults mirrors worstOf's REPO_RESULTS order", () => {
+    expect(foldRepoResults(["applied", "skipped", "partial"], false)).toBe("partial");
+    expect(foldRepoResults(["clean", "drift"], true)).toBe("drift");
+    expect(foldRepoResults(["skipped", "failed"], false)).toBe("failed");
+    expect(foldRepoResults(["applied"], false)).toBe("applied");
+    // Adjacent-rank pairs, pinning the full precedence one step at a time.
+    expect(foldRepoResults(["failed", "drift"], true)).toBe("failed");
+    expect(foldRepoResults(["drift", "partial"], true)).toBe("drift");
+    expect(foldRepoResults(["partial", "skipped"], false)).toBe("partial");
+    expect(foldRepoResults(["skipped", "applied"], false)).toBe("skipped");
+    expect(foldRepoResults(["applied", "clean"], false)).toBe("applied");
+    // worstOf's empty-list defaults.
+    expect(foldRepoResults([], true)).toBe("clean");
+    expect(foldRepoResults([], false)).toBe("applied");
   });
 });
