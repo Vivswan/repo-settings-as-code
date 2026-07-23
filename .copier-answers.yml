@@ -1,12 +1,11 @@
 # This file is managed by Vivswan/repo-platform.
 # Copier uses it to track the template source and version - do not delete.
-_commit: a238424
+_commit: c029fc7
 _src_path: gh:Vivswan/repo-platform
 channel: staging
 description: 'GitHub Action applying declarative repository settings: rulesets, labels,
-    branch protection, and more - a loud, stateless Probot Settings replacement'
+    branch protection, and more. A loud, stateless Probot Settings replacement.'
 github_username: Vivswan
-homepage: ''
 modules:
 - agents
 - bun
@@ -17,4 +16,3 @@ modules:
 private: false
 project_name: Settings as Code
 project_slug: repo-settings-as-code
-topics: ''
