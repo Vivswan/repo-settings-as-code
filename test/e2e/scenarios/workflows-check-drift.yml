@@ -13,8 +13,8 @@ inputs:
   mode: check
 live_state:
   workflows:
-    - { id: 1, name: CI, path: .github/workflows/ci.yml, state: active }
-    - { id: 3, name: Old, path: .github/workflows/old.yml, state: deleted }
+    - {id: 1, name: CI, path: .github/workflows/ci.yml, state: active}
+    - {id: 3, name: Old, path: .github/workflows/old.yml, state: deleted}
 token_permissions:
   actions: read
 expect:

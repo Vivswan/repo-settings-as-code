@@ -11,11 +11,11 @@ discovery:
     forks: exclude
     topics: platform
   pool:
-    - { slug: e2e-owner/svc-a, topics: [platform] }
-    - { slug: e2e-owner/svc-b, topics: [platform] }
-    - { slug: e2e-owner/archived-x, topics: [platform], archived: true }
-    - { slug: e2e-owner/forked-y, topics: [platform], fork: true }
-    - { slug: e2e-owner/other-z, topics: [misc] }
+    - {slug: e2e-owner/svc-a, topics: [platform]}
+    - {slug: e2e-owner/svc-b, topics: [platform]}
+    - {slug: e2e-owner/archived-x, topics: [platform], archived: true}
+    - {slug: e2e-owner/forked-y, topics: [platform], fork: true}
+    - {slug: e2e-owner/other-z, topics: [misc]}
 repos:
   e2e-owner/svc-a:
     settings:

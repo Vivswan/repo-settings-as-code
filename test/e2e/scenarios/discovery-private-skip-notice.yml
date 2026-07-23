@@ -11,8 +11,8 @@ discovery:
   inputs:
     forks: exclude
   pool:
-    - { slug: e2e-owner/disc-keep, visibility: public }
-    - { slug: e2e-owner/disc-private-fork, visibility: private, fork: true }
+    - {slug: e2e-owner/disc-keep, visibility: public}
+    - {slug: e2e-owner/disc-private-fork, visibility: private, fork: true}
 repos:
   e2e-owner/disc-keep:
     settings:
