@@ -461,6 +461,17 @@ export function predictMulti(meta: MultiScenarioMeta): MultiPrediction {
     return { ...common, run, allowedResults: runResultClass(run) };
   });
 
+  // A FATAL core.contentsGet fault (injected by the fuzz iteration) kills the
+  // FIRST target's settings fetch, so the victim fails outright - overriding
+  // whatever gate its kind would otherwise hit (missing-file skip,
+  // contents-denied gate, raw parse gate alike). The key is matched
+  // explicitly so a future second core-fault key cannot silently reuse the
+  // contents-specific victim rule.
+  if (meta.coreFault?.key === "core.contentsGet" && meta.coreFault.fatal && repos.length > 0) {
+    const victim = repos[0] as RepoPrediction;
+    repos[0] = { ...victim, run: null, allowedResults: new Set(["failed"]) };
+  }
+
   const exitCodes = new Set<number>();
   const perTargetExit = repos.map((r) => {
     if (r.run) {

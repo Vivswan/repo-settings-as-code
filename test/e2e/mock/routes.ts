@@ -2049,9 +2049,16 @@ const SERVER_ERROR_ROTATION = [500, 502, 503] as const;
  *   - rate_limit_403: 403 with "rate limit" in the message, so the client's
  *     classifier reads it as throttling (isRateLimitError), NOT a permission
  *     denial. This is the one place a 403 body is ALLOWED to say "rate limit".
- *   - 429_then_200: 429 with Retry-After: 0 so the throttling plugin retries
- *     immediately (fast under RETRY_BASE_MS=1); the retried request then runs
- *     the handler normally.
+ *   - 429_then_200: the REAL secondary-rate-limit wire shape - the documented
+ *     "secondary rate limit" message body plus a small positive Retry-After.
+ *     Both details are load-bearing for production parity: octokit's
+ *     throttling plugin (production's ONLY 429 recovery path; the retry
+ *     plugin's doNotRetry includes 429 there) retries a 429 only when the
+ *     error message contains "secondary rate", and it honors Retry-After only
+ *     when POSITIVE (a 0 is falsy and falls back to the plugin's 60s default).
+ *     A bare 429 + Retry-After: 0 matches neither throttle branch and would
+ *     fail immediately in production while the RETRY_BASE_MS test path
+ *     absorbed it in e2e.
  *   - server_error: a 5xx with a JSON message body, rotating 500/502/503 on the
  *     fault's fire count (`fired`). The client's retry plugin retries 5xx, so a
  *     single firing is retried away and `times` >= 3 exhausts the retries.
@@ -2071,8 +2078,13 @@ function applyFault(kind: FaultOption["kind"], log: LoggedRequest, fired: number
   if (kind === "429_then_200") {
     const response: MockResponse = {
       status: 429,
-      body: { message: "Too Many Requests" },
-      headers: { "retry-after": "0" },
+      body: {
+        message:
+          "You have exceeded a secondary rate limit. Please wait a few minutes before you try again.",
+        documentation_url:
+          "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+      },
+      headers: { "retry-after": "1" },
     };
     return { response, log: { ...log, status: 429 }, offSpecBody: true };
   }

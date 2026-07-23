@@ -452,6 +452,39 @@ describe("predictMulti rollup", () => {
     }
   });
 
+  test("a fatal contentsGet fault fails the FIRST target whatever its kind", () => {
+    // The fault hook precedes both the missing-file 404 and the permission
+    // gate, and the whole budget (1 + MAX_RETRIES) burns on the first target's
+    // fetch - so even a missing-settings victim flips from skipped to failed,
+    // a raw-invalid one fails at the transport gate instead of its parse gate,
+    // and later targets keep their normal predictions.
+    const granted = meta({ sections: ["labels"], mode: "apply", mask: {} });
+    const victims: MultiRepoTarget[] = [
+      missing(),
+      normal(granted),
+      { kind: "raw-invalid", raw: "unparseable" },
+    ];
+    for (const victim of victims) {
+      const base = multiMeta([victim, normal(granted)]);
+      base.coreFault = { key: "core.contentsGet", fatal: true };
+      const p = predictMulti(base);
+      expect(p.repos[0]?.run).toBeNull();
+      expect([...(p.repos[0]?.allowedResults ?? [])]).toEqual(["failed"]);
+      expect([...(p.repos[1]?.allowedResults ?? [])]).toEqual(["applied"]);
+      expect(p.allowedExitCodes.has(1)).toBe(true);
+    }
+  });
+
+  test("a non-fatal contentsGet fault changes no prediction", () => {
+    const granted = meta({ sections: ["labels"], mode: "apply", mask: {} });
+    const base = multiMeta([missing(), normal(granted)]);
+    base.coreFault = { key: "core.contentsGet", fatal: false };
+    const p = predictMulti(base);
+    expect([...(p.repos[0]?.allowedResults ?? [])]).toEqual(["skipped"]);
+    expect([...(p.repos[1]?.allowedResults ?? [])]).toEqual(["applied"]);
+    expect([...p.allowedExitCodes]).toEqual([0]);
+  });
+
   test("repo result is the mechanical worst-of fold, not a loose union", () => {
     // A fully-granted apply target: every section is "applied", so the ONLY
     // reachable repo result is "applied" - a union over section outcomes would

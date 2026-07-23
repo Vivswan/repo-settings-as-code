@@ -822,8 +822,10 @@ export const NON_MAPPING_YAML = ["- a\n- b", "just a string"] as const;
  * present in `live_state.workflows` at its declared state (so enable/disable is a
  * no-op or a single flip that then converges). Returns undefined when the
  * settings declare neither section, leaving the scenario's live state absent.
+ * Exported for the fault fuzz, whose single-section scenarios need the same
+ * presence seeding to converge.
  */
-function presenceLiveState(settings: Json): LiveState | undefined {
+export function presenceLiveState(settings: Json): LiveState | undefined {
   const live: LiveState = {};
   const branches = settings.branches as Json[] | undefined;
   if (Array.isArray(branches)) {
@@ -840,6 +842,48 @@ function presenceLiveState(settings: Json): LiveState | undefined {
   }
   return live.branches || live.workflows ? live : undefined;
 }
+
+// --- Fault-target catalog (fault-mode fuzz) ---------------------------------
+
+/**
+ * The one read each section issues UNCONDITIONALLY - in BOTH modes - whenever
+ * the section is declared, as the "section.role" fault key the mock accepts.
+ * A fault aimed here is guaranteed to fire, which the fuzz iteration's
+ * faultsFired assertion turns into a non-vacuity proof. Sections whose first
+ * read is conditional or check-mode-only are deliberately absent: repository,
+ * environments, and code_scanning_default_setup read only under check (apply
+ * writes unconditionally), and branches/actions gate their reads on the
+ * declared keys - a fault aimed at a read that never happens would fail the
+ * non-vacuity assertion instead of testing anything.
+ */
+export const SECTION_PRIMARY_READ = {
+  labels: "labels.list",
+  rulesets: "rulesets.list",
+  autolinks: "autolinks.list",
+  workflows: "workflows.list",
+  collaborators: "collaborators.list",
+  teams: "teams.org",
+  milestones: "milestones.list",
+  pages: "pages.get",
+} as const satisfies Partial<Record<SectionKey, string>>;
+
+export type FaultableSection = keyof typeof SECTION_PRIMARY_READ;
+
+/**
+ * The sections deliberately absent from SECTION_PRIMARY_READ (the reasons are
+ * in its doc). Together the two lists must cover every SectionKey: a NEW
+ * section that lands unclassified fails this exhaustiveness check instead of
+ * silently escaping fault fuzzing.
+ */
+const UNFAULTABLE_SECTIONS = [
+  "repository",
+  "branches",
+  "environments",
+  "actions",
+  "code_scanning_default_setup",
+] as const satisfies readonly SectionKey[];
+type FaultClassified = FaultableSection | (typeof UNFAULTABLE_SECTIONS)[number];
+type _UnclassifiedFaultSection = MustBeNever<Exclude<SectionKey, FaultClassified>>;
 
 let validator: ValidateFunction | undefined;
 
@@ -1094,6 +1138,18 @@ export interface MultiScenarioMeta {
   privateReport: "none" | "issue" | "artifact";
   /** GITHUB_REPOSITORY: a target whose slug equals it is never redacted. */
   selfSlug: string;
+  /**
+   * A core-route fault the FUZZ ITERATION injected (generation never sets
+   * this). `fatal` is the modeled VERDICT - the fault kills the FIRST
+   * target's settings fetch (an exhausting budget of 1 + MAX_RETRIES, or a
+   * rate_limit_403's first firing): targets are processed in generation
+   * order, the visibility probes consume nothing (they hit the repository
+   * route), and the fault hook precedes both the missing-file 404 and the
+   * permission gate - so the victim FAILS outright whatever its kind would
+   * otherwise report. A non-fatal fault is retried away and changes no
+   * prediction.
+   */
+  coreFault?: { key: "core.contentsGet"; fatal: boolean };
   /**
    * The slug of the target that opted out of the defaults' milestones section
    * (set milestones: null), or undefined when no target opted out. Recorded so

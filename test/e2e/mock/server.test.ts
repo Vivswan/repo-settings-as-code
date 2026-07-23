@@ -11,6 +11,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
+import { GithubApi } from "../../../src/github/api.js";
 import { endpointPermission } from "../../../src/sections/contract.js";
 import { allEndpoints, SECTIONS } from "../../../src/sections/registry.js";
 import { parseScenario, type Scenario } from "../schema.js";
@@ -1035,6 +1036,32 @@ describe("core-route faults and server_error", () => {
   });
 });
 
+describe("429 fault production parity", () => {
+  test("the throttling plugin (production topology, no env knob) absorbs the mock's 429", async () => {
+    // The env knob must be ABSENT here: under RETRY_BASE_MS the client swaps
+    // to a test-only recovery path (throttling off, 429 retried by the retry
+    // plugin), which would absorb ANY 429 shape and prove nothing about
+    // production. This constructs the client with the production topology -
+    // throttling plugin ON, 429 in the retry plugin's doNotRetry - and only
+    // scales the WAITS via the constructor override, so the test proves the
+    // throttle detection recognizes the mock's exact secondary-limit shape
+    // (the "secondary rate" message and the positive Retry-After are both
+    // load-bearing) and retries it into the 200.
+    expect(process.env.RETRY_BASE_MS).toBeUndefined();
+    const h = await start(scenario({ live_state: { labels: [{ id: 1, name: "bug" }] } }), {
+      faults: [{ key: "labels.list", kind: "429_then_200" }],
+    });
+    const api = new GithubApi("e2e-token", h.url, undefined, 1);
+    const result = await api.tryRequest("GET", `/repos/${OWNER}/${REPO}/labels`);
+    expect("error" in result).toBe(false);
+    // The fault FIRED (the absorption was not vacuous) and the retried
+    // request then served the real list.
+    expect(h.faultCounts.get("labels.list")).toBe(1);
+    const statuses = h.requests.map((r) => r.status);
+    expect(statuses).toEqual([429, 200]);
+  });
+});
+
 describe("handler statuses obey the realism rule", () => {
   // The rule (statusAllowed): a handler may answer any DECLARED status plus any
   // UNdeclared error status (>= 400); an undeclared 2xx/3xx is forbidden. This
@@ -1814,13 +1841,18 @@ describe("fault injection", () => {
     expect((await call(h, "GET", labelsPath)).status).toBe(200);
   });
 
-  test("429_then_200 answers 429 with Retry-After: 0, then serves the handler", async () => {
+  test("429_then_200 answers the secondary-limit wire shape, then serves the handler", async () => {
     const h = await start(scenario(), {
       faults: [{ key: "labels.list", kind: "429_then_200" }],
     });
     const faulted = await call(h, "GET", labelsPath);
     expect(faulted.status).toBe(429);
-    expect(faulted.headers.get("retry-after")).toBe("0");
+    // Both details are load-bearing for the throttling plugin's detection: the
+    // message must contain "secondary rate", and Retry-After must be a
+    // POSITIVE number (a "0" is falsy and falls back to the plugin's 60s
+    // default, which the app's callback would honor as a real 60s wait).
+    expect(String((await json(faulted)).message)).toContain("secondary rate limit");
+    expect(Number(faulted.headers.get("retry-after"))).toBeGreaterThan(0);
     const retried = await call(h, "GET", labelsPath);
     expect(retried.status).toBe(200);
   });

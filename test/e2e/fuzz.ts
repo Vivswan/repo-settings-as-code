@@ -20,6 +20,7 @@
 import { rmSync } from "node:fs";
 import type { SectionKey } from "../../src/schema.js";
 import {
+  type FaultableSection,
   genDiscoveryScenario,
   genInvalidSettings,
   genLiveWitness,
@@ -30,8 +31,11 @@ import {
   type LiveWitness,
   type LiveWitnessKind,
   type MultiRepoMeta,
+  type MultiScenarioMeta,
   NON_MAPPING_YAML,
+  presenceLiveState,
   type ScenarioMeta,
+  SECTION_PRIMARY_READ,
   UNPARSEABLE_YAML,
   validateAgainstPublishedSchema,
   WITNESS_KINDS,
@@ -116,6 +120,8 @@ interface IterationResult {
   sections: SectionKey[];
   /** Mutation classes this run provably reached (witnessed sections only). */
   coverage?: CoverageEvent[];
+  /** The fired fault's endpoint kind/verdict label, for the fault-class histogram. */
+  faultClass?: string;
 }
 
 /**
@@ -169,12 +175,39 @@ function witnessCoverage(
 }
 
 /**
- * Run one generated single-repo scenario against its oracle prediction: the
- * shared core of the standard random iteration and the directed witness
- * battery. A fully-granted apply also asserts convergence (the runner's
- * converges machinery).
+ * The non-vacuity check every fault-carrying iteration shares: the injected
+ * fault must have actually FIRED, or the iteration proved nothing about fault
+ * handling. faultsFired snapshots the PRIMARY invocation only - a fault that
+ * would first fire during a converges/idempotence re-run deliberately reads
+ * as NOT fired - which is exactly right here: the injected budget must be
+ * consumed by the run whose exit code and outcomes we asserted. Returns
+ * whether the fault fired, so callers record the fault-class histogram only
+ * for CONFIRMED firings.
  */
-async function runPredicted(scenario: Scenario, meta: ScenarioMeta): Promise<IterationResult> {
+function assertFaultFired(
+  faultsFired: Record<string, number>,
+  key: string,
+  problems: string[],
+): boolean {
+  const fired = (faultsFired[key] ?? 0) >= 1;
+  if (!fired) {
+    problems.push(`fault on ${key} never fired - the iteration is vacuous`);
+  }
+  return fired;
+}
+
+/**
+ * Run one generated single-repo scenario against its oracle prediction: the
+ * shared core of the standard random iteration and the directed witness and
+ * fault batteries. A fully-granted apply also asserts convergence (the
+ * runner's converges machinery); `opts.faultKey` adds the fault-fired
+ * non-vacuity check.
+ */
+async function runPredicted(
+  scenario: Scenario,
+  meta: ScenarioMeta,
+  opts: { faultKey?: string; faultClass?: string } = {},
+): Promise<IterationResult> {
   const prediction = predictOutcomes(meta);
   // The runner requires an expect.exit_code; we assert the exit code against
   // the oracle's ALLOWED SET in fuzz.ts instead (a set cannot be expressed as
@@ -200,6 +233,11 @@ async function runPredicted(scenario: Scenario, meta: ScenarioMeta): Promise<Ite
     problems.push(
       `exit code ${report.exitCode} not in predicted {${[...prediction.allowedExitCodes].join(",")}}`,
     );
+  }
+  let faultClass: string | undefined;
+  if (opts.faultKey !== undefined) {
+    const fired = assertFaultFired(report.faultsFired, opts.faultKey, problems);
+    faultClass = fired ? opts.faultClass : undefined;
   }
   // Each predicted section must APPEAR in the summary (a predicted section
   // missing entirely is a silent regression the old `if (got)` guard hid), and
@@ -230,6 +268,7 @@ async function runPredicted(scenario: Scenario, meta: ScenarioMeta): Promise<Ite
     artifactDir: report.artifactDir,
     sections: meta.sections,
     coverage: witnessCoverage(report.requests, meta, observed),
+    faultClass,
   };
 }
 
@@ -535,11 +574,38 @@ async function persistentChaosIteration(
  */
 async function multiRepoFuzzIteration(seed: number): Promise<IterationResult> {
   const { scenario, meta } = genMultiScenario(new Rng(seed));
+  return runMultiPredicted(scenario, meta);
+}
+
+/**
+ * Options steering a multi-repo run's assertions when a fault rides along:
+ * `faultKey` adds the fault-fired non-vacuity check; `reportFaultDegrades`
+ * replaces the report-body positive assertion with the degrade contract (the
+ * safe warning fires, no issue is ever written, target results unchanged).
+ */
+interface MultiRunOptions {
+  faultKey?: string;
+  /** Histogram label recorded only when the fault provably fired. */
+  faultClass?: string;
+  reportFaultDegrades?: boolean;
+}
+
+/** The shared multi-repo run + assertion core (see multiRepoFuzzIteration). */
+async function runMultiPredicted(
+  scenario: Scenario,
+  meta: MultiScenarioMeta,
+  opts: MultiRunOptions = {},
+): Promise<IterationResult> {
   const prediction = predictMulti(meta);
   scenario.expect = { exit_code: 0 };
 
   const report = await runScenario(scenario);
   const problems: string[] = [];
+  let faultClass: string | undefined;
+  if (opts.faultKey !== undefined) {
+    const fired = assertFaultFired(report.faultsFired, opts.faultKey, problems);
+    faultClass = fired ? opts.faultClass : undefined;
+  }
   // Non-vacuity guard: a redact run must always exercise a non-empty forbidden
   // set (the generator forces one private target), so the leak check below is
   // never trivially satisfied. A regression that lets a redact run go all-public
@@ -666,6 +732,10 @@ async function multiRepoFuzzIteration(seed: number): Promise<IterationResult> {
         // nothing), and a leftover report_public_key without private-report:
         // artifact is rejected too. Either rejection would make the
         // counterfactual fail to start and falsely read as "no canary surfaced".
+        // Drop injected faults too: the counterfactual proves CANARY FLOW, and
+        // an exhausting fault could kill the very target whose canary must
+        // surface, falsely reading as vacuous.
+        faults: undefined,
         inputs: {
           ...scenario.inputs,
           private_repos: "show",
@@ -693,8 +763,29 @@ async function multiRepoFuzzIteration(seed: number): Promise<IterationResult> {
   // issue body - the one private channel where the full detail legitimately
   // lands. The forced-private target is fully granted, so its report always
   // delivers; assert its canaries reached the recorded issue body. This proves
-  // suppression did not eat the report.
-  if (meta.privateReport === "issue") {
+  // suppression did not eat the report. Under an injected report-route fault
+  // (reportFaultDegrades) the contract flips: delivery must DEGRADE to the safe
+  // warning - no issue is ever created or patched, the warning fires at least
+  // once (the forced-private target always attempts delivery), and target
+  // results stay whatever the oracle predicted (a report failure never fails
+  // the run).
+  if (meta.privateReport === "issue" && opts.reportFaultDegrades === true) {
+    const issueWrites = report.requests.filter(
+      (r) => r.method !== "GET" && /\/issues(\/|$|\?)/.test(r.pathname),
+    );
+    if (issueWrites.length > 0) {
+      const sample = issueWrites.map((r) => `${r.method} ${r.pathname}`).join(", ");
+      problems.push(`report fault: issue writes happened despite the faulted lookup: ${sample}`);
+    }
+    const degradeWarnings = report.stdout
+      .split("\n")
+      .filter((line) => line.includes("could not deliver the private report")).length;
+    if (degradeWarnings < 1) {
+      problems.push(
+        "report fault: no safe degrade warning fired despite a delivering target attempting the report",
+      );
+    }
+  } else if (meta.privateReport === "issue") {
     for (const repo of meta.repos) {
       if (!repo.redacted || !reportDelivers(repo) || repo.canaries.length === 0) {
         continue;
@@ -759,6 +850,7 @@ async function multiRepoFuzzIteration(seed: number): Promise<IterationResult> {
     failure: problems.length > 0 ? problems.join("; ") : undefined,
     artifactDir: report.artifactDir,
     sections: [],
+    faultClass,
   };
 }
 
@@ -790,6 +882,15 @@ function reportDelivers(repo: MultiRepoMeta): boolean {
  */
 async function discoveryFuzzIteration(seed: number): Promise<IterationResult> {
   const { scenario, meta } = genDiscoveryScenario(new Rng(seed));
+  return runDiscoveryPredicted(scenario, meta);
+}
+
+/** The shared discovery run + assertion core (see discoveryFuzzIteration). */
+async function runDiscoveryPredicted(
+  scenario: Scenario,
+  meta: ReturnType<typeof genDiscoveryScenario>["meta"],
+  opts: { faultKey?: string; faultClass?: string } = {},
+): Promise<IterationResult> {
   const kept = predictDiscovery(meta.pool, meta.filters);
   // Zero surviving repos is a fatal configuration error for the action (there
   // is nothing to apply against), so the exit prediction follows the kept set.
@@ -798,6 +899,11 @@ async function discoveryFuzzIteration(seed: number): Promise<IterationResult> {
 
   const report = await runScenario(scenario);
   const problems: string[] = [...report.failures];
+  let faultClass: string | undefined;
+  if (opts.faultKey !== undefined) {
+    const fired = assertFaultFired(report.faultsFired, opts.faultKey, problems);
+    faultClass = fired ? opts.faultClass : undefined;
+  }
   const results = parseReposResult(report.outputs["repos-result"]);
   const got = new Set(Object.keys(results));
 
@@ -846,7 +952,437 @@ async function discoveryFuzzIteration(seed: number): Promise<IterationResult> {
         : undefined,
     artifactDir: report.artifactDir,
     sections: [],
+    faultClass,
   };
+}
+
+// --- Transport-fault fuzz ---------------------------------------------------
+
+/** The four transport fault kinds the mock injects (see FaultOption). */
+const FAULT_KINDS = ["rate_limit_403", "429_then_200", "connection_drop", "server_error"] as const;
+type FaultKind = (typeof FAULT_KINDS)[number];
+
+/**
+ * One full round of client attempts: the first request plus MAX_RETRIES
+ * retries (src/github/api.ts). A fault budget of RETRY_BUDGET outlasts the
+ * retries and surfaces as a failure; a budget of 1 is a transient the retry
+ * plugin absorbs (for the kinds it retries at all - see faultKills).
+ */
+const RETRY_BUDGET = 3;
+
+/**
+ * The histogram label for one fired fault, keyed by ENDPOINT so per-endpoint
+ * starvation is visible, and classed by the VERDICT (fatal vs transient), not
+ * the raw budget - a one-shot rate_limit_403 is fatal, so labeling it
+ * "transient" would contradict the modeled fact.
+ */
+function faultClassLabel(key: string, kind: FaultKind, fatal: boolean): string {
+  return `${key} ${kind}/${fatal ? "fatal" : "transient"}`;
+}
+
+/**
+ * Whether a fault takes the FAILURE path - the modeled VERDICT, distinct from
+ * the `exhausting` budget roll. An exhausting budget (RETRY_BUDGET firings)
+ * always kills; rate_limit_403 kills on its FIRST firing regardless of
+ * budget, because the client deliberately never absorbs a primary rate limit
+ * - its reset typically lies far beyond MAX_RETRY_WAIT_S, so throttleCallback
+ * (src/github/api.ts) surfaces it immediately with re-run advice instead of
+ * stalling the job. The "transient" class does not exist for that kind.
+ */
+function faultKills(kind: FaultKind, exhausting: boolean): boolean {
+  return exhausting || kind === "rate_limit_403";
+}
+
+/** The full plan for one section-read fault run (random stream or battery). */
+interface SectionFaultPlan {
+  section: FaultableSection;
+  key: string;
+  kind: FaultKind;
+  exhausting: boolean;
+  mode: "apply" | "check";
+}
+
+/**
+ * Section-read fault fuzz: aim one transport fault at a section's guaranteed
+ * primary read (SECTION_PRIMARY_READ). A transient fault (times 1) must be
+ * retried away, leaving the run indistinguishable from a healthy one; an
+ * exhausting fault (times 3 = 1 + MAX_RETRIES) must fail the section loudly.
+ */
+async function sectionFaultIteration(seed: number): Promise<IterationResult> {
+  const rng = new Rng(seed);
+  const section = rng.pick(Object.keys(SECTION_PRIMARY_READ) as FaultableSection[]);
+  return faultedSectionRun(seed, {
+    section,
+    key: SECTION_PRIMARY_READ[section],
+    kind: rng.pick([...FAULT_KINDS]),
+    exhausting: rng.bool(),
+    mode: rng.pick(["apply", "check"] as const),
+  });
+}
+
+/** Build and run one section-fault scenario per the plan. */
+async function faultedSectionRun(seed: number, plan: SectionFaultPlan): Promise<IterationResult> {
+  const rng = new Rng(seed).fork("fault-scenario");
+  const settings: Record<string, unknown> = {
+    [plan.section]: genSettings(rng.fork("settings"), plan.section),
+  };
+  const liveKinds: NonNullable<ScenarioMeta["liveKinds"]> = {};
+  // Presence live state first (a declared workflow whose file is absent would
+  // permanently drift the converge re-run), witness state merged over it.
+  const combinedLive: LiveWitness["state"] = { ...(presenceLiveState(settings) ?? {}) };
+  if (plan.section === "labels" || plan.section === "milestones") {
+    // A matching witness pins the no-fault prediction exactly (clean/applied),
+    // so a transient fault must leave the run INDISTINGUISHABLE from a healthy
+    // one - the strongest form of "retried away".
+    const witness = genLiveWitness(
+      rng.fork("witness"),
+      plan.section,
+      settings[plan.section],
+      "matching",
+    );
+    liveKinds[plan.section] = witness.kind;
+    Object.assign(combinedLive, witness.state);
+  }
+  const liveState = Object.keys(combinedLive).length > 0 ? combinedLive : undefined;
+  const meta: ScenarioMeta = {
+    sections: [plan.section],
+    mask: {},
+    mode: plan.mode,
+    // Policy pinned to warn in the RANDOM stream (oracle generality); the
+    // apply + fail preflight-budget interaction is pinned by the directed
+    // preflight battery cases (preflightFaultRun).
+    policy: "warn",
+    ownerKind: "org",
+    denialStyle: "fine_grained",
+    requiredSections: [],
+    liveKinds,
+  };
+  const scenario: Scenario = {
+    name: `fuzz-fault-${plan.section}-${plan.kind}-x${plan.exhausting ? RETRY_BUDGET : 1}-${seed}`,
+    tiers: ["mock"],
+    settings,
+    inputs: { mode: plan.mode, on_missing_permission: "warn" },
+    denial_style: "fine_grained",
+    owner_kind: "org",
+    ...(liveState ? { live_state: liveState } : {}),
+    faults: [{ endpoint: plan.key, kind: plan.kind, times: plan.exhausting ? RETRY_BUDGET : 1 }],
+    expect: { exit_code: 0 },
+  };
+  const label = faultClassLabel(plan.key, plan.kind, faultKills(plan.kind, plan.exhausting));
+  return faultKills(plan.kind, plan.exhausting)
+    ? exhaustedSectionRun(scenario, plan.section, plan.key, label)
+    : runPredicted(scenario, meta, { faultKey: plan.key, faultClass: label });
+}
+
+/**
+ * The exhausting-fault contract for a single declared section: the run fails
+ * (exit 1) with the section reported "failed" and an actionable error naming
+ * it, no unhandled stack in stderr, and the fault provably fired.
+ */
+async function exhaustedSectionRun(
+  scenario: Scenario,
+  section: FaultableSection,
+  faultKey: string,
+  faultClass: string,
+): Promise<IterationResult> {
+  scenario.expect = { exit_code: 1 };
+  const report = await runScenario(scenario);
+  const problems = report.ok ? [] : [...report.failures];
+  const fired = assertFaultFired(report.faultsFired, faultKey, problems);
+  const observed = parseSummaryOutcomes(report.summary);
+  if (observed[section] !== "failed") {
+    problems.push(
+      `${section}: observed "${observed[section] ?? "(absent)"}" under an exhausted fault, expected failed`,
+    );
+  }
+  if (!new RegExp(`::error::[^\\n]*${section}`).test(report.stdout)) {
+    problems.push(`no actionable error naming the ${section} section`);
+  }
+  if (/\n\s+at\s+\S+ \(/.test(report.stderr)) {
+    problems.push("unhandled stack in stderr under an exhausted fault");
+  }
+  return {
+    ok: problems.length === 0,
+    failure: problems.length > 0 ? `[fault ${faultKey}] ${problems.join("; ")}` : undefined,
+    artifactDir: report.artifactDir,
+    sections: [section],
+    faultClass: fired ? faultClass : undefined,
+  };
+}
+
+/**
+ * Multi core-path fault fuzz: aim a fault at core.contentsGet, the settings
+ * fetch every target makes. An exhausting budget is eaten whole by the FIRST
+ * target in generation order (fetch + retries), which then fails outright
+ * (predictMulti's coreFault override); a transient one is retried away and
+ * every prediction stands. Falls back to a plain multi iteration when the
+ * first target is the raw-invalid one (its parse-gate wording assertion must
+ * stay unconditional) or a redacted canary carrier (its report delivery and
+ * counterfactual flow must stay guaranteed) - the same disjointness pattern
+ * raw targets already use.
+ */
+async function multiContentsFaultIteration(seed: number): Promise<IterationResult> {
+  const { scenario, meta } = genMultiScenario(new Rng(seed));
+  const victim = meta.repos[0];
+  if (victim === undefined || victim.target.kind === "raw-invalid" || victim.canaries.length > 0) {
+    return runMultiPredicted(scenario, meta);
+  }
+  const roll = new Rng(seed ^ 0x51ed2701);
+  const kind = roll.pick([...FAULT_KINDS]);
+  const exhausting = roll.bool();
+  const fatal = faultKills(kind, exhausting);
+  // rate_limit_403 kills the fetch on its FIRST firing, so a full budget
+  // would spill the remaining firings into the NEXT targets' fetches and fail
+  // them too - beyond the oracle's single-victim model. One firing is exactly
+  // one dead target for that kind; retried kinds need the full RETRY_BUDGET
+  // to exhaust.
+  const times = kind === "rate_limit_403" ? 1 : exhausting ? RETRY_BUDGET : 1;
+  scenario.faults = [{ endpoint: "core.contentsGet", kind, times }];
+  meta.coreFault = { key: "core.contentsGet", fatal };
+  return runMultiPredicted(scenario, meta, {
+    faultKey: "core.contentsGet",
+    faultClass: faultClassLabel("core.contentsGet", kind, fatal),
+  });
+}
+
+/**
+ * Discovery core-path fault fuzz: fault the /user/repos listing itself. A
+ * transient is absorbed by the retry and the normal discovery assertions
+ * hold. An exhausting fault is FATAL: the run exits 1 before any target
+ * executes - no pool repo is fetched and no repos-result is emitted (a silent
+ * empty pool instead of a loud failure is exactly the bug this hunts).
+ */
+async function discoveryFaultIteration(seed: number): Promise<IterationResult> {
+  const { scenario, meta } = genDiscoveryScenario(new Rng(seed));
+  const roll = new Rng(seed ^ 0x2545f491);
+  const kind = roll.pick([...FAULT_KINDS]);
+  const exhausting = roll.bool();
+  const fatal = faultKills(kind, exhausting);
+  scenario.faults = [
+    { endpoint: "core.discoveryList", kind, times: exhausting ? RETRY_BUDGET : 1 },
+  ];
+  const faultClass = faultClassLabel("core.discoveryList", kind, fatal);
+  if (!fatal) {
+    return runDiscoveryPredicted(scenario, meta, {
+      faultKey: "core.discoveryList",
+      faultClass,
+    });
+  }
+  return fatalDiscoveryRun(scenario, meta, faultClass);
+}
+
+/**
+ * The discovery-fatal contract, shared by the random stream and the battery:
+ * the run exits 1 before any target executes - no pool repo is fetched and
+ * repos-result is never EMITTED (parseReposResult would map absent,
+ * malformed, and {} to the same empty object, hiding a stray emit).
+ */
+async function fatalDiscoveryRun(
+  scenario: Scenario,
+  meta: ReturnType<typeof genDiscoveryScenario>["meta"],
+  faultClass: string,
+): Promise<IterationResult> {
+  scenario.expect = { exit_code: 1 };
+  const report = await runScenario(scenario);
+  const problems = report.ok ? [] : [...report.failures];
+  const fired = assertFaultFired(report.faultsFired, "core.discoveryList", problems);
+  const touched = report.requests.filter((r) =>
+    meta.pool.some((p) => r.pathname.startsWith(`/repos/${p.slug}`)),
+  );
+  if (touched.length > 0) {
+    problems.push(
+      `discovery-fatal: ${touched.length} target request(s) after the failed listing, e.g. ${touched[0]?.method} ${touched[0]?.pathname}`,
+    );
+  }
+  if (report.outputs["repos-result"] !== undefined) {
+    problems.push(
+      `discovery-fatal: repos-result was emitted (${report.outputs["repos-result"]}), expected no output at all`,
+    );
+  }
+  return {
+    ok: problems.length === 0,
+    failure: problems.length > 0 ? `[fault core.discoveryList] ${problems.join("; ")}` : undefined,
+    artifactDir: report.artifactDir,
+    sections: [],
+    faultClass: fired ? faultClass : undefined,
+  };
+}
+
+/** Battery entry: the discovery-fatal contract with a pinned kind and budget. */
+function discoveryFaultBatteryRun(seed: number): Promise<IterationResult> {
+  const { scenario, meta } = genDiscoveryScenario(new Rng(seed));
+  scenario.faults = [{ endpoint: "core.discoveryList", kind: "server_error", times: RETRY_BUDGET }];
+  return fatalDiscoveryRun(
+    scenario,
+    meta,
+    faultClassLabel("core.discoveryList", "server_error", true),
+  );
+}
+
+/**
+ * Battery entries pinning the apply + fail-policy PREFLIGHT interaction the
+ * random stream deliberately avoids (its policy stays warn for oracle
+ * generality). The preflight barrier re-runs every section read first and
+ * IGNORES non-permission errors (orchestrate.ts), so the probe consumes fault
+ * budget:
+ * - budget = RETRY_BUDGET: the probe's read burns the whole budget, the
+ *   apply-pass read then succeeds - the run must land applied, exit 0.
+ * - budget = 2 x RETRY_BUDGET: the budget survives preflight, the apply-pass
+ *   read dies too - the section must fail loudly, exit 1.
+ */
+async function preflightFaultRun(seed: number, surviving: boolean): Promise<IterationResult> {
+  const rng = new Rng(seed).fork("preflight");
+  const settings: Record<string, unknown> = { labels: genSettings(rng.fork("settings"), "labels") };
+  const witness = genLiveWitness(rng.fork("witness"), "labels", settings.labels, "matching");
+  const times = surviving ? 2 * RETRY_BUDGET : RETRY_BUDGET;
+  const scenario: Scenario = {
+    name: `fuzz-preflight-fault-${surviving ? "survives" : "consumed"}-${seed}`,
+    tiers: ["mock"],
+    settings,
+    inputs: { mode: "apply", on_missing_permission: "fail" },
+    denial_style: "fine_grained",
+    owner_kind: "org",
+    live_state: witness.state,
+    faults: [{ endpoint: "labels.list", kind: "server_error", times }],
+    expect: { exit_code: surviving ? 1 : 0 },
+  };
+  const faultClass = faultClassLabel("labels.list", "server_error", surviving);
+  if (surviving) {
+    return exhaustedSectionRun(scenario, "labels", "labels.list", faultClass);
+  }
+  const report = await runScenario(scenario);
+  const problems = report.ok ? [] : [...report.failures];
+  const fired = assertFaultFired(report.faultsFired, "labels.list", problems);
+  const observed = parseSummaryOutcomes(report.summary);
+  if (observed.labels !== "applied") {
+    problems.push(
+      `preflight-consumed: labels observed "${observed.labels ?? "(absent)"}", expected applied - the probe should have eaten the budget and the apply read succeeded`,
+    );
+  }
+  return {
+    ok: problems.length === 0,
+    failure: problems.length > 0 ? `[preflight consumed] ${problems.join("; ")}` : undefined,
+    artifactDir: report.artifactDir,
+    sections: ["labels"],
+    faultClass: fired ? faultClass : undefined,
+  };
+}
+
+/**
+ * Report-route fault fuzz: fault the issue channel's lookup (core.issuesList,
+ * which fires for EVERY delivering target - the guaranteed fully-granted
+ * forced-private one included) and require the degrade contract: the safe
+ * "could not deliver the private report" warning, zero issue writes, and
+ * target results exactly as the oracle predicted (a report failure never
+ * fails the run). `times: 99` faults every lookup so no target's delivery
+ * half-succeeds; the kind is pinned to server_error because the degrade
+ * contract is the HTTP-status warning path - other kinds keep riding the
+ * section and core iterations. Draws scenarios from deterministic forks until
+ * one uses the issue channel (~1/6 per draw), falling back to a plain multi
+ * iteration when none rolls within the attempt budget.
+ */
+async function reportFaultIteration(seed: number): Promise<IterationResult> {
+  const drawn = drawIssueChannelScenario(new Rng(seed), 12);
+  if (drawn === null) {
+    return multiRepoFuzzIteration(seed);
+  }
+  return injectedReportFaultRun(drawn);
+}
+
+/** Deterministic forked draws until one scenario uses the issue channel. */
+function drawIssueChannelScenario(
+  base: Rng,
+  attempts: number,
+): { scenario: Scenario; meta: MultiScenarioMeta } | null {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const drawn = genMultiScenario(base.fork(`report:${attempt}`));
+    if (drawn.meta.privateReport === "issue") {
+      return drawn;
+    }
+  }
+  return null;
+}
+
+/** Inject the issue-lookup fault and run the degrade contract. */
+function injectedReportFaultRun(drawn: {
+  scenario: Scenario;
+  meta: MultiScenarioMeta;
+}): Promise<IterationResult> {
+  drawn.scenario.faults = [{ endpoint: "core.issuesList", kind: "server_error", times: 99 }];
+  return runMultiPredicted(drawn.scenario, drawn.meta, {
+    faultKey: "core.issuesList",
+    faultClass: faultClassLabel("core.issuesList", "server_error", true),
+    reportFaultDegrades: true,
+  });
+}
+
+/**
+ * Directed core-fault battery entries. The random stream reaches the
+ * core-path fault iterations only ~1/80 per iteration, so a 30-iteration soak
+ * exercises each with only ~25% probability - vacuous coverage the batteries
+ * exist to prevent. One entry pins the exhausting contentsGet victim rule
+ * (drawing until the first target passes the disjointness guard); the other
+ * pins the issue-channel degrade contract. Both FAIL when no eligible draw
+ * lands in the fork budget, instead of silently falling back.
+ */
+async function contentsFaultBatteryRun(seed: number): Promise<IterationResult> {
+  const base = new Rng(seed);
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const { scenario, meta } = genMultiScenario(base.fork(`contents:${attempt}`));
+    const victim = meta.repos[0];
+    if (
+      victim === undefined ||
+      victim.target.kind === "raw-invalid" ||
+      victim.canaries.length > 0
+    ) {
+      continue;
+    }
+    scenario.faults = [{ endpoint: "core.contentsGet", kind: "server_error", times: RETRY_BUDGET }];
+    meta.coreFault = { key: "core.contentsGet", fatal: true };
+    return runMultiPredicted(scenario, meta, {
+      faultKey: "core.contentsGet",
+      faultClass: faultClassLabel("core.contentsGet", "server_error", true),
+    });
+  }
+  return {
+    ok: false,
+    failure: "could not draw an eligible contents-fault victim in 20 forks",
+    sections: [],
+  };
+}
+
+async function reportFaultBatteryRun(seed: number): Promise<IterationResult> {
+  // 40 forks: an issue-channel draw is ~1/6 per fork, so a miss is ~(5/6)^40
+  // (under one in a thousand) - rare enough for a deterministic battery.
+  const drawn = drawIssueChannelScenario(new Rng(seed), 40);
+  if (drawn === null) {
+    return {
+      ok: false,
+      failure: "could not draw an issue-channel scenario in 40 forks",
+      sections: [],
+    };
+  }
+  return injectedReportFaultRun(drawn);
+}
+
+/**
+ * The fault half of the transport-misbehavior slot: section reads get the
+ * bulk of the stream (8 faultable reads x 4 kinds x 2 budgets), and the three
+ * core paths - the contents fetch, the discovery listing, and the report
+ * delivery - share the rest.
+ */
+async function faultFuzzIteration(seed: number): Promise<IterationResult> {
+  const roll = new Rng(seed ^ 0x7f4a7c15).int(5);
+  if (roll === 0) {
+    return multiContentsFaultIteration(seed);
+  }
+  if (roll === 1) {
+    return discoveryFaultIteration(seed);
+  }
+  if (roll === 2) {
+    return reportFaultIteration(seed);
+  }
+  return sectionFaultIteration(seed);
 }
 
 async function main(): Promise<number> {
@@ -871,11 +1407,19 @@ async function main(): Promise<number> {
   };
   const failingSeeds: number[] = [];
   let failures = 0;
+  const faultHistogram = new Map<string, number>();
+  const recordFaultClass = (cls: string | undefined): void => {
+    if (cls !== undefined) {
+      faultHistogram.set(cls, (faultHistogram.get(cls) ?? 0) + 1);
+    }
+  };
 
   for (let i = 0; i < flags.iterations; i++) {
     const seed = replayOne ? master : iterationSeed(master, i);
     // Mode selection over an 8-way roll: ~1/4 multi-repo (when enabled), 1/8
-    // input fuzz, 1/8 chaos, 1/8 discovery, the rest standard single-repo.
+    // input fuzz, 1/8 transport misbehavior (split 50/50 between response
+    // corruption and injected faults), 1/8 discovery, the rest standard
+    // single-repo.
     const roll = new Rng(seed ^ 0x5bd1e995).int(8);
     let result: IterationResult;
     let mode: string;
@@ -886,8 +1430,13 @@ async function main(): Promise<number> {
       mode = "input";
       result = await inputFuzzIteration(seed);
     } else if (roll === 3) {
-      mode = "chaos";
-      result = await chaosFuzzIteration(seed);
+      if (new Rng(seed ^ 0x1b873593).bool()) {
+        mode = "fault";
+        result = await faultFuzzIteration(seed);
+      } else {
+        mode = "chaos";
+        result = await chaosFuzzIteration(seed);
+      }
     } else if (roll === 4) {
       mode = "discovery";
       result = await discoveryFuzzIteration(seed);
@@ -899,6 +1448,7 @@ async function main(): Promise<number> {
       coverage.set(section, (coverage.get(section) ?? 0) + 1);
     }
     recordCoverage(result.coverage);
+    recordFaultClass(result.faultClass);
     if (!result.ok) {
       failures++;
       failingSeeds.push(seed);
@@ -1018,6 +1568,83 @@ async function main(): Promise<number> {
         console.log(`    artifact: ${result.artifactDir}`);
       }
     }
+
+    // Directed fault battery: every fault kind x budget, with the SECTION
+    // TARGET rotated across all 8 SECTION_PRIMARY_READ entries by battery
+    // index (offset by the master seed, so the kind-to-section pairing varies
+    // across soaks while every soak still covers every kind/budget combo AND
+    // every faultable endpoint - no endpoint can starve behind a frozen CI
+    // seed). Labels/milestones entries get a matching witness (exact
+    // predictions); a transient combo must be indistinguishable from a
+    // healthy run, a fatal one must fail loudly naming its section. Mode
+    // alternates per kind so both modes appear across the battery.
+    console.log("\nfault battery (directed transport faults, section rotated):");
+    const faultableSections = Object.keys(SECTION_PRIMARY_READ) as FaultableSection[];
+    const faultCombos: Array<[FaultKind, boolean]> = [];
+    for (const kind of FAULT_KINDS) {
+      faultCombos.push([kind, false], [kind, true]);
+    }
+    for (const [index, [kind, exhausting]] of faultCombos.entries()) {
+      const seed = iterationSeed(master, 0x300000 + index);
+      const mode = (index >> 1) % 2 === 0 ? ("apply" as const) : ("check" as const);
+      const section = faultableSections[
+        (index + (master % faultableSections.length)) % faultableSections.length
+      ] as FaultableSection;
+      const label = `${section}:${kind}/x${exhausting ? RETRY_BUDGET : 1}`;
+      const result = await faultedSectionRun(seed, {
+        section,
+        key: SECTION_PRIMARY_READ[section],
+        kind,
+        exhausting,
+        mode,
+      });
+      recordCoverage(result.coverage);
+      recordFaultClass(result.faultClass);
+      if (result.ok) {
+        if (result.artifactDir) {
+          rmSync(result.artifactDir, { recursive: true, force: true });
+        }
+        console.log(`  ${label} [${mode}] ok`);
+        continue;
+      }
+      batteryFailures++;
+      console.log(`  ${label} [${mode}] seed ${seed} FAIL: ${result.failure}`);
+      console.log(`    replay: bun test/e2e/fuzz.ts --seed ${master} --iterations 0`);
+      if (result.artifactDir) {
+        console.log(`    artifact: ${result.artifactDir}`);
+      }
+    }
+
+    // Directed core-fault battery: the contentsGet victim rule and the
+    // issue-channel degrade contract, once per soak (see the helpers' doc for
+    // why the random stream alone leaves them near-vacuous at 30 iterations).
+    console.log("\ncore-fault battery (directed core-path faults):");
+    const coreEntries: Array<[string, (seed: number) => Promise<IterationResult>]> = [
+      ["core.contentsGet/fatal", contentsFaultBatteryRun],
+      ["core.discoveryList/fatal", discoveryFaultBatteryRun],
+      ["core.issuesList/degrade", reportFaultBatteryRun],
+      ["preflight/budget-consumed", (seed) => preflightFaultRun(seed, false)],
+      ["preflight/budget-survives", (seed) => preflightFaultRun(seed, true)],
+    ];
+    for (const [index, [name, run]] of coreEntries.entries()) {
+      const seed = iterationSeed(master, 0x400000 + index);
+      const result = await run(seed);
+      recordCoverage(result.coverage);
+      recordFaultClass(result.faultClass);
+      if (result.ok) {
+        if (result.artifactDir) {
+          rmSync(result.artifactDir, { recursive: true, force: true });
+        }
+        console.log(`  ${name} ok`);
+        continue;
+      }
+      batteryFailures++;
+      console.log(`  ${name} seed ${seed} FAIL: ${result.failure}`);
+      console.log(`    replay: bun test/e2e/fuzz.ts --seed ${master} --iterations 0`);
+      if (result.artifactDir) {
+        console.log(`    artifact: ${result.artifactDir}`);
+      }
+    }
   }
 
   console.log("\ncoverage (sections exercised):");
@@ -1056,9 +1683,24 @@ async function main(): Promise<number> {
     }
   }
 
+  // Fault classes fired across the run (random stream + battery). The battery
+  // guarantees every endpoint x kind x verdict each soak, so a missing class
+  // here means a battery failure already counted above; this histogram is the
+  // visibility.
+  console.log("\nfault-class coverage (endpoint kind/verdict fired):");
+  if (faultHistogram.size === 0) {
+    console.log("  (none)");
+  } else {
+    for (const [cls, count] of [...faultHistogram.entries()].sort(([a], [b]) =>
+      a.localeCompare(b),
+    )) {
+      console.log(`  ${cls}: ${count}`);
+    }
+  }
+
   console.log(`\n${flags.iterations - failures}/${flags.iterations} iterations ok`);
   if (batteryFailures > 0) {
-    console.log(`directed battery failures (witness + input): ${batteryFailures}`);
+    console.log(`directed battery failures (witness + input + fault): ${batteryFailures}`);
   }
   if (failingSeeds.length > 0) {
     console.log(`failing seeds: ${failingSeeds.join(", ")}`);

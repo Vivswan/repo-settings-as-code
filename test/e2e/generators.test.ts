@@ -3,7 +3,7 @@ import { parse as parseYaml } from "yaml";
 import { validateSettingsDoc } from "../../src/engine/orchestrate.js";
 import type { Io } from "../../src/io.js";
 import { SECTION_KEYS, type SectionKey } from "../../src/schema.js";
-import { sectionShape } from "../../src/sections/registry.js";
+import { allEndpoints, sectionShape } from "../../src/sections/registry.js";
 import {
   ARTIFACT_TEST_RECIPIENT,
   genInvalidSettings,
@@ -14,6 +14,7 @@ import {
   INVALID_SETTINGS_CASES,
   type LiveWitnessKind,
   NON_MAPPING_YAML,
+  SECTION_PRIMARY_READ,
   UNPARSEABLE_YAML,
   validateAgainstPublishedSchema,
 } from "./generators.js";
@@ -337,6 +338,25 @@ describe("genLiveWitness", () => {
         "drift-update",
       ),
     ).toThrow(/sentinel/);
+  });
+});
+
+describe("SECTION_PRIMARY_READ", () => {
+  test("every entry names a real GET endpoint of its own section", () => {
+    // The fault fuzz aims at these keys and asserts the fault FIRED, so a key
+    // that drifts from the endpoint registry would fail every fault iteration
+    // - this test catches it at unit speed instead.
+    const known = allEndpoints();
+    for (const [section, key] of Object.entries(SECTION_PRIMARY_READ)) {
+      const endpoint = known[key];
+      if (endpoint === undefined) {
+        throw new Error(`SECTION_PRIMARY_READ[${section}] names unknown endpoint "${key}"`);
+      }
+      expect(key.startsWith(`${section}.`)).toBe(true);
+      // A fault target must be the section's READ: faulting a write would
+      // depend on live state ever driving a write, which is not guaranteed.
+      expect(endpoint.route.startsWith("GET ")).toBe(true);
+    }
   });
 });
 

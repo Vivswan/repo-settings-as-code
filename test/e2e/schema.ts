@@ -275,9 +275,12 @@ const DiscoverySchema = z
  * report routes). These model failures the permission/handler layers cannot:
  * `rate_limit_403` answers 403 with "rate limit" in the body (the client's
  * classifier must read it as throttling, NOT a permission denial);
- * `429_then_200` answers 429 with Retry-After: 0 so the client's retry plugin
- * retries and the next request succeeds (the retry path, fast under
- * RETRY_BASE_MS=1); `server_error` answers a 5xx with a JSON message body,
+ * `429_then_200` answers the REAL secondary-rate-limit shape (the documented
+ * "secondary rate limit" message plus a small positive Retry-After), which
+ * octokit's throttling plugin - production's only 429 recovery path -
+ * recognizes and retries, so the next request succeeds; under RETRY_BASE_MS
+ * the retry plugin absorbs it instead, equally fast; `server_error` answers a
+ * 5xx with a JSON message body,
  * rotating 500/502/503 deterministically on the fault's fire count - the
  * client retries 5xx, so times: 1 is a transient the run recovers from and
  * times >= 3 (1 + MAX_RETRIES) exhausts the retries into a hard failure;

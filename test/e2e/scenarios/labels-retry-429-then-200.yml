@@ -1,8 +1,10 @@
-# RETRY_BASE_MS=1 retry path. A 429_then_200 fault answers 429 with
-# Retry-After: 0 on the labels list read once; the throttling plugin retries
-# immediately (fast under RETRY_BASE_MS=1, which the runner sets) and the retry
-# succeeds, so the section proceeds and applies normally - proving the client's
-# retry path recovers from a transient 429.
+# RETRY_BASE_MS=1 retry path. A 429_then_200 fault answers the real
+# secondary-rate-limit wire shape (the "secondary rate limit" message body plus
+# a small positive Retry-After) on the labels list read once; the client
+# retries (fast under RETRY_BASE_MS=1, which the runner sets) and the retry
+# succeeds, so the section proceeds and applies normally - proving the client
+# recovers from a transient 429. The production-topology throttle recognition
+# of this exact shape is pinned separately at the unit level in server.test.ts.
 name: labels-retry-429-then-200
 settings:
   labels:
