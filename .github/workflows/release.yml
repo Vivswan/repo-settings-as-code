@@ -17,8 +17,7 @@ jobs:
   # only when the released tag points at the commit this run tested: main
   # can advance in the seconds between the gate and the release, and `@v1`
   # consumers must never receive an untested commit. On a mismatch, fail
-  # loudly and repair with the Retag Major workflow after verifying that
-  # commit's CI.
+  # loudly and repair by hand after verifying that commit's CI.
   retag-major:
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
@@ -36,7 +35,7 @@ jobs:
           git fetch --quiet origin "refs/tags/$TAG:refs/tags/$TAG"
           released="$(git rev-parse "refs/tags/$TAG^{}")"
           if [ "$released" != "$GITHUB_SHA" ]; then
-            echo "::error::released $TAG at $released, but this run tested $GITHUB_SHA (main moved during the release window). Verify that commit's CI, then move the major tag with the Retag Major workflow."
+            echo "::error::released $TAG at $released, but this run tested $GITHUB_SHA (main moved during the release window). Verify that commit's CI, then move the major tag by hand: git tag -f <major> $TAG && git push --force origin <major> (e.g. major v1 for v1.2.3)."
             exit 1
           fi
       - name: Move the major tag
