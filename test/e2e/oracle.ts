@@ -212,7 +212,10 @@ export interface RunPrediction {
   noWritesInCheck: boolean;
   /** Sections whose denied writes must never mutate state (mock rule 4). */
   writeDeniedSections: SectionKey[];
-  /** True when every declared section is write-granted (convergence expected). */
+  /**
+   * True when every ACTIVE section is write-granted (convergence expected).
+   * Excluded sections never run, so they do not count against this.
+   */
   fullyGranted: boolean;
   /**
    * True when the run aborts at the preflight barrier before rendering any
@@ -276,7 +279,9 @@ export function predictOutcomes(meta: ScenarioMeta): RunPrediction {
     writeDeniedSections: sections
       .filter((s) => s.grade !== "write" && !s.mayWrite)
       .map((s) => s.key),
-    fullyGranted: sections.every((s) => s.grade === "write"),
+    // Excluded sections never run, so they cannot break convergence or
+    // idempotence: fullyGranted quantifies over the sections that WILL run.
+    fullyGranted: sections.every((s) => s.allowed.has("excluded") || s.grade === "write"),
     preflightAborts,
   };
 }

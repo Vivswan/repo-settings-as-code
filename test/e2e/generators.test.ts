@@ -15,6 +15,7 @@ import {
   INVALID_SETTINGS_CASES,
   type LiveWitnessKind,
   NON_MAPPING_YAML,
+  ORG_GATED_SECTIONS,
   SECTION_PRIMARY_READ,
   UNPARSEABLE_YAML,
   validateAgainstPublishedSchema,
@@ -437,7 +438,18 @@ describe("genScenario", () => {
       }
       expect([...meta.sections].sort()).toEqual([...declared].sort());
       expect(meta.sections.length).toBeGreaterThan(0);
-      expect([403, "fine_grained"]).toContain(meta.denialStyle);
+      expect([403, 404, "fine_grained"]).toContain(meta.denialStyle);
+      // An allowlist, when rolled, is a STRICT nonempty subset of the
+      // declared sections (so the excluded outcome is always reachable) and
+      // rides the inputs verbatim.
+      if (meta.onlySections !== undefined) {
+        expect(meta.onlySections.length).toBeGreaterThan(0);
+        expect(meta.onlySections.length).toBeLessThan(meta.sections.length);
+        for (const key of meta.onlySections) {
+          expect(declared.has(key)).toBe(true);
+        }
+        expect(scenario.inputs?.sections).toBe(meta.onlySections.join(","));
+      }
     }
   });
 
@@ -765,9 +777,12 @@ describe("battery forces (constructed eligibility, never rejection-sampled)", ()
 
   test("idempotence-eligible force pins apply, none-channel, no raw, empty masks", () => {
     for (let i = 0; i < 200; i++) {
-      const { meta } = genMultiScenario(new Rng(i), "idempotence-eligible");
+      const { scenario, meta } = genMultiScenario(new Rng(i), "idempotence-eligible");
       expect(meta.mode).toBe("apply");
       expect(meta.privateReport).toBe("none");
+      // The global mask is cleared too: a globally denied teams section under
+      // fail policy would preflight-abort and block the fixpoint proof.
+      expect(scenario.token_permissions).toBeUndefined();
       expect(meta.repos.some((r) => r.target.kind === "raw-invalid")).toBe(false);
       for (const repo of meta.repos) {
         if (repo.target.kind === "normal") {
@@ -794,5 +809,113 @@ describe("battery forces (constructed eligibility, never rejection-sampled)", ()
       // No filter inputs ride along under the force.
       expect(scenario.discovery?.inputs).toEqual({});
     }
+  });
+});
+
+describe("dead-corner knobs", () => {
+  test("code scanning declares each optional field within its schema enum, runner_label only when labeled", () => {
+    let sawThreat = 0;
+    let sawLabeled = 0;
+    for (let i = 0; i < 300; i++) {
+      const cfg = genSettings(new Rng(i), "code_scanning_default_setup") as Record<string, unknown>;
+      if (cfg.threat_model !== undefined) {
+        sawThreat++;
+        expect(["remote", "remote_and_local"]).toContain(cfg.threat_model as string);
+      }
+      if (cfg.runner_type !== undefined) {
+        expect(["standard", "labeled"]).toContain(cfg.runner_type as string);
+      }
+      if (cfg.runner_label !== undefined) {
+        sawLabeled++;
+        expect(cfg.runner_type).toBe("labeled");
+      }
+      if (cfg.runner_type === "labeled") {
+        expect(cfg.runner_label).toBe("e2e-runner");
+      }
+    }
+    expect(sawThreat).toBeGreaterThan(0);
+    expect(sawLabeled).toBeGreaterThan(0);
+  });
+
+  test("every denial style surfaces across seeds, 404 included", () => {
+    const seen = new Set<string | number>();
+    for (let i = 0; i < 300; i++) {
+      seen.add(genScenario(new Rng(i)).meta.denialStyle);
+    }
+    expect([...seen].sort()).toEqual([403, 404, "fine_grained"].sort());
+  });
+
+  test("the excluded outcome is reachable: allowlists surface across seeds", () => {
+    let sawAllowlist = 0;
+    for (let i = 0; i < 300; i++) {
+      const { meta } = genScenario(new Rng(i));
+      if (meta.onlySections !== undefined) {
+        sawAllowlist++;
+      }
+    }
+    expect(sawAllowlist).toBeGreaterThan(0);
+  });
+
+  test("the multi global mask varies ONLY org_members, and rides token_permissions", () => {
+    let sawGlobal = 0;
+    for (let i = 0; i < 300; i++) {
+      const { scenario, meta } = genMultiScenario(new Rng(i));
+      const global = scenario.token_permissions;
+      if (global !== undefined) {
+        sawGlobal++;
+        expect(Object.keys(global)).toEqual(["org_members"]);
+        // Every normal target's oracle meta carries the SAME global mask as
+        // orgMask, so mock and oracle grade one effective mask.
+        for (const repo of meta.repos) {
+          if (repo.target.kind === "normal") {
+            expect(repo.target.meta.orgMask).toEqual(global);
+          }
+        }
+      }
+    }
+    expect(sawGlobal).toBeGreaterThan(0);
+  });
+
+  test("a globally denied org gate strips org-gated sections from the forced-private canary target", () => {
+    // The canary target's design guarantees (never preflight-aborts, report
+    // always delivers) assume its sections are fully granted; an org-gated
+    // section (teams) under org_members: none is denied whatever the per-slug
+    // mask says, so it is dropped there (regression: fuzz seed 795 -
+    // preflight abort ate the canary and the counterfactual read as vacuous).
+    // Only the FORCED target carries the guarantee: an unforced roll can
+    // produce another redacted empty-mask target that legitimately keeps
+    // teams, so the pin addresses the recorded forcedPrivateSlug exactly.
+    expect(ORG_GATED_SECTIONS.has("teams")).toBe(true);
+    let sawShape = 0;
+    for (let i = 0; i < 600; i++) {
+      const { scenario, meta } = genMultiScenario(new Rng(i));
+      if (scenario.token_permissions?.org_members !== "none") {
+        continue;
+      }
+      const forced = meta.repos.find((repo) => repo.slug === meta.forcedPrivateSlug);
+      if (forced === undefined || forced.target.kind !== "normal") {
+        continue;
+      }
+      sawShape++;
+      for (const key of forced.target.meta.sections) {
+        expect(ORG_GATED_SECTIONS.has(key)).toBe(false);
+      }
+    }
+    expect(sawShape).toBeGreaterThan(0);
+  });
+
+  test("a GHES base prefix surfaces occasionally on both generators", () => {
+    let single = 0;
+    let multi = 0;
+    for (let i = 0; i < 300; i++) {
+      if (genScenario(new Rng(i)).scenario.base_prefix === "/api/v3") {
+        single++;
+      }
+      if (genMultiScenario(new Rng(i)).scenario.base_prefix === "/api/v3") {
+        multi++;
+      }
+    }
+    expect(single).toBeGreaterThan(0);
+    expect(multi).toBeGreaterThan(0);
   });
 });

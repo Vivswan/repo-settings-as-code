@@ -263,6 +263,23 @@ describe("predictSection rules", () => {
     expect(unrestricted.allowed.has("excluded")).toBe(false);
   });
 
+  test("an excluded section does not flip fullyGranted", () => {
+    // The fixpoint gates (converges / apply_idempotent) quantify over the
+    // sections that WILL run; a denied-but-excluded section must not block
+    // them.
+    const p = predictOutcomes(
+      meta({
+        sections: ["labels", "pages"],
+        onlySections: ["pages"],
+        mask: { issues: "none" },
+        mode: "apply",
+        policy: "warn",
+      }),
+    );
+    expect(p.fullyGranted).toBe(true);
+    expect(p.preflightAborts).toBe(false);
+  });
+
   test("an excluded denied section never arms the preflight barrier", () => {
     // Preflight probes only ACTIVE sections, so a permission-denied section
     // that the allowlist excludes cannot abort the run.
@@ -428,6 +445,7 @@ describe("predictMulti rollup", () => {
       privateRepos: "show",
       privateReport: "none",
       selfSlug: "e2e-owner/e2e-repo",
+      globalMask: {},
     };
   }
 
@@ -523,6 +541,7 @@ describe("predictMulti rollup", () => {
       privateRepos: "show",
       privateReport: "none",
       selfSlug: "e2e-owner/e2e-repo",
+      globalMask: {},
     });
     expect(p.repos[0]?.allowedResults.has("partial")).toBe(true);
     expect(p.repos[0]?.allowedResults.has("skipped")).toBe(false);
@@ -617,6 +636,7 @@ describe("predictMulti rollup", () => {
       privateRepos: "redact",
       privateReport: "none",
       selfSlug: "e2e-owner/e2e-repo",
+      globalMask: {},
     });
     // The result prediction keys on the placeholder; the real slug never appears.
     expect(p.repos[0]?.displayKey).toBe("private repository #1");

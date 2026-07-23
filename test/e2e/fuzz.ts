@@ -742,6 +742,11 @@ function multiIdempotenceEligible(meta: MultiScenarioMeta): boolean {
   return (
     meta.mode === "apply" &&
     meta.privateReport !== "issue" &&
+    // A globally denied org gate makes any declared teams section a
+    // denied-path section even under empty per-target masks: its final check
+    // legitimately reads back as drift (declared team, no access), which the
+    // idempotence proof cannot accept.
+    meta.globalMask.org_members !== "none" &&
     meta.repos.every((r) => r.target.kind !== "raw-invalid") &&
     meta.repos.every(
       (r) => r.target.kind !== "normal" || Object.keys(r.target.meta.mask).length === 0,

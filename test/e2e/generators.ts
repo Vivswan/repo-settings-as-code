@@ -13,6 +13,7 @@ import { Ajv, type ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
 import settingsSchema from "../../lib/settings.schema.json" with { type: "json" };
 import { type MustBeNever, SECTION_KEYS, type SectionKey } from "../../src/schema.js";
+import { SECTIONS } from "../../src/sections/registry.js";
 import type { LiveState } from "./mock/state.js";
 import type { Rng } from "./prng.js";
 import type { DenialStyle, MaskGrade, MaskKey, OwnerKind, Scenario } from "./schema.js";
@@ -270,8 +271,21 @@ function genCodeScanning(rng: Rng): Json {
   if (rng.bool()) {
     cfg.query_suite = rng.pick(["default", "extended"]);
   }
+  // threat_model occupies the draw slots of the duplicated query_suite
+  // branch it replaced (same bool threshold, same two-way pick), so every
+  // draw after it in this function is byte-identical across the swap.
   if (rng.bool()) {
-    cfg.query_suite = rng.pick(["default", "extended"]);
+    cfg.threat_model = rng.pick(["remote", "remote_and_local"]);
+  }
+  // The runner fields are NEW draws, so they live on a forked stream: the
+  // main stream stays stable and recorded seeds keep reproducing.
+  const runnerRng = rng.fork("runner");
+  if (runnerRng.bool(0.3)) {
+    cfg.runner_type = runnerRng.pick(["standard", "labeled"] as const);
+    if (cfg.runner_type === "labeled") {
+      // runner_label pairs with the labeled runner type (schema.ts).
+      cfg.runner_label = "e2e-runner";
+    }
   }
   if (rng.bool(0.5)) {
     cfg.languages = Array.from({ length: rng.int(3) + 1 }, () => rng.pick(CODE_SCANNING_LANGUAGES));
@@ -920,6 +934,17 @@ export interface GenScenarioOptions {
   sections?: SectionKey[];
 }
 
+/**
+ * Sections whose permission carries an org-members gate (today: teams).
+ * Derived from the registry's `permission` declarations - the same single
+ * source that drives the oracle's sectionGrade and the mock's permission
+ * gate - so a future org-gated section inherits the forced-private strip
+ * below without a hand edit.
+ */
+export const ORG_GATED_SECTIONS: ReadonlySet<SectionKey> = new Set(
+  SECTIONS.filter((section) => section.permission.org === "members").map((section) => section.key),
+);
+
 const MASK_KEYS: MaskKey[] = [
   "administration",
   "issues",
@@ -949,9 +974,8 @@ export interface ScenarioMeta {
    * when one is set; undefined means no allowlist, every declared section
    * runs. The engine reports a declared-but-not-allowlisted section as
    * "excluded" BEFORE its handler runs (orchestrate.ts), so the oracle folds
-   * exclusion ahead of grades and witnesses. Generation does not set this
-   * yet; it exists so the sections-allowlist fuzz (Commit 7) cannot silently
-   * mispredict a witnessed or denied section.
+   * exclusion ahead of grades and witnesses. genScenario rolls one on ~20%
+   * of scenarios (a strict nonempty subset of the declared sections).
    */
   onlySections?: SectionKey[];
   /**
@@ -976,8 +1000,9 @@ export interface ScenarioMeta {
  * A random whole scenario plus the generation metadata the oracle consumes.
  * The scenario's settings pass the published schema; required_sections are
  * drawn only from the declared sections so the scenario is internally
- * consistent. denial_style is random between 403 and fine_grained (the two
- * styles the oracle reasons about). The returned meta echoes the raw
+ * consistent. denial_style draws from fine_grained, 403, and 404 (only 403
+ * discriminates in the oracle; 404 shares fine_grained's outcome classes for
+ * every operation currently generated). The returned meta echoes the raw
  * generation facts so the oracle does not re-derive them from the scenario.
  */
 export function genScenario(
@@ -1041,8 +1066,31 @@ export function genScenario(
   const mode = rng.pick(["apply", "check"] as const);
   const policy = rng.pick(["fail", "warn"] as const);
   const ownerKind: OwnerKind = rng.pick(["org", "user"] as const);
-  const denialStyle: DenialStyle = rng.pick(["fine_grained", 403] as const);
+  // 404 answers EVERY denial (read and write) with Not Found; the mock still
+  // classifies denied writes as PermissionDenied, so its outcome classes
+  // equal fine_grained for every operation the generator currently produces
+  // (a future generated write whose endpoint TOLERATES 404 would break that
+  // parity) - 403 stays the discriminating style.
+  const denialStyle: DenialStyle = rng.pick(["fine_grained", 403, 404] as const);
   const requiredSections = chosen.filter(() => rng.bool(0.25));
+  // Occasionally run under a `sections` allowlist so the EXCLUDED outcome is
+  // exercised: a strict nonempty subset of the declared sections is allowed
+  // and the rest must render excluded. The oracle folds this before
+  // permissions and witnesses (predictSection), and excluded sections never
+  // preflight nor break the fullyGranted fixpoint gates.
+  // New draws live on a forked stream so the pre-existing main-stream
+  // sequence (and with it every recorded seed) stays stable.
+  const allowRng = rng.fork("input-sections");
+  let onlySections: SectionKey[] | undefined;
+  if (chosen.length >= 2 && allowRng.bool(0.2)) {
+    const subset = chosen.filter(() => allowRng.bool(0.6));
+    onlySections =
+      subset.length === 0
+        ? [allowRng.pick(chosen)]
+        : subset.length === chosen.length
+          ? subset.slice(1)
+          : subset;
+  }
 
   const scenario: Scenario = {
     name: `fuzz-${rng.seed}`,
@@ -1052,10 +1100,16 @@ export function genScenario(
       mode,
       on_missing_permission: policy,
       ...(requiredSections.length > 0 ? { required_sections: requiredSections.join(",") } : {}),
+      ...(onlySections !== undefined ? { sections: onlySections.join(",") } : {}),
     },
     token_permissions: Object.keys(mask).length > 0 ? mask : undefined,
     denial_style: denialStyle,
     owner_kind: ownerKind,
+    // Occasionally a GHES-style base URL prefix: the mock requires it on
+    // every request, proving the client joins base URLs without dropping or
+    // doubling the path (mirrors the curated ghes-prefix scenario). A new
+    // draw, so it comes from a fork (main-stream stability).
+    ...(rng.fork("base-prefix").bool(0.15) ? { base_prefix: "/api/v3" } : {}),
     ...(liveState ? { live_state: liveState } : {}),
     // The oracle predicts the outcome class in Phase 3b; a generated scenario
     // carries a placeholder expect until the oracle fills it.
@@ -1069,6 +1123,7 @@ export function genScenario(
     ownerKind,
     denialStyle,
     requiredSections,
+    onlySections,
     liveKinds,
   };
   return { scenario, meta };
@@ -1139,6 +1194,20 @@ export interface MultiScenarioMeta {
   /** GITHUB_REPOSITORY: a target whose slug equals it is never redacted. */
   selfSlug: string;
   /**
+   * The run's GLOBAL token mask (scenario token_permissions), varied only on
+   * org_members. The idempotence eligibility predicate reads it: a globally
+   * denied org gate makes a declared teams section a denied-path section even
+   * when every per-target mask is empty.
+   */
+  globalMask: Partial<Record<MaskKey, MaskGrade>>;
+  /**
+   * The slug of the forced-private canary target, when redaction forced one
+   * (privateRepos === "redact"); undefined under show. Lets tests address
+   * THAT target exactly instead of pattern-matching redacted targets, which
+   * an unforced roll can also produce.
+   */
+  forcedPrivateSlug?: string;
+  /**
    * A core-route fault the FUZZ ITERATION injected (generation never sets
    * this). `fatal` is the modeled VERDICT - the fault kills the FIRST
    * target's settings fetch (an exhausting budget of 1 + MAX_RETRIES, or a
@@ -1172,9 +1241,10 @@ export interface MultiScenarioMeta {
  * EXISTS for every master seed. Rejection sampling with ANY fixed fork budget
  * has miss seeds (live counterexample: seed 8181 missed an issue-channel draw
  * in 40 forks), and with live CI seeds every miss is a spurious failure - so
- * the batteries CONSTRUCT eligibility instead of sampling for it. The
- * UNFORCED path is byte-identical to the pre-force generator (verified over
- * 400 seeds against HEAD). FORCED paths may consume a DIFFERENT draw
+ * the batteries CONSTRUCT eligibility instead of sampling for it. When the
+ * knob landed, the UNFORCED path was verified byte-identical to the
+ * pre-force generator over 400 seeds; later generator changes move both
+ * paths together. FORCED paths may consume a DIFFERENT draw
  * sequence (an overridden roll can gate later draws - e.g. a forced redact
  * consumes the report pick a rolled show would skip), which is safe: forced
  * generation is deterministic per (seed, force), and every battery replay
@@ -1228,11 +1298,22 @@ export function genMultiScenario(
   // equals it is never redacted (the self carve-out). Kept in sync with
   // runner.ts's REPO_SLUG.
   const selfSlug = "e2e-owner/e2e-repo";
-  // The GLOBAL token mask for the run: empty here (no scenario-wide
-  // token_permissions), so every resource defaults to write. The mock grades
-  // teams' org-scoped endpoints against THIS mask, so each repo's oracle meta
-  // carries it as orgMask (see the teams org gate in sectionGrade).
+  // The GLOBAL token mask for the run, varied ONLY on org_members: the mock
+  // grades org-scoped endpoints (teams' org routes) against the global mask
+  // while repo-scoped ones use the per-slug overlay, so any other global
+  // entry would make mock and oracle grade DIFFERENT effective masks.
+  // org_members is org-scoped only, so both sides agree; each repo's oracle
+  // meta carries this as orgMask (the teams org gate in sectionGrade). The
+  // idempotence force clears it: a globally denied teams section under fail
+  // policy would preflight-abort and block the fixpoint proof.
+  // New draws, so they live on a forked stream: the pre-existing main-stream
+  // sequence (missingIndex and everything after) stays stable and recorded
+  // seeds keep reproducing.
+  const globalMaskRng = rng.fork("global-mask");
   const globalMask: Partial<Record<MaskKey, MaskGrade>> = {};
+  if (globalMaskRng.bool(0.3) && force !== "idempotence-eligible") {
+    globalMask.org_members = globalMaskRng.pick(["none", "read", "write"] as const);
+  }
   // One repo (chosen up front) is missing its settings file, so it is skipped.
   const missingIndex = rng.int(count);
 
@@ -1339,9 +1420,26 @@ export function genMultiScenario(
     // org-level probe (GET /orgs/{owner}) from shared org state under the global
     // mask, so per-repo teams exercises the org-members AND-gate too.
     const pool = [...SECTION_KEYS];
-    const sections = pool.filter(() => child.bool(0.5));
+    let sections = pool.filter(() => child.bool(0.5));
     if (sections.length === 0) {
       sections.push(child.pick(pool));
+    }
+    // The forced-private target's design guarantees - it never
+    // preflight-aborts and its report always delivers - assume every section
+    // it declares is fully granted. A globally denied org gate
+    // (org_members: none) breaks that for org-gated sections (their reads are
+    // denied whatever the per-slug mask says), so the canary target drops
+    // them then; org-gated sections under a denied org gate stay covered on
+    // the OTHER targets.
+    if (i === forcedPrivateIndex && globalMask.org_members === "none") {
+      sections = sections.filter((key) => !ORG_GATED_SECTIONS.has(key));
+      if (sections.length === 0) {
+        // A new draw, so it forks off the child stream: the child's own
+        // downstream draws (per-target mask rolls) stay unshifted.
+        sections.push(
+          child.fork("canary-refill").pick(pool.filter((key) => !ORG_GATED_SECTIONS.has(key))),
+        );
+      }
     }
     const settings: Json = {};
     for (const key of sections) {
@@ -1446,10 +1544,9 @@ export function genMultiScenario(
           ownerKind: "org",
           denialStyle,
           requiredSections: [],
-          // teams' org gate is graded by the mock against the GLOBAL mask, not this
-          // per-slug one; genMultiScenario sets no global token_permissions, so it
-          // is empty (every org_members defaults to write - teams is never gated by
-          // a per-slug org_members:none).
+          // teams' org gate is graded by the mock against the GLOBAL mask, not
+          // this per-slug one; genMultiScenario varies that global mask on
+          // org_members only, and every target shares it.
           orgMask: globalMask,
         },
       },
@@ -1523,6 +1620,9 @@ export function genMultiScenario(
     },
     denial_style: denialStyle,
     owner_kind: "org",
+    ...(Object.keys(globalMask).length > 0 ? { token_permissions: globalMask } : {}),
+    // Occasionally a GHES-style base URL prefix, as in genScenario.
+    ...(rng.fork("base-prefix").bool(0.15) ? { base_prefix: "/api/v3" } : {}),
     repos: repos as Scenario["repos"],
     defaults_file: defaultsFile,
     expect: { exit_code: 0 },
@@ -1536,6 +1636,10 @@ export function genMultiScenario(
       privateRepos,
       privateReport,
       selfSlug,
+      globalMask,
+      ...(forcedPrivateIndex >= 0
+        ? { forcedPrivateSlug: `e2e-owner/repo-${forcedPrivateIndex}` }
+        : {}),
       milestonesOptOutSlug: optedOutSlug,
     },
   };
