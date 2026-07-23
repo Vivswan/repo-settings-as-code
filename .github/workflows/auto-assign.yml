@@ -27,6 +27,7 @@ on:
 # permissions must be grantable even where code scanning is disabled. The
 # code_scanning input below keeps that job from actually running there.
 permissions:
+  contents: read # every nested job resolves CODEOWNERS
   issues: write
   pull-requests: write
   security-events: write
