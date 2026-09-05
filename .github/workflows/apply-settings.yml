@@ -1,6 +1,15 @@
-# The most direct consumer of this action is this repository itself: every
-# settings change is applied by the CURRENT code (uses: ./), so a regression
-# here bites us before it bites anyone else. Needs APPLY_SETTING_TOKEN
+# The most direct consumer of this action is this repository itself: its
+# settings are applied by the CURRENT code (uses: ./), so a regression here
+# bites us before it bites anyone else. The document it applies is the
+# SAME six-layer merge Vivswan/repo-platform computes for this repository
+# (the settings-sync module: fleet baseline, module layers, this repo's
+# .github/settings.yml, the fleet override), rendered with repo-platform's
+# own scripts, so this writer, the central heal, and the managed
+# settings-sync.yml (when REPO_PLATFORM_TOKEN is set) converge on one
+# document: each renders from a green repo-platform commit, so two runs
+# can differ only by a platform revision, and the next heal settles it.
+# Applying this repo's partial settings.yml alone would delete every fleet
+# label the merged roster carries. Needs APPLY_SETTING_TOKEN
 # (Administration + Issues write); skips with a notice until it exists.
 
 name: Apply Settings
@@ -8,7 +17,13 @@ name: Apply Settings
 on:
   push:
     branches: [main]
-    paths: [.github/settings.yml]
+    # Every input repo-platform's render reads from the checkout (the
+    # pr-title workflow's presence activates the pr-title ruleset).
+    paths:
+      - .github/settings.yml
+      - .repo-platform.yml
+      - .github/.copier-answers.yml
+      - .github/workflows/pr-title.yml
   schedule:
     - cron: "53 6 * * 1"
   workflow_dispatch:
@@ -22,13 +37,16 @@ on:
 permissions:
   contents: read
 
+# The same group the managed settings-sync.yml uses, so the two never
+# write this repository at once.
 concurrency:
-  group: apply-settings
+  group: apply-settings-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
   apply:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Resolve token
         id: token
@@ -38,30 +56,132 @@ jobs:
           if [ -n "$PAT" ]; then
             echo "proceed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice::APPLY_SETTING_TOKEN is not set; self-apply skipped. Add a fine-grained PAT secret to enable it; the run names the exact per-section permissions to grant if any are missing."
+            echo "::notice::APPLY_SETTING_TOKEN is not set; self-apply skipped. Add a fine-grained PAT secret (Administration + Issues, read and write) to enable it. Vivswan/repo-platform's central settings run applies this repository's settings either way."
             echo "proceed=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # The default branch, not the pushed sha: the render reads this
+      # checkout's module selection and settings.yml, and the freshness
+      # check below compares its HEAD with the live default branch.
       - uses: actions/checkout@v7
         if: steps.token.outputs.proceed == 'true'
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      # repo-platform's `build` branch is the green-gated delivery ref the
+      # fleet pins, but its tree carries only workflow files, never the
+      # scripts. Its tip commit message carries a provenance stamp naming
+      # the green main commit it was composed from (the same
+      # `source: .../commit/<sha>` line reusable-apply-settings.yml
+      # parses), so the scripts are checked out THERE: the exact commit
+      # CI vouched for. A tip without a stamp fails closed.
+      - name: Resolve the repo-platform scripts commit
+        id: scripts
+        if: steps.token.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          message="$(gh api repos/Vivswan/repo-platform/commits/build --jq '.commit.message')"
+          stamp="$(printf '%s\n' "$message" | sed -n -E 's|^source: .*/commit/([0-9a-f]{40})$|\1|p' | head -n 1)"
+          if [ -z "$stamp" ]; then
+            echo "::error::refusing to run repo-platform scripts: the build tip carries no provenance stamp."
+            exit 1
+          fi
+          echo "ref=$stamp" >> "$GITHUB_OUTPUT"
+
+      - name: Check out repo-platform
+        if: steps.token.outputs.proceed == 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: Vivswan/repo-platform
+          ref: ${{ steps.scripts.outputs.ref }}
+          path: platform
+
+      # The platform's scripts run on the platform's own bun pin; this
+      # repository's bundle builds on its own pin further down.
+      - uses: oven-sh/setup-bun@v2
+        if: steps.token.outputs.proceed == 'true'
+        with:
+          bun-version-file: platform/.bun-version
+
+      - name: Install repo-platform script dependencies
+        if: steps.token.outputs.proceed == 'true'
+        working-directory: platform
+        run: bun install --frozen-lockfile --silent
+
+      # Facts (module selection, copier answers, declared visibility) come
+      # from the checkout, so the render needs no Contents scope.
+      - name: Render this repository's settings layers
+        id: render
+        if: steps.token.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.APPLY_SETTING_TOKEN }}
+        run: |
+          bun platform/.github/scripts/fleet/render_managed_settings.ts \
+            --repo "$GITHUB_REPOSITORY" --target-dir . \
+            --out "$RUNNER_TEMP/managed-settings.yml"
+
+      # A checkout that has dropped settings-sync renders no baseline and
+      # reports skipped; merging a file that was never written would turn
+      # that opt-out into a red run.
+      - name: Merge this repository's settings.yml over them
+        id: merge
+        if: steps.render.outputs.skipped == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.APPLY_SETTING_TOKEN }}
+        run: |
+          bun platform/.github/scripts/fleet/merge_settings_layers.ts \
+            --managed "$RUNNER_TEMP/managed-settings.yml" \
+            --repo-file .github/settings.yml \
+            --out "$RUNNER_TEMP/merged-settings.yml"
+
+      # The branch keeps moving while the merge runs: a push that rewrites
+      # settings.yml after the facts were read would apply a stale document.
+      - name: Check this repository has not moved
+        id: freshness
+        if: steps.render.outputs.skipped == 'false' && steps.merge.outputs.skipped == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ github.repository }}
+          PINNED: ${{ steps.render.outputs.ref }}
+        run: bun platform/.github/scripts/fleet/check_target_fresh.ts
+
+      # The apply deletes every live label the merged document does not
+      # declare; a label this repo's issue forms or workflows still
+      # reference must not be among them.
+      - name: Preflight labels this repository still references
+        if: steps.freshness.outputs.moved == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.APPLY_SETTING_TOKEN }}
+          MODE: ${{ inputs.check_only && 'check' || 'apply' }}
+        run: |
+          bun platform/.github/scripts/fleet/label_preflight.ts \
+            --merged "$RUNNER_TEMP/merged-settings.yml" \
+            --repo "$GITHUB_REPOSITORY" --target-dir . \
+            --mode "$MODE" --on-missing-permission fail
 
       # The bundle the action runs is not committed; build it from this
       # checkout so `uses: ./` executes the code at HEAD.
       - uses: oven-sh/setup-bun@v2
-        if: steps.token.outputs.proceed == 'true'
+        if: steps.freshness.outputs.moved == 'false'
         with:
           bun-version-file: .bun-version
       - name: Install dependencies
-        if: steps.token.outputs.proceed == 'true'
+        if: steps.freshness.outputs.moved == 'false'
         run: bun install --frozen-lockfile --ignore-scripts
       - name: Build the action bundle
-        if: steps.token.outputs.proceed == 'true'
+        if: steps.freshness.outputs.moved == 'false'
         run: bun run build:bundle
 
       - name: Apply own settings with the action at HEAD
-        if: steps.token.outputs.proceed == 'true'
+        # Positive equality, never `!= 'true'`: a step that did not RUN has
+        # an empty output, and a negative test would let the apply through
+        # with no merged document behind it.
+        if: steps.freshness.outputs.moved == 'false'
         uses: ./
         with:
           token: ${{ secrets.APPLY_SETTING_TOKEN }}
           mode: ${{ inputs.check_only && 'check' || 'apply' }}
+          repository: ${{ github.repository }}
+          settings-file: ${{ runner.temp }}/merged-settings.yml
           on-missing-permission: fail

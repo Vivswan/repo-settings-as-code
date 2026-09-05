@@ -1,159 +1,55 @@
 ---
-# Repository settings applied by this repo's own Apply Settings workflow
-# (.github/workflows/apply-settings.yml) using the action at HEAD; needs the
-# APPLY_SETTING_TOKEN secret. Undeclared labels are deleted; undeclared
-# rulesets are left alone. Schema: Probot settings.yml superset (see README).
-# Baseline managed by Vivswan/repo-platform; repo-specific
-# additions survive template updates via three-way merge.
+# This repository's OWN settings. Three writers apply the SAME six-layer
+# merge of this file with the fleet layers: Vivswan/repo-platform's central
+# settings-repos heal, the managed settings-sync.yml on pushes to this file
+# (when REPO_PLATFORM_TOKEN is set), and this repo's own apply-settings.yml,
+# which renders the merge with repo-platform's scripts and applies it with
+# the action at HEAD (dogfooding, APPLY_SETTING_TOKEN).
+# Rendered once, repo-owned: template sync never rewrites it. Fleet defaults
+# merge UNDER this file - keys here win, null opts out, labels replace by
+# name, rulesets MERGE by name (rules append by type, nested objects merge
+# key by key, other arrays replace wholesale). The fleet invariants (squash-only merging, the main
+# and non-bypassable rulesets) sit ABOVE and cannot be overridden.
+# Undeclared labels are deleted against the MERGED roster; undeclared
+# rulesets are left alone.
+#
+# The fleet layers already carry everything this repository used to declare
+# by hand: the repository policy block, the dependabot labels (dependencies,
+# github_actions, javascript), the triage trio, the release-please labels,
+# the nightly and fuzzer tracking labels (nightly-failure, fuzz-nightly),
+# and the main ruleset with its code_scanning, code_quality, and
+# copilot_code_review rules.
 
 repository:
   description: "GitHub Action applying declarative repository settings: rulesets, labels, branch protection, and more. A loud, stateless Probot Settings replacement."
+  # Declared even when empty: the apply manages only declared keys, so
+  # this keeps it healing out-of-band edits.
+  homepage: ""
   topics: github-action, repository-settings, settings-as-code, configuration-as-code, probot-settings, rulesets, branch-protection, labels
-  has_issues: true
-  has_wiki: false
-  has_projects: false
-  has_discussions: false
-  default_branch: main
-  allow_squash_merge: true
-  allow_merge_commit: false
-  allow_rebase_merge: false
-  # The squash subject must ALWAYS be the PR title (the pr-title check and
-  # release-please rely on it); GitHub only defaults to that for
-  # single-commit PRs.
-  squash_merge_commit_title: PR_TITLE
-  squash_merge_commit_message: PR_BODY
-  allow_update_branch: true
-  delete_branch_on_merge: true
-  allow_auto_merge: true
-  enable_vulnerability_alerts: true
-  enable_automated_security_fixes: true
+  private: false
 
 labels:
-  - name: dependencies
-    color: "0366d6"
-    description: Dependency updates
-  # Dependabot's default per-ecosystem labels: without a `labels:` override in
-  # dependabot.yml it applies these and recreates them if missing, so leaving
-  # them undeclared would make the settings sync delete/recreate them forever.
-  - name: github_actions
-    color: "000000"
-    description: Pull requests that update GitHub Actions code
-  - name: javascript
-    color: "168700"
-    description: Pull requests that update javascript code
-  - name: bug
-    color: "d73a4a"
-    description: Something isn't working
-  - name: enhancement
-    color: "a2eeef"
-    description: New feature or request
-  - name: fix-lint
-    color: "fbca04"
-    description: Lint / formatting fixes
-  # nightly-fuzz.yml files the fuzz tracking issue under this label (the
-  # fuzz-issue action keys its one-open-issue dedup on it), so it must
-  # survive the label sync.
-  - name: fuzz-nightly
-    color: "B60205"
-    description: Automated nightly fuzz failure
   # e2e-nightly.yml's file-fuzz-issue.ts files under this label, so it must
-  # survive the label sync too.
+  # survive the label sync.
   - name: e2e-fuzz
     color: "B60205"
     description: Automated e2e nightly failure
-  # nightly.yml (the nightly module starter) files its tracking issue under
-  # this label, so it must survive the label sync too.
-  - name: nightly-failure
-    color: "B60205"
-    description: Automated nightly CI failure
-  # release-please manages these two; listing them here keeps the settings
-  # sync from deleting them (it removes any label not declared in this file).
-  - name: "autorelease: pending"
-    color: "ededed"
-    description: release-please release PR awaiting merge/tag
-  - name: "autorelease: tagged"
-    color: "ededed"
-    description: release-please release PR has been tagged
 
-
-# Branch ruleset for the default branch. Admins (RepositoryRole id 5) are in
-# the bypass list, so direct pushes to main still work. The single required
-# status check is `all-green` (ci.yml), which `needs:` every CI job except
-# the downstream release job - the list stays stable when jobs are added or
-# renamed.
 rulesets:
-  - name: main
-    target: branch
-    enforcement: active
-    conditions:
-      ref_name:
-        include:
-          - "~DEFAULT_BRANCH"
-        exclude: []
-    rules:
-      - type: deletion
-      - type: non_fast_forward
-      - type: required_linear_history
-      - type: required_status_checks
-        parameters:
-          strict_required_status_checks_policy: false
-          do_not_enforce_on_create: true
-          required_status_checks:
-            - context: all-green
-      - type: code_scanning
-        parameters:
-          code_scanning_tools:
-            - tool: CodeQL
-              security_alerts_threshold: high_or_higher
-              alerts_threshold: errors
-      - type: pull_request
-        parameters:
-          required_approving_review_count: 0
-          dismiss_stale_reviews_on_push: false
-          # Require an approving review from a CODEOWNER before merge.
-          # Admins in bypass_actors can still merge without one.
-          require_code_owner_review: true
-          require_last_push_approval: false
-          required_review_thread_resolution: false
-          # Squash-only merges (enforced by the ruleset, not just repo settings).
-          allowed_merge_methods:
-            - squash
-      # Automatically request Copilot code review on PRs to main, including on
-      # each new push and on draft PRs.
-      - type: copilot_code_review
-        parameters:
-          review_on_push: true
-          review_draft_pull_requests: true
-    bypass_actors:
-      - actor_id: 5
-        actor_type: RepositoryRole
-        bypass_mode: always
-
-  # vX.Y.Z release tags are immutable: each points at a packaged commit (a
-  # child of its release commit carrying the built bundle) that template-
-  # sync workflow pins and release artifacts reference. The release
-  # workflow creates each tag once and never moves it (reruns verify the
-  # existing tag instead); repository admins bypass for deliberate,
-  # auditable repair. The bare moving major tag (v2) is deliberately NOT
-  # matched here - the release workflow force-moves it to the newest
-  # packaged commit in its line - but major-release-tags below still
-  # blocks its deletion.
+  # NARROWS the release-please module's release-tags ruleset: the fleet
+  # declares it over `v*`, which would also freeze the moving major tag
+  # (v2) that update-release.yml force-moves with the Actions token on
+  # every release. A same-name ruleset merges key by key and an array
+  # replaces wholesale, so this entry swaps only the include list and
+  # inherits everything else (rules, enforcement, bypass) from the fleet.
+  # The vX.Y.Z tags stay immutable: each points at a packaged commit (a
+  # child of its release commit carrying the built bundle) that
+  # template-sync workflow pins and release artifacts reference.
   - name: release-tags
-    target: tag
-    enforcement: active
     conditions:
       ref_name:
         include:
           - v*.*.*
-        exclude: []
-    rules:
-      - type: deletion
-      - type: non_fast_forward
-      - type: update
-    bypass_actors:
-      - actor_id: 5
-        actor_type: RepositoryRole
-        bypass_mode: always
 
   # The moving major tags (v1, v2) move on purpose - every release in the
   # line force-pushes them to its packaged commit - so no update rule, but

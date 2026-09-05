@@ -163,9 +163,9 @@ jobs:
           # No artifacts directory is passed: this stream files the generic
           # nightly-failure report (workflow, commit, run link) rather than
           # the fuzzer's failure-report contract. The tuple below is used
-          # only when the label has to be created and matches the
-          # settings-sync declaration.
-          label-color: "B60205"
+          # only when the label has to be created and matches the nightly
+          # module's tracking label, which the fleet settings layer applies.
+          label-color: "D93F0B"
           label-description: Automated nightly CI failure
 
       # A GITHUB_TOKEN-created issue fires no triggers, so dispatch auto-assign.
