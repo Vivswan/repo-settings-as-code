@@ -194,7 +194,7 @@ describe("docs/ guide pages", () => {
     { label: "README.md", path: join(ROOT, "README.md") },
     { label: "COVERAGE.md", path: join(ROOT, "COVERAGE.md") },
     { label: "CONTRIBUTING.md", path: join(ROOT, "CONTRIBUTING.md") },
-    { label: "SECURITY.md", path: join(ROOT, "SECURITY.md") },
+    { label: ".github/SECURITY.md", path: join(ROOT, ".github", "SECURITY.md") },
   ];
 
   test("every relative link in the guides, README, and COVERAGE resolves to a real file", () => {

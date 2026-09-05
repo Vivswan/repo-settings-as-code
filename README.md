@@ -58,7 +58,7 @@ The guides live in [docs/](docs/README.md), in four groups:
 - `@v2` is a moving major tag: <!-- x-release-please-major --> every release in that major line moves it, so fixes arrive without changing your pin.
 - Pinning exactly: pin `@vX.Y.Z` (or a commit SHA) when you need byte-stable behavior, and upgrade deliberately. Every version tag points at a packaged commit carrying the built action - its parent is the audited release commit on main - and is frozen by a ruleset.
 - v2 activates settings keys that were inert on v1: `actions.oidc_customization_sub`, `actions.fork_pr_contributor_approval`, `actions.fork_pr_workflows_private_repos`, and `branches[].protection.required_signatures`. Before moving a `@v1` pin to `@v2`, audit any of those keys already in your settings files for intent; on v2 they act, and a stale `required_signatures: false` would remove a hand-enabled requirement.
-- Only the latest release is supported; fixes are not backported (see [SECURITY.md](SECURITY.md)).
+- Only the latest release is supported; fixes are not backported (see [SECURITY.md](.github/SECURITY.md)).
 
 ## Sections
 
