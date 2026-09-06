@@ -14,8 +14,8 @@ import { subsetDiff } from "../../../src/engine/diff.js";
 import {
   bypassActorStrings,
   classicViewOfRule,
-  flattenProtection,
-} from "../../../src/sections/branches/index.js";
+} from "../../../src/sections/branches/graphql-rules.js";
+import { flattenProtection } from "../../../src/sections/branches/index.js";
 import { flattenEnvironment } from "../../../src/sections/environments/index.js";
 import { SECTIONS } from "../../../src/sections/registry.js";
 import { roleForPermission } from "../../../src/sections/shared/roles.js";

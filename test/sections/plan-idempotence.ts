@@ -12,21 +12,7 @@ import { executePlan } from "../../src/engine/execute.js";
 import type { GithubClient } from "../../src/github/api.js";
 import type { SectionModule } from "../../src/sections/contract/module.js";
 import { type ExecTools, planContext, type SectionPlan } from "../../src/sections/contract/plan.js";
-
-/** The one target every per-section unit test addresses. */
-export const REPO = { owner: "o", name: "r", slug: "o/r" } as const;
-
-/**
- * Execution tools for a section that declares no secret values: any lookup
- * is a bug, exactly as the engine's empty-map resolver treats it.
- */
-const NO_SECRETS: ExecTools = {
-  resolveSecret(reference) {
-    throw new Error(
-      `BUG: secret reference ${reference} was not resolved up front; the engine resolves every declared secret value before any section runs`,
-    );
-  },
-};
+import { NO_SECRETS, REPO } from "./section-run.js";
 
 /** The marker a thunk folds to; a symbol, so no literal value can collide with it. */
 const SEALED = Symbol("a thunk the plan builds afresh on every pass");

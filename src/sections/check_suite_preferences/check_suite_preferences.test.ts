@@ -6,7 +6,8 @@ import {
   type SectionPlan,
 } from "../../../src/sections/contract/plan.js";
 import { MockApi } from "../../../test/mock-api.js";
-import { provePlanIdempotent, REPO } from "../../../test/sections/plan-idempotence.js";
+import { provePlanIdempotent } from "../../../test/sections/plan-idempotence.js";
+import { REPO } from "../../../test/sections/section-run.js";
 import { checkSuitePreferencesSection } from "./index.js";
 
 describe("check_suite_preferences", () => {
