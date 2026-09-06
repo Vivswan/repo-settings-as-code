@@ -179,7 +179,10 @@ describe("actions_secrets planning", () => {
     expect(kept).toEqual({
       ops: [],
       notes: [
-        'Actions secret "STALE" exists on the repo but is not declared in the settings file; kept under "undeclared: keep" - add it to the settings file to manage it, or set "undeclared: delete" to have apply DELETE it (a deleted secret\'s value is unrecoverable)',
+        'Actions secret "STALE" exists on the repo but is not declared in the settings file; ' +
+          'kept under "undeclared: keep" - add it to the settings file to manage it, or set ' +
+          '"undeclared: delete" to have apply DELETE it (a deleted secret\'s value is ' +
+          "unrecoverable)",
       ],
       drift: [],
     });

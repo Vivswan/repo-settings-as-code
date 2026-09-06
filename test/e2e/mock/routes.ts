@@ -161,7 +161,12 @@ function denialBarrier(
   }
   const module = SECTION_BY_KEY.get(section);
   const posture = module === undefined ? "(unregistered)" : denialPosture(module);
-  return `write to ${renderRequest(log, false)} reached the server after a fatal denied read in the same target+section; the engine's section loop should have aborted at that read (section "${section}" has the "${posture}" 404 posture, style ${String(options.scenario.denial_style)})`;
+  return (
+    `write to ${renderRequest(log, false)} reached the server after a fatal denied read in the ` +
+    `same target+section; the engine's section loop should have aborted at that read (section ` +
+    `"${section}" has the "${posture}" 404 posture, style ` +
+    `${String(options.scenario.denial_style)})`
+  );
 }
 
 /**

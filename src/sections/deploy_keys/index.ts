@@ -68,7 +68,10 @@ function liveMaterial(live: LiveDeployKey): string {
   const normalized = normalizeKeyMaterial(live.key);
   if (normalized === null) {
     throw new Error(
-      `deploy_keys: GET /repos/{owner}/{repo}/keys returned key id ${live.id} ("${live.title}") whose material has fewer than two whitespace-separated fields (${JSON.stringify(live.key)}); the response does not match the documented deploy key shape - check the "api-version" input against the GitHub REST docs for this endpoint`,
+      `deploy_keys: GET /repos/{owner}/{repo}/keys returned key id ${live.id} ` +
+        `("${live.title}") whose material has fewer than two whitespace-separated fields ` +
+        `(${JSON.stringify(live.key)}); the response does not match the documented deploy key ` +
+        `shape - check the "api-version" input against the GitHub REST docs for this endpoint`,
     );
   }
   return normalized;
@@ -127,13 +130,20 @@ export const deployKeysSection = listSection({
         return [
           ...(sameTitle.length > 1
             ? [
-                `the declared title "${write.title}" matches ${sameTitle.length} live deploy keys (ids ${sameTitle.map((key) => String(key.id)).join(", ")}), and this section manages at most one key per title - delete the duplicates on GitHub so exactly one remains`,
+                `the declared title "${write.title}" matches ${sameTitle.length} live deploy ` +
+                  `keys (ids ${sameTitle.map((key) => String(key.id)).join(", ")}), and this ` +
+                  `section manages at most one key per title - delete the duplicates on GitHub ` +
+                  `so exactly one remains`,
               ]
             : []),
           ...(holder === undefined
             ? []
             : [
-                `the entry "${write.title}" declares key material that live key "${holder.title}" (id ${String(holder.id)}) already holds, and GitHub attaches a public key to one repository once, so writing it would be rejected - delete or rename the live key on GitHub, or declare the entry under its live title "${holder.title}"`,
+                `the entry "${write.title}" declares key material that live key ` +
+                  `"${holder.title}" (id ${String(holder.id)}) already holds, and GitHub ` +
+                  `attaches a public key to one repository once, so writing it would be rejected ` +
+                  `- delete or rename the live key on GitHub, or declare the entry under its ` +
+                  `live title "${holder.title}"`,
               ]),
         ];
       }),

@@ -84,7 +84,12 @@ describe("deploy_keys conflicts", () => {
     await expect(
       plan(api, [{ title: "new-name", key: `${MIRROR_KEY} deploy@renamed` }]),
     ).rejects.toThrow(
-      /^deploy_keys: the settings file conflicts with the live deploy keys: the entry "new-name" declares key material that live key "old-name" \(id 7\) already holds.*declare the entry under its live title "old-name"\. Resolve each conflict on GitHub, then re-run$/s,
+      new RegExp(
+        '^deploy_keys: the settings file conflicts with the live deploy keys: the entry "new-name" ' +
+          String.raw`declares key material that live key "old-name" \(id 7\) already holds.*` +
+          String.raw`declare the entry under its live title "old-name"\. Resolve each conflict on GitHub, then re-run$`,
+        "s",
+      ),
     );
     expect(api.calls.map((c) => `${c.method} ${c.path}`)).toEqual([LIST]);
   });

@@ -654,7 +654,10 @@ async function lateRuleId(ctx: BranchesContext, pattern: string): Promise<unknow
   const node = (await fetchRules(ctx))?.get(pattern);
   if (node === undefined) {
     throw new Error(
-      `branches[${pattern}]: the branch is protected but no branch protection rule with that pattern is visible through GraphQL, so its GraphQL-only fields cannot be set; check that the token can read branch protection rules, re-run the workflow, and report this if it persists`,
+      `branches[${pattern}]: the branch is protected but no branch protection rule with that ` +
+        `pattern is visible through GraphQL, so its GraphQL-only fields cannot be set; check ` +
+        `that the token can read branch protection rules, re-run the workflow, and report this ` +
+        `if it persists`,
     );
   }
   return node.id;

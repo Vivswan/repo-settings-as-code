@@ -55,7 +55,9 @@ jobs:
           if [ -n "$PAT" ]; then
             echo "proceed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice::APPLY_SETTING_TOKEN is not set; self-apply skipped. Add a fine-grained PAT secret (Administration + Issues, read and write) to enable it. Vivswan/repo-platform's central settings run applies this repository's settings either way."
+            echo "::notice::APPLY_SETTING_TOKEN is not set; self-apply skipped. Add a fine-grained PAT secret" \
+              "(Administration + Issues, read and write) to enable it. Vivswan/repo-platform's central" \
+              "settings run applies this repository's settings either way."
             echo "proceed=false" >> "$GITHUB_OUTPUT"
           fi
 

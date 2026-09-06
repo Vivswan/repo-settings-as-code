@@ -18,7 +18,11 @@ export const ENDPOINTS = {
     route: "PUT /repos/{owner}/{repo}/branches/{branch}/protection",
     statuses: { 200: "protection replaced" },
     hints: {
-      422: 'Usually a sub-object is missing a required half: "required_status_checks" needs both "strict" and "contexts", "required_pull_request_reviews" values must fit their documented shapes, and "restrictions" needs "users" and "teams" lists (or declare the whole key as null)',
+      422:
+        'Usually a sub-object is missing a required half: "required_status_checks" needs both ' +
+        '"strict" and "contexts", "required_pull_request_reviews" values must fit their ' +
+        'documented shapes, and "restrictions" needs "users" and "teams" lists (or declare the ' +
+        "whole key as null)",
     },
   },
   removeProtection: {

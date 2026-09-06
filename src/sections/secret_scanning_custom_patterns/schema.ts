@@ -40,7 +40,11 @@ export const SecretScanningPatternConfig = z
       .describe("Regular expressions a match must NOT satisfy, compared in order."),
   })
   .describe(
-    "One secret scanning custom pattern, matched by exact name. Only the fields below are accepted: `state` and `push_protection_enabled` are readable but NOT writable through the custom-pattern endpoints, so they cannot be declared. A delimiter, once set, cannot be cleared back to GitHub's default through the update PATCH (the endpoint updates provided fields only); remove the pattern and redeclare it without the field instead.",
+    "One secret scanning custom pattern, matched by exact name. Only the fields below are " +
+      "accepted: `state` and `push_protection_enabled` are readable but NOT writable through the " +
+      "custom-pattern endpoints, so they cannot be declared. A delimiter, once set, cannot be " +
+      "cleared back to GitHub's default through the update PATCH (the endpoint updates provided " +
+      "fields only); remove the pattern and redeclare it without the field instead.",
   )
   .meta({ id: "SecretScanningPatternConfig" });
 export type SecretScanningPatternConfig = z.infer<typeof SecretScanningPatternConfig>;

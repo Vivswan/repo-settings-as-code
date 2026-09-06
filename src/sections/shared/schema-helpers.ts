@@ -16,7 +16,14 @@ const UndeclaredPolicySchema = z
   .meta({ id: "UndeclaredPolicy" });
 
 const WRAPPER_DOC =
-  "The wrapped form of a list, overriding what happens to live resources the file does not declare. The plain array form keeps the list's own default policy (for a top-level section that is the section default, and a multi-repo defaults file can set it; a nested list such as environments[].variables has its own fixed default and never inherits one); this wrapper can set it explicitly, and with `undeclared` omitted it behaves exactly like the plain array. The wrapper is this action's own vocabulary (nothing here passes through to GitHub), so its keys are strict: anything besides `undeclared` and `entries` is rejected upfront as a typo.";
+  "The wrapped form of a list, overriding what happens to live resources the file does not " +
+  "declare. The plain array form keeps the list's own default policy (for a top-level section " +
+  "that is the section default, and a multi-repo defaults file can set it; a nested list such " +
+  "as environments[].variables has its own fixed default and never inherits one); this wrapper " +
+  "can set it explicitly, and with `undeclared` omitted it behaves exactly like the plain " +
+  "array. The wrapper is this action's own vocabulary (nothing here passes through to GitHub), " +
+  "so its keys are strict: anything besides `undeclared` and `entries` is rejected upfront as " +
+  "a typo.";
 
 /**
  * The knobbed form of a list section's value: the plain entry array, or the
@@ -55,7 +62,10 @@ export function knobbed<T extends z.ZodType>(entry: T) {
 }
 
 export const SEALED_SECRET_VALUE_DOC =
-  "A whole-value `$NAME` reference to an environment variable holding the secret - never a literal (settings files are committed plaintext). Resolved from the action step's env at run time and sealed with a libsodium sealed box before upload; GitHub cannot return the value, so check mode verifies existence only and apply re-seals it on every run.";
+  "A whole-value `$NAME` reference to an environment variable holding the secret - never a " +
+  "literal (settings files are committed plaintext). Resolved from the action step's env at " +
+  "run time and sealed with a libsodium sealed box before upload; GitHub cannot return the " +
+  "value, so check mode verifies existence only and apply re-seals it on every run.";
 
 export const SECRET_NAME_DOC =
   "The secret name, the natural key; compared case-insensitively and written uppercase.";

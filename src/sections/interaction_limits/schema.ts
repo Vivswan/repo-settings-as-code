@@ -34,7 +34,10 @@ const InteractionLimits = z
       .string()
       .optional()
       .describe(
-        'How long the limit lasts ("one_day" through "six_months"); GitHub defaults to one_day. Write-only: GitHub reports back the computed expires_at, never the duration, so check mode cannot verify this field and apply re-arms it on every run. Requires a sibling `limit`.',
+        'How long the limit lasts ("one_day" through "six_months"); GitHub defaults to ' +
+          "one_day. Write-only: GitHub reports back the computed expires_at, never the duration, " +
+          "so check mode cannot verify this field and apply re-arms it on every run. Requires a " +
+          "sibling `limit`.",
       ),
     // The cap object IS the PATCH body, open so future fields ride it; the
     // flag is typed so a YAML-quoted "true" fails upfront in document
@@ -54,13 +57,22 @@ const InteractionLimits = z
       })
       .optional()
       .describe(
-        "The pull request creation cap, routed to GET/PATCH /repos/{r}/interaction-limits/pulls/creation-cap. Unlike the base limit it is persistent desired state with no self-expiry and reads back verbatim, so check mode diffs it exactly and apply PATCHes only on divergence. max_open_pull_requests is 1-1000. On repositories where the cap is not available, the endpoints answer 405: apply surfaces that as a note, check mode as drift.",
+        "The pull request creation cap, routed to GET/PATCH " +
+          "/repos/{r}/interaction-limits/pulls/creation-cap. Unlike the base limit it is " +
+          "persistent desired state with no self-expiry and reads back verbatim, so check mode " +
+          "diffs it exactly and apply PATCHes only on divergence. max_open_pull_requests is " +
+          "1-1000. On repositories where the cap is not available, the endpoints answer 405: " +
+          "apply surfaces that as a note, check mode as drift.",
       ),
     pull_request_creation_bypass: z
       .array(z.string())
       .optional()
       .describe(
-        "User logins exempt from the pull request creation cap, routed to GET/PUT/DELETE /repos/{r}/interaction-limits/pulls/bypass-list and reconciled: apply removes the undeclared logins and then adds the missing ones (removals first - the list holds at most 100 users); logins compare case-insensitively. An empty list removes everyone. At most 100 logins.",
+        "User logins exempt from the pull request creation cap, routed to GET/PUT/DELETE " +
+          "/repos/{r}/interaction-limits/pulls/bypass-list and reconciled: apply removes the " +
+          "undeclared logins and then adds the missing ones (removals first - the list holds at " +
+          "most 100 users); logins compare case-insensitively. An empty list removes everyone. " +
+          "At most 100 logins.",
       ),
   })
   .superRefine((declared, refineCtx) => {
@@ -124,7 +136,11 @@ const InteractionLimits = z
     }
   })
   .describe(
-    "The `interaction_limits:` section. The base object is sent verbatim to PUT /repos/{r}/interaction-limits minus the two routed keys below, which go to their own .../interaction-limits/pulls sub-endpoints instead. GitHub reads the base limit back as limit, origin, and the computed expires_at only. Declare at least one of `limit`, `pull_request_creation_cap`, or `pull_request_creation_bypass`.",
+    "The `interaction_limits:` section. The base object is sent verbatim to PUT " +
+      "/repos/{r}/interaction-limits minus the two routed keys below, which go to their own " +
+      ".../interaction-limits/pulls sub-endpoints instead. GitHub reads the base limit back as " +
+      "limit, origin, and the computed expires_at only. Declare at least one of `limit`, " +
+      "`pull_request_creation_cap`, or `pull_request_creation_bypass`.",
   )
   .meta({ id: "InteractionLimitsConfig" });
 

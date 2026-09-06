@@ -374,7 +374,10 @@ describe("rulesets", () => {
         },
       ],
       notes: [
-        'ruleset "ambiguous" is undeclared, but the list response does not mark it source_type "Repository"; NOT deleting - only rulesets the API explicitly marks repository-owned are deleted; add it to the settings file to manage it, or delete it in GitHub if it should not exist',
+        'ruleset "ambiguous" is undeclared, but the list response does not mark it source_type ' +
+          '"Repository"; NOT deleting - only rulesets the API explicitly marks repository-owned ' +
+          "are deleted; add it to the settings file to manage it, or delete it in GitHub if it " +
+          "should not exist",
       ],
       drift: [],
     });

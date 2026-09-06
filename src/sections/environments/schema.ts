@@ -84,7 +84,16 @@ export const EnvironmentConfig = z
       .boolean()
       .optional()
       .describe(
-        "Pin this environment on the repository home page's deployments sidebar (GraphQL-only; the REST environment PUT carries no pin field). Pin ORDER is the declaration order of the entries with `pinned: true` - together they must LEAD the repository's pinned list in that order, compared by rank (GitHub's live position numbers may carry holes after an unpin and are never read literally). `pinned: false` unpins; an entry without the key leaves its pin state untouched. Live pins on environments the settings file does not declare are never unpinned; when they sit among the declared ranks, apply moves them after the declared pins (surfaced as a note). GitHub allows at most 10 pinned environments, so more than 10 `pinned: true` entries are rejected upfront.",
+        "Pin this environment on the repository home page's deployments sidebar (GraphQL-only; " +
+          "the REST environment PUT carries no pin field). Pin ORDER is the declaration order of " +
+          "the entries with `pinned: true` - together they must LEAD the repository's pinned " +
+          "list in that order, compared by rank (GitHub's live position numbers may carry holes " +
+          "after an unpin and are never read literally). `pinned: false` unpins; an entry " +
+          "without the key leaves its pin state untouched. Live pins on environments the " +
+          "settings file does not declare are never unpinned; when they sit among the declared " +
+          "ranks, apply moves them after the declared pins (surfaced as a note). GitHub allows " +
+          "at most 10 pinned environments, so more than 10 `pinned: true` entries are rejected " +
+          "upfront.",
       ),
     wait_timer: z.number().optional().describe("Minutes to wait before deployments proceed."),
     prevent_self_review: z
@@ -108,22 +117,48 @@ export const EnvironmentConfig = z
     deployment_branch_policies: knobbed(DeploymentBranchPolicyConfig)
       .optional()
       .describe(
-        "Custom deployment branch-policy patterns for this environment, reconciled only when this key is declared (an absent key leaves the live patterns untouched). Declaring it requires the sibling `deployment_branch_policy` to set `custom_branch_policies: true`; without the flag GitHub rejects every pattern write. A pattern's `type` is immutable on GitHub, so a declared type that differs from the live one is applied as delete plus recreate. Within a declared key, live patterns the entries do not declare are DELETED by default; the wrapped `{undeclared: keep, entries}` form keeps them as notes.",
+        "Custom deployment branch-policy patterns for this environment, reconciled only when " +
+          "this key is declared (an absent key leaves the live patterns untouched). Declaring it " +
+          "requires the sibling `deployment_branch_policy` to set `custom_branch_policies: " +
+          "true`; without the flag GitHub rejects every pattern write. A pattern's `type` is " +
+          "immutable on GitHub, so a declared type that differs from the live one is applied as " +
+          "delete plus recreate. Within a declared key, live patterns the entries do not declare " +
+          "are DELETED by default; the wrapped `{undeclared: keep, entries}` form keeps them as " +
+          "notes.",
       ),
     deployment_protection_rules: knobbed(DeploymentProtectionRuleConfig)
       .optional()
       .describe(
-        "Custom deployment protection rules for this environment, reconciled only when this key is declared (an absent key leaves the live rules untouched). Each rule is a GitHub App gate, declared by its App slug and resolved to the App's integration id at apply time; GitHub offers no update call, so the model is enable/disable only. Within a declared key, live rules the entries do not declare are KEPT by default - Apps can enable themselves as gates, and silently removing a deployment gate is security-relevant - and the wrapped `{undeclared: delete, entries}` form opts into disabling them.",
+        "Custom deployment protection rules for this environment, reconciled only when this " +
+          "key is declared (an absent key leaves the live rules untouched). Each rule is a " +
+          "GitHub App gate, declared by its App slug and resolved to the App's integration id at " +
+          "apply time; GitHub offers no update call, so the model is enable/disable only. Within " +
+          "a declared key, live rules the entries do not declare are KEPT by default - Apps can " +
+          "enable themselves as gates, and silently removing a deployment gate is " +
+          "security-relevant - and the wrapped `{undeclared: delete, entries}` form opts into " +
+          "disabling them.",
       ),
     variables: knobbed(EnvironmentVariableConfig)
       .optional()
       .describe(
-        "Actions variables for this environment, reconciled only when this key is declared (an absent key leaves the live variables untouched). Values are plain text by design - use environment secrets for anything sensitive. Within a declared `variables` key, live variables the entries do not declare are DELETED by default; the wrapped `{undeclared: keep, entries}` form keeps them as notes. Names match case-insensitively, as GitHub treats them.",
+        "Actions variables for this environment, reconciled only when this key is declared (an " +
+          "absent key leaves the live variables untouched). Values are plain text by design - " +
+          "use environment secrets for anything sensitive. Within a declared `variables` key, " +
+          "live variables the entries do not declare are DELETED by default; the wrapped " +
+          "`{undeclared: keep, entries}` form keeps them as notes. Names match " +
+          "case-insensitively, as GitHub treats them.",
       ),
     secrets: knobbed(EnvironmentSecretConfig)
       .optional()
       .describe(
-        "Actions secrets for this environment, reconciled only when this key is declared (an absent key leaves the live secrets untouched). Each value is a whole-value `$NAME` reference to the action step's environment, never a literal, sealed client-side against the environment's public key; GitHub cannot return a value, so check mode verifies existence only and apply re-seals every declared value on each run. Within a declared `secrets` key, live secrets the entries do not declare are KEPT by default (their values are unrecoverable); the wrapped `{undeclared: delete, entries}` form opts into deletion.",
+        "Actions secrets for this environment, reconciled only when this key is declared (an " +
+          "absent key leaves the live secrets untouched). Each value is a whole-value `$NAME` " +
+          "reference to the action step's environment, never a literal, sealed client-side " +
+          "against the environment's public key; GitHub cannot return a value, so check mode " +
+          "verifies existence only and apply re-seals every declared value on each run. Within a " +
+          "declared `secrets` key, live secrets the entries do not declare are KEPT by default " +
+          "(their values are unrecoverable); the wrapped `{undeclared: delete, entries}` form " +
+          "opts into deletion.",
       ),
   })
   .superRefine((entry, refineCtx) => {

@@ -54,7 +54,9 @@ const permission: SectionPermission = { repo: ["administration"] };
  * grant fixes.
  */
 const LFS_DENIAL_HINT =
-  "a 403 here can also mean Git LFS is disabled account-wide or for the root of this repository network, or that the credential lacks billing access (organization repositories need an organization owner or billing manager), rather than a missing token grant";
+  "a 403 here can also mean Git LFS is disabled account-wide or for the root of this " +
+  "repository network, or that the credential lacks billing access (organization repositories " +
+  "need an organization owner or billing manager), rather than a missing token grant";
 
 /**
  * The declared meaning of the 409 both immutable-releases writes answer when
@@ -186,8 +188,21 @@ const UPDATE_FEATURES = graphqlOp<{
 }>()({
   name: "UpdateRepositoryFeatures",
   kind: "write",
-  query:
-    "mutation UpdateRepositoryFeatures($repositoryId: ID!, $hasSponsorshipsEnabled: Boolean, $issueCreationPolicy: IssueCreationPolicy) { updateRepository(input: {repositoryId: $repositoryId, hasSponsorshipsEnabled: $hasSponsorshipsEnabled, issueCreationPolicy: $issueCreationPolicy}) { repository { hasSponsorshipsEnabled issueCreationPolicy } } }",
+  query: `mutation UpdateRepositoryFeatures(
+    $repositoryId: ID!
+    $hasSponsorshipsEnabled: Boolean
+    $issueCreationPolicy: IssueCreationPolicy
+  ) {
+    updateRepository(
+      input: {
+        repositoryId: $repositoryId
+        hasSponsorshipsEnabled: $hasSponsorshipsEnabled
+        issueCreationPolicy: $issueCreationPolicy
+      }
+    ) {
+      repository { hasSponsorshipsEnabled issueCreationPolicy }
+    }
+  }`,
   outcomes: { ok: "the carried values set; the echoed state verifies each one took" },
 });
 
@@ -617,7 +632,10 @@ export const repositorySection = {
             const verified = (routed: RoutedKey): string => {
               if (echoed[routed.key] !== desired[routed.key]) {
                 throw new Error(
-                  `repository: GRAPHQL ${UPDATE_FEATURES.name} was accepted, but GitHub reports repository.${routed.key} ${routed.show(echoed[routed.key])} where ${routed.show(desired[routed.key])} was set, so the write did not take. GitHub may restrict this setting on the repository`,
+                  `repository: GRAPHQL ${UPDATE_FEATURES.name} was accepted, but GitHub ` +
+                    `reports repository.${routed.key} ${routed.show(echoed[routed.key])} where ` +
+                    `${routed.show(desired[routed.key])} was set, so the write did not take. ` +
+                    `GitHub may restrict this setting on the repository`,
                 );
               }
               return `${routed.label}: ${routed.changeText(echoed[routed.key])}`;

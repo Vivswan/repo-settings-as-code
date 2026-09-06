@@ -331,7 +331,9 @@ describe("interaction_limits pull request creation cap", () => {
       pull_request_creation_cap: { enabled: true, max_open_prs: 5 },
     } as InteractionLimitsConfig);
     expect(result.notes).toEqual([
-      'interaction_limits.pull_request_creation_cap: declared key(s) "max_open_prs" do not exist on the live creation cap, so if GitHub ignores them this PATCH will re-run on every apply without converging. Fix the key name, or remove it from the settings file',
+      'interaction_limits.pull_request_creation_cap: declared key(s) "max_open_prs" do not ' +
+        "exist on the live creation cap, so if GitHub ignores them this PATCH will re-run on " +
+        "every apply without converging. Fix the key name, or remove it from the settings file",
     ]);
   });
 

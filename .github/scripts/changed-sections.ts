@@ -323,7 +323,9 @@ function sectionsForSectionsPath(
       return [];
     }
     throw new Error(
-      `changed-sections: ${path} matches no selector rule; src/sections/ holds only the flat files in ALL_SELECTING_SECTION_FILES and NONE_SELECTING_SECTION_FILES, the per-section <key>/ directories, contract/, and shared/ - move the file under its section directory`,
+      `changed-sections: ${path} matches no selector rule; src/sections/ holds only the flat ` +
+        `files in ALL_SELECTING_SECTION_FILES and NONE_SELECTING_SECTION_FILES, the per-section ` +
+        `<key>/ directories, contract/, and shared/ - move the file under its section directory`,
     );
   }
   const dir = rest.slice(0, slash);

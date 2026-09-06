@@ -9,7 +9,13 @@ export const docs: SectionDocs = {
     {
       area: "[Codespaces repository secrets](https://docs.github.com/en/rest/codespaces/repository-secrets)",
       notes:
-        'GET /repos/{owner}/{repo}/codespaces/secrets, GET .../codespaces/secrets/public-key, sealed PUT/DELETE .../codespaces/secrets/{secret_name}. Same shape, sealing, and existence-only semantics as `actions_secrets`, over the Codespaces secret store (development environment secrets); the only repo-scoped Codespaces configuration surface. CAVEAT: GitHub\'s fine-grained "Codespaces secrets" permission gates even the reads at WRITE, so a read-only grant cannot run this section in check mode either. Undeclared secrets kept by default; `undeclared: delete` opts into deletion.',
+        "GET /repos/{owner}/{repo}/codespaces/secrets, GET .../codespaces/secrets/public-key, " +
+        "sealed PUT/DELETE .../codespaces/secrets/{secret_name}. Same shape, sealing, and " +
+        "existence-only semantics as `actions_secrets`, over the Codespaces secret store " +
+        "(development environment secrets); the only repo-scoped Codespaces configuration " +
+        'surface. CAVEAT: GitHub\'s fine-grained "Codespaces secrets" permission gates even ' +
+        "the reads at WRITE, so a read-only grant cannot run this section in check mode " +
+        "either. Undeclared secrets kept by default; `undeclared: delete` opts into deletion.",
     },
   ],
 };

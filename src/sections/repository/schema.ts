@@ -56,10 +56,16 @@ export const RepositoryConfig = z
       "Git LFS, via PUT/DELETE /repos/{r}/lfs. Write-only upstream: check mode cannot verify it, and apply re-asserts it on every run.",
     ),
     enable_immutable_releases: repositoryToggle(
-      "Immutable releases, via PUT/DELETE /repos/{r}/immutable-releases. On read, 404 means off. When the repository owner enforces immutable releases (enforced_by_owner in the GET body), writes answer 409 and the setting cannot be changed from the repository; apply reports that as a note instead of a change.",
+      "Immutable releases, via PUT/DELETE /repos/{r}/immutable-releases. On read, 404 means " +
+        "off. When the repository owner enforces immutable releases (enforced_by_owner in the " +
+        "GET body), writes answer 409 and the setting cannot be changed from the repository; " +
+        "apply reports that as a note instead of a change.",
     ),
     enable_sponsorships: repositoryToggle(
-      "Display a Sponsor button on the repository, via the GraphQL updateRepository mutation (hasSponsorshipsEnabled) - GraphQL is the setting's only read and write surface (the REST repo PATCH and GET carry no such field). A stored repository toggle independent of any FUNDING.yml content.",
+      "Display a Sponsor button on the repository, via the GraphQL updateRepository mutation " +
+        "(hasSponsorshipsEnabled) - GraphQL is the setting's only read and write surface (the " +
+        "REST repo PATCH and GET carry no such field). A stored repository toggle independent of " +
+        "any FUNDING.yml content.",
     ),
     issue_creation_policy: z
       .enum(["all", "collaborators_only"], {
@@ -68,12 +74,19 @@ export const RepositoryConfig = z
       })
       .optional()
       .describe(
-        'Who may create issues: "all" (everyone) or "collaborators_only", mapped to GitHub\'s ALL/COLLABORATORS_ONLY GraphQL enum at the API boundary. GraphQL-only upstream (Repository.issueCreationPolicy and the updateRepository mutation): the REST repo PATCH accepts an issue_creation_policy field and silently ignores it, and no REST GET returns it.',
+        'Who may create issues: "all" (everyone) or "collaborators_only", mapped to GitHub\'s ' +
+          "ALL/COLLABORATORS_ONLY GraphQL enum at the API boundary. GraphQL-only upstream " +
+          "(Repository.issueCreationPolicy and the updateRepository mutation): the REST repo " +
+          "PATCH accepts an issue_creation_policy field and silently ignores it, and no REST GET " +
+          "returns it.",
       ),
   })
   .catchall(z.unknown().describe("Everything else passes through to PATCH /repos/{r} verbatim."))
   .describe(
-    "The `repository:` section. Every field not documented here is sent verbatim to PATCH /repos/{r} (Probot parity), so current and future repo fields work unchanged; the keys below route to their own endpoints instead. Only declared keys are ever applied or compared.",
+    "The `repository:` section. Every field not documented here is sent verbatim to PATCH " +
+      "/repos/{r} (Probot parity), so current and future repo fields work unchanged; the keys " +
+      "below route to their own endpoints instead. Only declared keys are ever applied or " +
+      "compared.",
   )
   .meta({ id: "RepositoryConfig" });
 export type RepositoryConfig = z.infer<typeof RepositoryConfig>;

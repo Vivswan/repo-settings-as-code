@@ -194,7 +194,10 @@ describe("environments pinned apply mode", () => {
     // interleaving note: it leads the list the declared pin should lead).
     expect(planned.notes).toEqual([
       'pinned environment(s) "u1" have no pinned declaration in the settings file; they stay pinned (only a pinned: false entry unpins) and apply moves them after the declared pins',
-      "apply will fail: pinning the 1 declared environment(s) not yet pinned would leave 11 environments pinned, but GitHub allows at most 10. Pins without a pinned declaration are left untouched, so declare pinned: false on entries for some of the currently pinned environments, or unpin them in the GitHub UI",
+      "apply will fail: pinning the 1 declared environment(s) not yet pinned would leave 11 " +
+        "environments pinned, but GitHub allows at most 10. Pins without a pinned declaration " +
+        "are left untouched, so declare pinned: false on entries for some of the currently " +
+        "pinned environments, or unpin them in the GitHub UI",
     ]);
     const execution = await executePlan(planned, environmentsSection, api, REPO, NO_SECRETS);
     expect(execution.status).toBe("failed");

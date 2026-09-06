@@ -44,7 +44,10 @@ export const ActionsConfig = z
       })
       .optional()
       .describe(
-        "Actions cache limits, each key routed to its own endpoint: max_cache_retention_days -> PUT /repos/{r}/actions/cache/retention-limit, max_cache_size_gb -> PUT /repos/{r}/actions/cache/storage-limit. Keys other than these two are rejected (each limit has its own single-field endpoint, so an extra key could only be a typo).",
+        "Actions cache limits, each key routed to its own endpoint: max_cache_retention_days " +
+          "-> PUT /repos/{r}/actions/cache/retention-limit, max_cache_size_gb -> PUT " +
+          "/repos/{r}/actions/cache/storage-limit. Keys other than these two are rejected (each " +
+          "limit has its own single-field endpoint, so an extra key could only be a typo).",
       ),
     oidc_customization_sub: z
       .object({
@@ -54,13 +57,26 @@ export const ActionsConfig = z
       })
       .optional()
       .describe(
-        "PUT /repos/{r}/actions/oidc/customization/sub: the OIDC subject claim template for this repository's workflow tokens, e.g. { use_default: false, include_claim_keys: [repo, context] } (keys must be unique). Claim-key ORDER defines the subject format, so check mode compares a declared list positionally; an omitted list on a custom template opts into the organization template and is not compared. use_immutable_subject switches the whole subject to the stable repository-ID-based format; omitted, the organization setting or the repository's creation date decides, and only a declared value is compared. Unlike the rest of this section, these endpoints need the \"Actions\" PAT permission rather than Administration.",
+        "PUT /repos/{r}/actions/oidc/customization/sub: the OIDC subject claim template for " +
+          "this repository's workflow tokens, e.g. { use_default: false, include_claim_keys: " +
+          "[repo, context] } (keys must be unique). Claim-key ORDER defines the subject format, " +
+          "so check mode compares a declared list positionally; an omitted list on a custom " +
+          "template opts into the organization template and is not compared. " +
+          "use_immutable_subject switches the whole subject to the stable repository-ID-based " +
+          "format; omitted, the organization setting or the repository's creation date decides, " +
+          "and only a declared value is compared. Unlike the rest of this section, these " +
+          'endpoints need the "Actions" PAT permission rather than Administration.',
       ),
     fork_pr_contributor_approval: z
       .object({ approval_policy: z.string() })
       .optional()
       .describe(
-        "PUT /repos/{r}/actions/permissions/fork-pr-contributor-approval: when workflows triggered by fork pull requests need a maintainer's approval before they run, e.g. { approval_policy: first_time_contributors }. The policies GitHub accepts today are first_time_contributors_new_to_github, first_time_contributors, and all_external_contributors. The body passes through verbatim, so future fields GitHub adds work unchanged.",
+        "PUT /repos/{r}/actions/permissions/fork-pr-contributor-approval: when workflows " +
+          "triggered by fork pull requests need a maintainer's approval before they run, e.g. { " +
+          "approval_policy: first_time_contributors }. The policies GitHub accepts today are " +
+          "first_time_contributors_new_to_github, first_time_contributors, and " +
+          "all_external_contributors. The body passes through verbatim, so future fields GitHub " +
+          "adds work unchanged.",
       ),
     fork_pr_workflows_private_repos: z
       .object({
@@ -71,7 +87,12 @@ export const ActionsConfig = z
       })
       .optional()
       .describe(
-        "PUT /repos/{r}/actions/permissions/fork-pr-workflows-private-repos: whether pull requests from forks may run workflows on this private repository, and what those workflows receive. All four toggles are required: GitHub does not document whether the PUT preserves or resets an omitted toggle, so the file declares the complete policy - which is also the posture that leaves no toggle unwatched. The body passes through verbatim, so future fields GitHub adds work unchanged.",
+        "PUT /repos/{r}/actions/permissions/fork-pr-workflows-private-repos: whether pull " +
+          "requests from forks may run workflows on this private repository, and what those " +
+          "workflows receive. All four toggles are required: GitHub does not document whether " +
+          "the PUT preserves or resets an omitted toggle, so the file declares the complete " +
+          "policy - which is also the posture that leaves no toggle unwatched. The body passes " +
+          "through verbatim, so future fields GitHub adds work unchanged.",
       ),
   })
   .superRefine((declared, refineCtx) => {

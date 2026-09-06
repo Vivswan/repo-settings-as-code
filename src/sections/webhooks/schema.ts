@@ -14,7 +14,10 @@ const WebhookDeliveryConfig = z
       .string()
       .optional()
       .describe(
-        'The shared delivery secret, as a whole-value `$NAME` reference to an environment variable on the action step (never a literal: settings files are committed plaintext). Resolved at apply time; GitHub echoes it back as "********", so check mode cannot verify it and apply re-sends it on every run so rotations propagate.',
+        "The shared delivery secret, as a whole-value `$NAME` reference to an environment " +
+          "variable on the action step (never a literal: settings files are committed " +
+          'plaintext). Resolved at apply time; GitHub echoes it back as "********", so check ' +
+          "mode cannot verify it and apply re-sends it on every run so rotations propagate.",
       ),
     // Values pass through as-is beyond the type: GitHub is the authority on
     // what it accepts, and it stores numbers as their string form.

@@ -10,7 +10,11 @@ export const docs: SectionDocs = {
     {
       area: "[Milestones](https://docs.github.com/en/rest/issues/milestones)",
       notes:
-        "POST/PATCH/DELETE /repos/{owner}/{repo}/milestones, matched by title, declared-keys-only (description/state untouched unless declared); undeclared milestones kept by default and surfaced as notes, because deleting a milestone DETACHES it from every issue carrying it - the wrapped `undeclared: delete` form opts into exactly that.",
+        "POST/PATCH/DELETE /repos/{owner}/{repo}/milestones, matched by title, " +
+        "declared-keys-only (description/state untouched unless declared); undeclared " +
+        "milestones kept by default and surfaced as notes, because deleting a milestone " +
+        "DETACHES it from every issue carrying it - the wrapped `undeclared: delete` form opts " +
+        "into exactly that.",
     },
   ],
 };

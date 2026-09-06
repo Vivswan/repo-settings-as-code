@@ -10,7 +10,18 @@ export const docs: SectionDocs = {
     {
       area: "[Collaborators](https://docs.github.com/en/rest/collaborators/collaborators) (direct)",
       notes:
-        "PUT/DELETE /repos/{owner}/{repo}/collaborators/{username} (affiliation=direct); pending invitations reconciled alongside via GET /repos/{owner}/{repo}/invitations and PATCH/DELETE /repos/{owner}/{repo}/invitations/{invitation_id}: a declared user's matching pending invitation converges, a stale permission is PATCHed in place (a declared custom role cannot be verified against an invitation - the standard-roles enum - so the invitation is kept with a note), an expired invitation is cancelled and re-sent, and undeclared pending invitations follow the section's one undeclared policy (email invitations, which no username can declare, are noted and left untouched); vocabulary mapping push<->write, pull<->read for check mode; custom org role names pass through; undeclared direct collaborators REMOVED by default (kept as notes under the wrapped `undeclared: keep` form), owner never touched; new users get invitations.",
+        "PUT/DELETE /repos/{owner}/{repo}/collaborators/{username} (affiliation=direct); " +
+        "pending invitations reconciled alongside via GET /repos/{owner}/{repo}/invitations " +
+        "and PATCH/DELETE /repos/{owner}/{repo}/invitations/{invitation_id}: a declared user's " +
+        "matching pending invitation converges, a stale permission is PATCHed in place (a " +
+        "declared custom role cannot be verified against an invitation - the standard-roles " +
+        "enum - so the invitation is kept with a note), an expired invitation is cancelled and " +
+        "re-sent, and undeclared pending invitations follow the section's one undeclared " +
+        "policy (email invitations, which no username can declare, are noted and left " +
+        "untouched); vocabulary mapping push<->write, pull<->read for check mode; custom org " +
+        "role names pass through; undeclared direct collaborators REMOVED by default (kept as " +
+        "notes under the wrapped `undeclared: keep` form), owner never touched; new users get " +
+        "invitations.",
     },
   ],
 };

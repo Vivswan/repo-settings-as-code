@@ -94,28 +94,46 @@ export const SettingsFile = z
     actions_secrets: knobbed(ActionsSecretConfig)
       .optional()
       .describe(
-        "Repository Actions secrets, written by name with values sealed client-side; each value is a whole-value `$NAME` reference to the action step's environment, never a literal. Undeclared secrets are kept by default (the wrapped form can set `undeclared: delete`; a deleted secret's value is unrecoverable).",
+        "Repository Actions secrets, written by name with values sealed client-side; each " +
+          "value is a whole-value `$NAME` reference to the action step's environment, never a " +
+          "literal. Undeclared secrets are kept by default (the wrapped form can set " +
+          "`undeclared: delete`; a deleted secret's value is unrecoverable).",
       ),
     dependabot_secrets: knobbed(DependabotSecretConfig)
       .optional()
       .describe(
-        "Repository Dependabot secrets (private-registry credentials Dependabot uses), written by name with values sealed client-side; each value is a whole-value `$NAME` reference to the action step's environment, never a literal. Undeclared secrets are kept by default (the wrapped form can set `undeclared: delete`; a deleted secret's value is unrecoverable).",
+        "Repository Dependabot secrets (private-registry credentials Dependabot uses), written " +
+          "by name with values sealed client-side; each value is a whole-value `$NAME` reference " +
+          "to the action step's environment, never a literal. Undeclared secrets are kept by " +
+          "default (the wrapped form can set `undeclared: delete`; a deleted secret's value is " +
+          "unrecoverable).",
       ),
     codespaces_secrets: knobbed(CodespacesSecretConfig)
       .optional()
       .describe(
-        "Repository Codespaces secrets (development environment secrets), written by name with values sealed client-side; each value is a whole-value `$NAME` reference to the action step's environment, never a literal. Undeclared secrets are kept by default (the wrapped form can set `undeclared: delete`; a deleted secret's value is unrecoverable).",
+        "Repository Codespaces secrets (development environment secrets), written by name with " +
+          "values sealed client-side; each value is a whole-value `$NAME` reference to the " +
+          "action step's environment, never a literal. Undeclared secrets are kept by default " +
+          "(the wrapped form can set `undeclared: delete`; a deleted secret's value is " +
+          "unrecoverable).",
       ),
     agents_secrets: knobbed(AgentsSecretConfig)
       .optional()
       .describe(
-        "Repository Copilot agents secrets (the secret store Copilot coding agents read), written by name with values sealed client-side; each value is a whole-value `$NAME` reference to the action step's environment, never a literal. Undeclared secrets are kept by default (the wrapped form can set `undeclared: delete`; a deleted secret's value is unrecoverable).",
+        "Repository Copilot agents secrets (the secret store Copilot coding agents read), " +
+          "written by name with values sealed client-side; each value is a whole-value `$NAME` " +
+          "reference to the action step's environment, never a literal. Undeclared secrets are " +
+          "kept by default (the wrapped form can set `undeclared: delete`; a deleted secret's " +
+          "value is unrecoverable).",
       ),
     workflows: WorkflowsConfig.optional().describe(
       "Per-workflow enable/disable state; undeclared workflows are untouched.",
     ),
     check_suite_preferences: CheckSuitePreferencesConfig.optional().describe(
-      "Check suite preferences: per-GitHub-App `auto_trigger_checks` toggles controlling whether pushes automatically create check suites. Write-only upstream (GitHub exposes no read endpoint), so check mode cannot verify them and apply re-asserts the declared preferences on every run. The token owner must be a repository administrator.",
+      "Check suite preferences: per-GitHub-App `auto_trigger_checks` toggles controlling " +
+        "whether pushes automatically create check suites. Write-only upstream (GitHub exposes " +
+        "no read endpoint), so check mode cannot verify them and apply re-asserts the declared " +
+        "preferences on every run. The token owner must be a repository administrator.",
     ),
     pages: PagesConfig.optional().describe(
       "GitHub Pages configuration; null disables Pages on the repository.",
@@ -138,17 +156,31 @@ export const SettingsFile = z
         "Milestones, upserted by title; undeclared ones are kept by default (the wrapped form can set `undeclared: delete`, which detaches deleted milestones from their issues).",
       ),
     interaction_limits: InteractionLimitsConfig.optional().describe(
-      "Temporary interaction limits; null clears an active repo-level limit, and an absent key leaves whatever is live untouched. Limits self-expire (GitHub's expiry tops out at six_months), so apply re-arms the declared limit on every run and check mode reports drift once it lapses. The pull_request_creation_cap and pull_request_creation_bypass keys manage the persistent pull request creation cap and its bypass list instead; `interaction_limits: null` clears the base limit only and never touches them.",
+      "Temporary interaction limits; null clears an active repo-level limit, and an absent key " +
+        "leaves whatever is live untouched. Limits self-expire (GitHub's expiry tops out at " +
+        "six_months), so apply re-arms the declared limit on every run and check mode reports " +
+        "drift once it lapses. The pull_request_creation_cap and pull_request_creation_bypass " +
+        "keys manage the persistent pull request creation cap and its bypass list instead; " +
+        "`interaction_limits: null` clears the base limit only and never touches them.",
     ),
     actions_variables: knobbed(ActionsVariableConfig)
       .optional()
       .describe(
-        "GitHub Actions repository variables, upserted by name; undeclared ones are DELETED by default (the wrapped form can set `undeclared: keep`). Names are case-insensitive (GitHub stores them uppercased). Values are plain text BY DESIGN - variables are readable configuration, which is what makes check-mode diffing possible; secrets are write-only material and deliberately not this section.",
+        "GitHub Actions repository variables, upserted by name; undeclared ones are DELETED by " +
+          "default (the wrapped form can set `undeclared: keep`). Names are case-insensitive " +
+          "(GitHub stores them uppercased). Values are plain text BY DESIGN - variables are " +
+          "readable configuration, which is what makes check-mode diffing possible; secrets are " +
+          "write-only material and deliberately not this section.",
       ),
     agents_variables: knobbed(AgentsVariableConfig)
       .optional()
       .describe(
-        "Copilot agents repository variables (the plain-text configuration Copilot coding agents read), upserted by name; undeclared ones are DELETED by default (the wrapped form can set `undeclared: keep`). Names are case-insensitive (GitHub stores them uppercased). Values are plain text BY DESIGN - variables are readable configuration, which is what makes check-mode diffing possible; secrets are write-only material and deliberately not this section.",
+        "Copilot agents repository variables (the plain-text configuration Copilot coding " +
+          "agents read), upserted by name; undeclared ones are DELETED by default (the wrapped " +
+          "form can set `undeclared: keep`). Names are case-insensitive (GitHub stores them " +
+          "uppercased). Values are plain text BY DESIGN - variables are readable configuration, " +
+          "which is what makes check-mode diffing possible; secrets are write-only material and " +
+          "deliberately not this section.",
       ),
     webhooks: knobbed(WebhookConfig)
       .optional()
@@ -158,17 +190,35 @@ export const SettingsFile = z
     custom_properties: knobbed(CustomPropertyConfig)
       .optional()
       .describe(
-        'Values of organization-defined custom properties, set per repository (the property DEFINITIONS are organization-scoped and out of scope); organization repos only, skipped with a note on personal accounts. `value: null` unsets a property (reverting to the org default, if any), and booleans/numbers are normalized to their string form (GitHub transports true_false values as the strings "true"/"false"). Undeclared live values are kept by default - an unset can revert to an org default this action does not model, and a property whose values only org actors may edit would reject the write - and the wrapped form can set `undeclared: delete` to opt into unsetting them.',
+        "Values of organization-defined custom properties, set per repository (the property " +
+          "DEFINITIONS are organization-scoped and out of scope); organization repos only, " +
+          "skipped with a note on personal accounts. `value: null` unsets a property (reverting " +
+          "to the org default, if any), and booleans/numbers are normalized to their string form " +
+          '(GitHub transports true_false values as the strings "true"/"false"). Undeclared live ' +
+          "values are kept by default - an unset can revert to an org default this action does " +
+          "not model, and a property whose values only org actors may edit would reject the " +
+          "write - and the wrapped form can set `undeclared: delete` to opt into unsetting them.",
       ),
     deploy_keys: knobbed(DeployKeyConfig)
       .optional()
       .describe(
-        "Deploy keys, matched by title. The declared material is a PUBLIC key, safe in a committed settings file. Keys are immutable upstream, so any change is applied as delete plus recreate. Undeclared keys are kept by default - deleting a live deploy key breaks whatever service authenticates with it, and deployment tooling installs its own keys - and the wrapped form can set `undeclared: delete`.",
+        "Deploy keys, matched by title. The declared material is a PUBLIC key, safe in a " +
+          "committed settings file. Keys are immutable upstream, so any change is applied as " +
+          "delete plus recreate. Undeclared keys are kept by default - deleting a live deploy " +
+          "key breaks whatever service authenticates with it, and deployment tooling installs " +
+          "its own keys - and the wrapped form can set `undeclared: delete`.",
       ),
     secret_scanning_custom_patterns: knobbed(SecretScanningPatternConfig)
       .optional()
       .describe(
-        "Repository-level secret scanning custom patterns, matched by name. The name is immutable upstream (the update PATCH takes no name field), so a renamed entry is applied as a create of the new name - plus, under `undeclared: delete`, deletion of the old one; under the default keep policy the old pattern stays live and is surfaced as a note. Undeclared patterns are kept by default: removing a pattern disposes of its alerts, so deletion stays a human opt-in (the wrapped form can set `undeclared: delete`). When this action deletes a pattern it always asks GitHub to RESOLVE the pattern's alerts rather than delete them, keeping the audit trail.",
+        "Repository-level secret scanning custom patterns, matched by name. The name is " +
+          "immutable upstream (the update PATCH takes no name field), so a renamed entry is " +
+          "applied as a create of the new name - plus, under `undeclared: delete`, deletion of " +
+          "the old one; under the default keep policy the old pattern stays live and is surfaced " +
+          "as a note. Undeclared patterns are kept by default: removing a pattern disposes of " +
+          "its alerts, so deletion stays a human opt-in (the wrapped form can set `undeclared: " +
+          "delete`). When this action deletes a pattern it always asks GitHub to RESOLVE the " +
+          "pattern's alerts rather than delete them, keeping the audit trail.",
       ),
   })
   .describe("One settings.yml document: every top-level section is optional.")

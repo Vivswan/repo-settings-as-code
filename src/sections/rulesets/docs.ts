@@ -10,7 +10,12 @@ export const docs: SectionDocs = {
     {
       area: "[Rulesets](https://docs.github.com/en/rest/repos/rules) (branch, tag, and push targets; all rule types, conditions, bypass_actors)",
       notes:
-        "GET/POST/PUT/DELETE /repos/{owner}/{repo}/rulesets: upsert-by-name, full-payload PUT, verbatim passthrough except ref-name prefixing (staging -> refs/heads/staging, ~DEFAULT_BRANCH passes through). New rule types/bypass fields/condition types GitHub ships work day one. Undeclared rulesets kept by default (notes only); the wrapped `undeclared: delete` form deletes them. Org-sourced rulesets filtered out via source_type.",
+        "GET/POST/PUT/DELETE /repos/{owner}/{repo}/rulesets: upsert-by-name, full-payload PUT, " +
+        "verbatim passthrough except ref-name prefixing (staging -> refs/heads/staging, " +
+        "~DEFAULT_BRANCH passes through). New rule types/bypass fields/condition types GitHub " +
+        "ships work day one. Undeclared rulesets kept by default (notes only); the wrapped " +
+        "`undeclared: delete` form deletes them. Org-sourced rulesets filtered out via " +
+        "source_type.",
     },
     {
       area: "[Merge queue](https://docs.github.com/en/rest/repos/rules)",
