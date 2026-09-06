@@ -17,7 +17,7 @@ import {
   GRAPHQL_BOOLEAN_TWINS,
   GRAPHQL_REVIEW_TWINS,
   GRAPHQL_STATUS_CHECK_TWINS,
-} from "../../../src/sections/branches/index.js";
+} from "../../../src/sections/branches/graphql-rules.js";
 import { parseBypassActor } from "../../../src/sections/branches/schema.js";
 import { DEPLOY_KEYS_MOCK } from "../../../src/sections/deploy_keys/mock.js";
 import { LABELS_MOCK } from "../../../src/sections/labels/mock.js";

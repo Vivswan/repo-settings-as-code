@@ -24,7 +24,7 @@ function repoLabels(permission: SectionPermission): string[] {
 describe("branches Contents advice", () => {
   test("the branches Notes cell and permissions.md advise the branch probe's override grant", () => {
     // The advisory branch-existence probe carries a Contents permission
-    // override (src/sections/branches/index.ts), advised at the level the section
+    // override (src/sections/branches/endpoints.ts), advised at the level the section
     // needs on that permission - the source both prose mentions restate. The
     // README row renders from the section's authored docs, pinned here at
     // their source.

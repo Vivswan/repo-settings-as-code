@@ -3,7 +3,8 @@ import { executePlan } from "../../../src/engine/execute.js";
 import type { GithubClient } from "../../../src/github/api.js";
 import { type PlannedOp, planContext } from "../../../src/sections/contract/plan.js";
 import { MockApi } from "../../../test/mock-api.js";
-import { provePlanIdempotent, REPO } from "../../../test/sections/plan-idempotence.js";
+import { provePlanIdempotent } from "../../../test/sections/plan-idempotence.js";
+import { REPO } from "../../../test/sections/section-run.js";
 import { normalizeRefName, normalizeRuleset, rulesetsSection } from "./index.js";
 
 describe("normalizeRefName", () => {

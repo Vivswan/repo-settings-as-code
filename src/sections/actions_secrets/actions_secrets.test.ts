@@ -15,7 +15,8 @@ import {
   unsealSecretValue,
 } from "../../../test/e2e/mock/secrets.js";
 import { MockApi } from "../../../test/mock-api.js";
-import { provePlanIdempotent, REPO } from "../../../test/sections/plan-idempotence.js";
+import { provePlanIdempotent } from "../../../test/sections/plan-idempotence.js";
+import { REPO } from "../../../test/sections/section-run.js";
 import { driftOf, type ExecTools, type PlannedOp, planContext } from "../contract/plan.js";
 import { actionsSecretsSection } from "./index.js";
 

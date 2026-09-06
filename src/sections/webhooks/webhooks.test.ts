@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { validateSectionShapes } from "../../../src/engine/validate.js";
 import { MockApi } from "../../../test/mock-api.js";
 import { fragmentFake } from "../../../test/sections/fragment-fake.js";
-import { provePlanIdempotent, REPO } from "../../../test/sections/plan-idempotence.js";
+import { provePlanIdempotent } from "../../../test/sections/plan-idempotence.js";
+import { REPO } from "../../../test/sections/section-run.js";
 import {
   driftOf,
   type ExecTools,

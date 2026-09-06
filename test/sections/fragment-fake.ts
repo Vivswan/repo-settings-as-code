@@ -9,7 +9,7 @@ import type { SectionMeta } from "../../src/sections/contract/module.js";
 import { matchEndpoint } from "../e2e/mock/dispatch.js";
 import { buildStateForSlug, type LiveState, type MockState } from "../e2e/mock/state.js";
 import type { Handler } from "../e2e/mock/support.js";
-import { REPO } from "./plan-idempotence.js";
+import { REPO } from "./section-run.js";
 
 export interface FragmentFake extends GithubClient {
   readonly state: MockState;

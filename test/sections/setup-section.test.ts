@@ -15,7 +15,8 @@ import { type PlanContext, planContext } from "../../src/sections/contract/plan.
 import type { SetupKey, SetupSectionModule } from "../../src/sections/shared/setup-section.js";
 import type { MustBeNever } from "../../src/types.js";
 import { MockApi } from "../mock-api.js";
-import { provePlanIdempotent, REPO } from "./plan-idempotence.js";
+import { provePlanIdempotent } from "./plan-idempotence.js";
+import { REPO } from "./section-run.js";
 
 /** One section's declared setup document. */
 type Declared<K extends SetupKey = SetupKey> = Exclude<SettingsFile[K], undefined>;
