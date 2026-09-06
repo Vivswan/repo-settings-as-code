@@ -1,11 +1,7 @@
-# Repo-owned: generated once by Vivswan/repo-platform, never
-# overwritten by sync. Called after the all-green gate on every green push
-# to main, before the release: REPLACE the no-op job with this repository's
-# work (it uses a runner allocation per push until you do; the contract is in
-# repo-platform's docs/all-green.md, "After the gate"). Jobs here run for the
-# LATEST green main, not every commit (ci.yml's concurrency group cancels a
-# superseded pending run): act on the repository's current state, never on
-# "what this commit changed", and stay idempotent.
+# Repo-owned: generated once by Vivswan/repo-platform, never overwritten by
+# sync. ci.yml calls it after the all-green gate, before the release, with
+# the judged sha. Pending runs coalesce (ci.yml's concurrency group), so
+# jobs here reconcile current state and stay idempotent.
 
 name: Post Green
 
@@ -18,10 +14,10 @@ on:
         type: string
 
 jobs:
-  noop:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - env:
-          SHA: ${{ inputs.sha }}
-        run: echo "post-green hook for $SHA - nothing configured"
+  # No lane here: the called workflow holds apply-settings-<repo>. The apply
+  # writes with APPLY_SETTING_TOKEN via inherit; the ceiling is contents: read.
+  apply-settings:
+    uses: ./.github/workflows/apply-settings.yml
+    with:
+      sha: ${{ inputs.sha }}
+    secrets: inherit

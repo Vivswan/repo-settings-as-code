@@ -1,7 +1,8 @@
 /**
- * apply-settings.yml is the hook for ci.yml's post-green slot: its only write
- * trigger is that call, so a repository setting is never written from a commit
- * the all-green gate has not judged. The contract below is that write path.
+ * apply-settings.yml is this repository's settings writer and post-green.yml is
+ * how ci.yml's post-green slot reaches it: the call is the only write trigger,
+ * so a repository setting is never written from a commit the all-green gate has
+ * not judged.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -247,5 +248,193 @@ describe("apply-settings.yml post-green write path", () => {
     mutate(drifted, must(drifted.jobs.apply, "apply job"));
     expect(contractOf(drifted)[key]).not.toEqual(EXPECTED[key]);
     expect(() => expectContract(drifted)).toThrow();
+  });
+});
+
+interface CallerJob {
+  uses?: string;
+  with?: Record<string, unknown>;
+  secrets?: unknown;
+  [key: string]: unknown;
+}
+interface CallTrigger extends Trigger {
+  secrets?: Record<string, { required?: boolean }>;
+}
+interface Caller {
+  on: Record<string, Trigger | null> & { workflow_call?: CallTrigger | null };
+  jobs: Record<string, CallerJob>;
+  [key: string]: unknown;
+}
+
+interface CallerContract {
+  /** The workflow's top-level keys: no lane, permissions, or env above the one job. */
+  topLevel: string[];
+  triggers: string[];
+  /** The whole workflow_call interface ci.yml must satisfy. */
+  inputs: Record<string, { required: boolean; type: string | undefined; hasDefault: boolean }>;
+  secrets: string[];
+  /** Every job, with its exact key set: nothing may gate, lane, or extend the call. */
+  jobs: Array<{ id: string; keys: string[]; uses: unknown; with: unknown; secrets: unknown }>;
+}
+
+const CALLER_EXPECTED: CallerContract = {
+  topLevel: ["jobs", "name", "on"],
+  triggers: ["workflow_call"],
+  inputs: { sha: { required: true, type: "string", hasDefault: false } },
+  secrets: [],
+  jobs: [
+    {
+      id: "apply-settings",
+      keys: ["secrets", "uses", "with"],
+      uses: "./.github/workflows/apply-settings.yml",
+      with: { sha: `\${{ inputs.sha }}` },
+      secrets: "inherit",
+    },
+  ],
+};
+
+function callerContractOf(wf: Caller): CallerContract {
+  const call = wf.on.workflow_call;
+  return {
+    topLevel: Object.keys(wf).sort(),
+    triggers: Object.keys(wf.on).sort(),
+    inputs: Object.fromEntries(
+      Object.entries(call?.inputs ?? {}).map(([name, input]) => [
+        name,
+        { required: input.required === true, type: input.type, hasDefault: "default" in input },
+      ]),
+    ),
+    secrets: Object.keys(call?.secrets ?? {}).sort(),
+    jobs: Object.entries(wf.jobs).map(([id, job]) => ({
+      id,
+      keys: Object.keys(job).sort(),
+      uses: job.uses,
+      with: job.with,
+      secrets: job.secrets,
+    })),
+  };
+}
+
+function expectCallerContract(wf: Caller): void {
+  expect(callerContractOf(wf)).toEqual(CALLER_EXPECTED);
+}
+
+describe("post-green.yml reaches the hook", () => {
+  const wf = parseYaml(
+    readFileSync(join(ROOT, ".github", "workflows", "post-green.yml"), "utf8"),
+  ) as Caller;
+
+  test("one job calls apply-settings.yml with the judged sha and inherited secrets", () => {
+    expectCallerContract(wf);
+  });
+
+  const REGRESSIONS: Array<[string, (w: Caller) => void, keyof CallerContract]> = [
+    [
+      "the starter's no-op job back in place of the call",
+      (w) => {
+        delete w.jobs["apply-settings"];
+        w.jobs.noop = {
+          "runs-on": "ubuntu-latest",
+          "timeout-minutes": 5,
+          steps: [{ env: { SHA: `\${{ inputs.sha }}` }, run: "echo post-green hook for $SHA" }],
+        };
+      },
+      "jobs",
+    ],
+    [
+      "a judged sha that is not forwarded",
+      (w) => (must(w.jobs["apply-settings"], "apply-settings job").with = {}),
+      "jobs",
+    ],
+    [
+      "secrets that are not inherited, so the PAT never reaches the apply",
+      (w) => delete must(w.jobs["apply-settings"], "apply-settings job").secrets,
+      "jobs",
+    ],
+    [
+      "a second job beside the call",
+      (w) => (w.jobs.extra = { "runs-on": "ubuntu-latest", steps: [{ run: "echo" }] }),
+      "jobs",
+    ],
+    [
+      "a call that reaches a different workflow",
+      (w) =>
+        (must(w.jobs["apply-settings"], "apply-settings job").uses =
+          "./.github/workflows/checks.yml"),
+      "jobs",
+    ],
+    [
+      "a condition that can skip the call",
+      (w) =>
+        (must(w.jobs["apply-settings"], "apply-settings job").if =
+          "github.ref != 'refs/heads/main'"),
+      "jobs",
+    ],
+    [
+      "steps beside the call",
+      (w) => (must(w.jobs["apply-settings"], "apply-settings job").steps = [{ run: "echo" }]),
+      "jobs",
+    ],
+    [
+      "a caller holding the lane the called workflow takes",
+      (w) =>
+        (must(w.jobs["apply-settings"], "apply-settings job").concurrency = {
+          group: `apply-settings-\${{ github.repository }}`,
+        }),
+      "jobs",
+    ],
+    [
+      "a workflow-level lane the called workflow also takes",
+      (w) => (w.concurrency = { group: `apply-settings-\${{ github.repository }}` }),
+      "topLevel",
+    ],
+    [
+      "an optional judged sha",
+      (w) => (must(w.on.workflow_call?.inputs?.sha, "sha input").required = false),
+      "inputs",
+    ],
+    [
+      "a judged sha with a fallback default",
+      (w) => (must(w.on.workflow_call?.inputs?.sha, "sha input").default = ""),
+      "inputs",
+    ],
+    [
+      "a judged sha that is not a string",
+      (w) => (must(w.on.workflow_call?.inputs?.sha, "sha input").type = "boolean"),
+      "inputs",
+    ],
+    [
+      "a second required input ci.yml does not pass",
+      (w) =>
+        (must(must(w.on.workflow_call ?? undefined, "workflow_call").inputs, "inputs").mode = {
+          required: true,
+          type: "string",
+        }),
+      "inputs",
+    ],
+    [
+      "a declared secret ci.yml does not pass by name",
+      (w) =>
+        (must(w.on.workflow_call ?? undefined, "workflow_call").secrets = {
+          APPLY_SETTING_TOKEN: { required: true },
+        }),
+      "secrets",
+    ],
+    [
+      "a push trigger of its own",
+      (w) => (w.on.push = { branches: ["main"] } as Trigger),
+      "triggers",
+    ],
+    [
+      "a dispatch that could reach the apply outside the gate",
+      (w) => (w.on.workflow_dispatch = null),
+      "triggers",
+    ],
+  ];
+  test.each(REGRESSIONS)("catches %s (negative control)", (_label, mutate, key) => {
+    const drifted = structuredClone(wf);
+    mutate(drifted);
+    expect(callerContractOf(drifted)[key]).not.toEqual(CALLER_EXPECTED[key]);
+    expect(() => expectCallerContract(drifted)).toThrow();
   });
 });
