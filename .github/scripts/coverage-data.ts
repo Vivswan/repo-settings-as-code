@@ -1,245 +1,66 @@
-import type { SectionKey } from "../../src/schema.js";
+/**
+ * The authored half of COVERAGE.md (rendered by gen-docs.ts): the prose no declaration can
+ * derive, because it enumerates what does NOT exist - the repo-scoped gaps, the settings with no
+ * public API, and the account-scoped surface. The data is coverage-data.yml beside this file;
+ * this module is its shape and loader. The Supported table renders from each section's docs.yml.
+ */
 
-// The authored half of COVERAGE.md (rendered by gen-docs.ts): the prose no declaration can
-// derive because it enumerates what does NOT exist - the repo-scoped gaps, the settings with no
-// public API, and the account-scoped surface. The Supported table renders from each docs.ts.
+import { join } from "node:path";
+import { z } from "zod";
+import { SECTION_KEYS } from "../../src/schema.js";
+import { readDocsYaml } from "../../src/sections/contract/docs.js";
 
 /** One endpoint a gap would need: an octokit-spelled REST route ("METHOD /path/{param}") or a GraphQL root field ("GraphQL pinIssue"). */
-export type GapEndpoint =
-  | `${"GET" | "POST" | "PUT" | "PATCH" | "DELETE"} /${string}`
-  | `GraphQL ${string}`;
+const GapEndpoint = z
+  .string()
+  .regex(
+    /^(?:(?:GET|POST|PUT|PATCH|DELETE) \/|GraphQL )/,
+    'an endpoint is "METHOD /path/{param}" or "GraphQL rootField"',
+  );
 
 /** One row of the Repo-scoped gaps table: a repo-scoped setting the action cannot apply yet. */
-export interface GapRow {
-  readonly area: string;
-  /** The endpoints that would implement it; the Endpoints cell joins them. */
-  readonly endpoints: readonly [GapEndpoint, ...GapEndpoint[]];
-  readonly why: string;
-}
+const GapRow = z
+  .strictObject({
+    area: z.string().min(1),
+    /** The endpoints that would implement it; the Endpoints cell joins them. */
+    endpoints: z.tuple([GapEndpoint], GapEndpoint).readonly(),
+    why: z.string().min(1),
+  })
+  .readonly();
+export type GapRow = z.infer<typeof GapRow>;
 
 // The Repo-scoped gaps table: either no known gap, with the paragraph shown in place of rows,
 // or the rows. One arm at a time, so a note cannot go stale behind rows that hide it.
-export type CoverageGaps =
-  | { readonly emptyNote: string; readonly rows?: undefined }
-  | { readonly emptyNote?: undefined; readonly rows: readonly [GapRow, ...GapRow[]] };
+const CoverageGaps = z.union([
+  z.strictObject({ emptyNote: z.string().min(1), rows: z.undefined().optional() }).readonly(),
+  z
+    .strictObject({
+      emptyNote: z.undefined().optional(),
+      rows: z.tuple([GapRow], GapRow).readonly(),
+    })
+    .readonly(),
+]);
 
-export interface CoverageData {
-  /** The paragraph under the page title. */
-  readonly intro: string;
-  /** The Supported table's section order, a display decision; the renderer requires every section once. */
-  readonly supportedOrder: readonly SectionKey[];
-  readonly gaps: CoverageGaps;
-  readonly noPublicApi: {
-    /** The paragraph introducing the list. */
-    readonly intro: string;
-    readonly items: readonly [string, ...string[]];
-  };
-  readonly outOfScope: {
-    readonly items: readonly [string, ...string[]];
-  };
-}
+/** A non-empty list of authored bullets. */
+const Items = z.tuple([z.string().min(1)], z.string().min(1)).readonly();
 
-export const COVERAGE_DATA: CoverageData = {
-  intro:
-    "The tenet: this action can control everything about a repository and nothing about the " +
-    "user. This page is the honest inventory: what works today, what is repo-scoped but not " +
-    "built yet, and what is out of scope because it belongs to a user or organization account. " +
-    "The side-by-side comparison with the Probot Settings app lives in the README, under " +
-    "[Compared to the Probot Settings app](README.md#compared-to-the-probot-settings-app).",
-  // Branches sits before environments here, as the page always read; the registry runs them the
-  // other way round only because branches' required_deployments names environments.
-  supportedOrder: [
-    "repository",
-    "labels",
-    "rulesets",
-    "branches",
-    "environments",
-    "autolinks",
-    "actions",
-    "actions_secrets",
-    "dependabot_secrets",
-    "codespaces_secrets",
-    "agents_secrets",
-    "workflows",
-    "check_suite_preferences",
-    "pages",
-    "code_scanning_default_setup",
-    "code_quality_setup",
-    "collaborators",
-    "teams",
-    "milestones",
-    "interaction_limits",
-    "actions_variables",
-    "agents_variables",
-    "webhooks",
-    "custom_properties",
-    "deploy_keys",
-    "secret_scanning_custom_patterns",
-  ],
-  gaps: {
-    emptyNote:
-      "The table is EMPTY right now: every previously known gap has been implemented (see the Supported table). A new row belongs here the moment GitHub ships a repo-scoped setting this action cannot yet apply; PRs welcome.",
-  },
-  noPublicApi: {
-    intro:
-      "Repo-scoped settings the GitHub UI offers but no REST or GraphQL endpoint can write " +
-      "independently (a few carry a read-only GET, and the dependency graph flips only as a " +
-      "side effect of another endpoint; both noted inline). These stay unsupported until " +
-      "GitHub ships a write API for them:",
-    items: [
-      'The "Include in the home page" sidebar checkboxes (Releases, Packages, ' +
-        "Deployments/Environments). [PATCH " +
-        "/repos/{owner}/{repo}](https://docs.github.com/en/rest/repos/repos) has toggles for " +
-        "issues, wiki, projects, pull requests, and discussions, but nothing controls those " +
-        "three sections' visibility.",
-      "Discussion categories. No REST endpoint creates or manages them, and GraphQL can only " +
-        "read them; category management is UI-only. Enabling discussions itself " +
-        "(has_discussions) rides the repository PATCH passthrough (verified live; the [PATCH " +
-        "docs](https://docs.github.com/en/rest/repos/repos) omit the field but the API accepts " +
-        "it).",
-      "The social preview image (Open Graph image). No PATCH /repos field and no standalone endpoint; GraphQL's openGraphImageUrl is read-only. Upload is UI-only under Settings.",
-      'The wiki "Restrict editing to collaborators only" checkbox. The only wiki field anywhere is the has_wiki on/off toggle (supported via the repository PATCH passthrough); no REST or GraphQL surface controls who may edit.',
-      "The Copilot Autofix repository checkboxes for code scanning: the main toggle and the " +
-        'separate "Copilot Autofix for third-party tools" one, independently settable stored ' +
-        "booleans (each has its own repo.* audit log event pair). The code-scanning REST surface " +
-        "only exposes imperative autofix operations on individual alerts; no endpoint reads or " +
-        "writes either repo toggle.",
-      "Dependabot auto-triage rules (custom alert-handling rules). UI-only; the Dependabot REST category has alerts, dismissal requests, and secrets, but no rules endpoints.",
-      "Automatic dependency submission (the Settings dropdown that makes Actions submit build-time dependencies). No repo REST endpoint reads or writes it; org-side enablement goes through org-scoped code security configurations.",
-      "Codespaces prebuild configurations. A real per-repo settings surface (branch, devcontainer path, triggers, regions) with no REST or GraphQL management endpoints; the builds themselves run as Actions workflows.",
-      "Copilot coding agent repository configuration (MCP servers, firewall and custom " +
-        "allowlist, enabled tools, Actions workflow approval, automations; Settings > Copilot). " +
-        "Writes are UI-only; the sole API is the read-only GET " +
-        "/repos/{owner}/{repo}/copilot/cloud-agent/configuration (public preview), enough to " +
-        "audit drift but not to apply. The org-side PUTs control which repositories may use the " +
-        "agent, not this per-repo configuration; a shipped write endpoint would move this to the " +
-        "gaps table. (Copilot code review is NOT missing: it is the copilot_code_review rule " +
-        "type, already covered by the rulesets passthrough.)",
-      'Repo-level Copilot content exclusion ("Paths to exclude in this repository"). The ' +
-        "content-exclusion REST surface has only org- and enterprise-level GET/PUT; repo names " +
-        "in the org payload edit the org layer, and the repository's own layer has no endpoint.",
-      "The Copilot Memory repository toggle (Settings > Copilot > Memory; lets repo admins " +
-        "disable storing and reading repository-level memories; public preview since May 2026). " +
-        "UI-only: the REST Copilot category has no memory endpoints, no GraphQL surface exists, " +
-        "and unlike the coding agent configuration above there is not even a read-only GET to " +
-        "audit it.",
-      "The dependency graph toggle. No standalone field anywhere (not in " +
-        "security_and_analysis); PUT/DELETE /repos/{owner}/{repo}/vulnerability-alerts flips the " +
-        "graph only as a coupled side effect of Dependabot alerts (see the Supported table), and " +
-        "the graph-on/alerts-off combination is neither writable nor readable. A live decision " +
-        "since June 2025, when new public repositories started defaulting the graph to off.",
-      'Code review limits (Settings > Moderation options: "Limit to users explicitly granted read or higher access"). UI-only; a different setting from the supported interaction limits, and neither PATCH /repos nor any GraphQL mutation carries it.',
-      'Email notifications for pushes (up to two addresses under Settings). The legacy write path (email service hooks) died with the GitHub Services sunset; the webhooks API now accepts only name "web".',
-      'Reported content / "allow contributors to report abuse" (Settings > Moderation options on public org-owned repositories). UI-only; the nearest API, the minimizeComment GraphQL mutation, is imperative per-comment triage, not this setting.',
-      'The "Include Git LFS objects in archives" checkbox (Settings > General > Archives). Distinct from LFS enable/disable (supported); no REST or GraphQL surface reads or writes it.',
-      'The push policy ("Limit how many branches and tags can be updated in a single push", ' +
-        "Settings > General > Pushes). max_ref_updates appears nowhere in GitHub's REST OpenAPI " +
-        "description, and GraphQL's RepositoryRuleType enum carries MAX_REF_UPDATES with no " +
-        "corresponding parameters type in RuleParameters or RuleParametersInput, so neither the " +
-        "rulesets passthrough nor GraphQL can write it. Given the rulesets row's day-one promise " +
-        "for new rule types and that enum value's existence, probe the rulesets POST with a " +
-        "max_ref_updates rule once before treating it as unwritable.",
-      "The grouped security updates toggle (Settings > Advanced Security > Dependabot). No " +
-        "REST or GraphQL field; distinct from automated-security-fixes (supported) and from " +
-        "dependabot.yml's groups key (repo content, out of scope). A security_and_analysis " +
-        "subfield, once GitHub ships one, would be absorbed by the existing passthrough " +
-        "automatically.",
-      'The secret scanning "Extended metadata" sub-toggle (Settings > Advanced Security > ' +
-        "Secret Protection > Validity checks; public preview, requires validity checks on). " +
-        "Writable only through org- and enterprise-level code security configurations " +
-        "(secret_scanning_extended_metadata); no repo-level field exists even in the GHEC docs, " +
-        "and the per-repo GET /repos/{owner}/{repo}/code-security-configuration is read-only. " +
-        "(The parent validity-checks toggle IS writable: " +
-        "security_and_analysis.secret_scanning_validity_checks rides the supported passthrough; " +
-        "see the Supported table.)",
-      'Code scanning delegated alert dismissal (the "Prevent direct alert dismissals" checkbox ' +
-        "under Settings > Advanced Security). The only writable " +
-        "code_scanning_delegated_alert_dismissal field lives on org- and enterprise-level code " +
-        "security configurations; PATCH /repos' security_and_analysis carries only the " +
-        "SECRET-scanning delegated fields (absorbed by the passthrough), and the repo-scoped " +
-        "dismissal-requests endpoints are imperative per-alert triage. A security_and_analysis " +
-        "subfield, once GitHub ships one, would be absorbed automatically.",
-      'The code scanning "AI findings" toggle (AI-powered findings for CodeQL default setup, ' +
-        "public preview; repos can opt out of the org default individually). The default-setup " +
-        "PATCH body carries no AI-findings field - ai_findings_option exists only on the " +
-        "separate code-quality setup endpoints, supported via the `code_quality_setup` section - " +
-        "and no security_and_analysis subfield or GraphQL surface exists; the only trace is the " +
-        "repo.code_scanning_ai_findings_* audit events. A default-setup field, once GitHub ships " +
-        "one, would be absorbed by that section's verbatim PATCH passthrough.",
-      'The "Dependabot on self-hosted runners" toggle (Settings > Advanced Security > ' +
-        "Dependabot, private repositories). No REST or GraphQL read or write surface; the " +
-        "Dependabot REST category has only alerts, dismissal requests, and secrets. Distinct " +
-        "from out-of-scope runner registration: this is a stored repo boolean (audit events " +
-        "repository_dependency_updates_self_hosted.enabled/.disabled).",
-      'The "Access to alerts" list (Settings > Advanced Security; extra users/teams granted ' +
-        "Dependabot/security alert access on private org repositories). A persistent, " +
-        "reconcilable actor list - the natural sibling of the collaborators section - but " +
-        "UI-only: no REST endpoint or GraphQL mutation manages it (the org-scoped PATCH " +
-        "/orgs/{org}/dependabot/repository-access is a different surface).",
-      "Pinned workflows in the Actions tab (up to 5, repo-wide display state). No pin route " +
-        "exists among the REST workflows endpoints and GraphQL has no pinWorkflow mutation - " +
-        "unlike environments, whose pinEnvironment mutation the environments section drives " +
-        "through the per-environment `pinned` key. Only the " +
-        "workflows.pin_workflow/unpin_workflow audit events betray that it is stored repo state.",
-      'The "Auto-close issues with merged linked pull requests" toggle (Settings > General > ' +
-        "Issues; shipped April 2025, default on). Neither PATCH /repos (per the OpenAPI " +
-        "descriptor) nor GraphQL updateRepository carries a corresponding field. Probe the PATCH " +
-        "for an undocumented field (the has_discussions precedent) before treating it as " +
-        "unbuildable.",
-      'The GitHub Archive Program opt-in (the "Preserve this repository" checkbox under ' +
-        "Settings > General > Features on public repositories; default on, admin-only). No field " +
-        "on PATCH /repos in either doc flavor, no standalone endpoint, no GraphQL surface; the " +
-        "supported `archived` PATCH boolean is the unrelated read-only-archive toggle.",
-      "Workflow execution protections (Settings > Actions > Policies; public preview since " +
-        "June 2026): repository-level rulesets with actor allow rules (users, repo roles, GitHub " +
-        "Apps, Copilot, Dependabot) and event allow rules (push, pull_request, " +
-        "pull_request_target, workflow_dispatch), plus an evaluate mode. Built on the rulesets " +
-        "framework, but the REST rulesets endpoints accept only branch, tag, and push targets " +
-        "and the feature docs name no API, so the supported rulesets passthrough cannot reach it " +
-        "- its day-one promise covers new rule types within documented targets, not a new target " +
-        "flavor. Probe the rulesets endpoints with the new flavor once before treating it as " +
-        "unwritable; a shipped write API moves this to the gaps table.",
-    ],
-  },
-  outOfScope: {
-    items: [
-      "User account surface (profile, emails, notification settings, SSH/GPG/signing keys, " +
-        "blocking, starring/watching, user migrations): User-scoped, not repository " +
-        "configuration, exactly what the tenet's second half excludes. Watching/subscription " +
-        "state on a repo is likewise per-user, not a property of the repo.",
-      "Organization settings (membership, org-level Actions policies, runner groups, org " +
-        "webhooks, org rulesets, org secrets/variables and their repo-selection lists, custom " +
-        "property DEFINITIONS, custom repository roles, code security configurations): " +
-        "Org-account-scoped (/orgs/* endpoints); they influence repos from above but are not " +
-        "settings OF a repository. Their repo-visible effects (org rulesets, applied security " +
-        "configs) surface read-only and are already filtered out (e.g. rulesets skips " +
-        "source_type != Repository).",
-      "GitHub Packages: Package namespaces and their settings belong to the user or org account even when a package is linked to a repo; explicitly user/account territory under the tenet.",
-      "Legacy tag protection API: Deprecated and removed by GitHub (sunset August 2024); no endpoints remain. Its function is fully covered by tag-target rulesets, which are supported.",
-      "Projects: Classic repo projects are sunset; Projects v2 are user/org-owned GraphQL objects merely linked to repos. The repo-level has_projects flag rides the repository PATCH passthrough.",
-      "Pinned issues: GraphQL pinIssue/unpinIssue exist (max 3 pins, readable back via " +
-        "Repository.pinnedIssues), but a pin's value is an issue number - per-repo work-item " +
-        "content, not repository configuration - and re-asserting pins from YAML would fight " +
-        "ongoing triage. Named here because the surface is real and settings-adjacent; " +
-        "deliberately unmanaged, unlike pinned environments, whose values are environment names " +
-        "the settings file already owns (the environments section's `pinned` key).",
-      "Releases: Releases are content/artifacts, not configuration. The one release-policy " +
-        "setting with a REST surface, immutable releases, is supported via the repository " +
-        "section's enable_immutable_releases toggle (see the Supported table); anything else " +
-        "GitHub ships as a field on PATCH /repos gets picked up by the repository passthrough " +
-        "automatically.",
-      "Repo-content-borne configuration (CODEOWNERS, dependabot.yml, workflow files, issue/PR " +
-        "templates, FUNDING.yml, .gitattributes): These are versioned files in the repository " +
-        "tree, managed by commits/PRs (e.g. by the copier template layer), not by the settings " +
-        "REST API. Writing repo content is a different tool's job.",
-      "Self-hosted runners (repo-level registration, labels): Operational infrastructure lifecycle: registration requires short-lived tokens and a live agent process; there is no meaningful declarative desired-state to reconcile from a YAML file.",
-      "Imperative repository operations (transfer, archive-via-migration, fork creation, " +
-        "branch create/rename, workflow/repository dispatch, cache purges, alert triage for code " +
-        "scanning / secret scanning / Dependabot alerts, issues and PRs): One-shot actions or " +
-        "work items, not settings; running them repeatedly from declarative state is meaningless " +
-        "or destructive. (The archived boolean itself IS supported via repository PATCH.)",
-      "Codespaces user/org configuration (user secrets, machine-type policies, org access controls): User- and org-scoped; the only repo-scoped Codespaces surface is repository Codespaces secrets, supported via the `codespaces_secrets` section.",
-      "Read-only repository surfaces (traffic, statistics, languages, SBOM/dependency graph exports, attestations, community profile): Nothing to configure; GET-only endpoints with no desired state to apply.",
-    ],
-  },
-};
+export const CoverageData = z
+  .strictObject({
+    /** The paragraph under the page title. */
+    intro: z.string().min(1),
+    /** The Supported table's section order, a display decision; the renderer requires every section once. */
+    supportedOrder: z.array(z.enum(SECTION_KEYS)).readonly(),
+    gaps: CoverageGaps,
+    noPublicApi: z
+      .strictObject({
+        /** The paragraph introducing the list. */
+        intro: z.string().min(1),
+        items: Items,
+      })
+      .readonly(),
+    outOfScope: z.strictObject({ items: Items }).readonly(),
+  })
+  .readonly();
+export type CoverageData = z.infer<typeof CoverageData>;
+
+export const COVERAGE_DATA = readDocsYaml(join(import.meta.dir, "coverage-data.yml"), CoverageData);

@@ -1,0 +1,9 @@
+readme:
+  endpoints: labels CRUD
+  notes: upsert by name (rename via `new_name`); the delete-by-default is Probot parity
+coverage:
+  - area: "[Labels](https://docs.github.com/en/rest/issues/labels)"
+    notes: >-
+      Full CRUD on /repos/{owner}/{repo}/labels: upsert by name, rename via new_name (Probot
+      parity), undeclared labels DELETED loudly by default; the wrapped `undeclared: keep` form
+      keeps them, each surfaced as a note.

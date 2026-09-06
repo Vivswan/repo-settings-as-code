@@ -3,9 +3,19 @@
 // rows name every resource the section calls), and no docs file is reachable from the bundle.
 
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { SECTION_KEYS, type SectionKey } from "../../src/schema.js";
+import { readDocsYaml, SectionDocs } from "../../src/sections/contract/docs.js";
 import { endpointPath, type Route } from "../../src/sections/contract/endpoints.js";
 import { DOCS } from "../../src/sections/docs-registry.js";
 import { allEndpoints, allGraphqlOps, SECTIONS } from "../../src/sections/registry.js";
@@ -44,9 +54,9 @@ function leadingSegment(route: Route): string {
   return tail.replace(/^\//, "").split("/")[0] ?? "";
 }
 
-/** Whether a source path is documentation prose: a section's docs.ts or the docs registry. */
+/** Whether a source path is documentation code: the docs registry or the docs document shapes. */
 function isDocsFile(path: string): boolean {
-  return path.endsWith("/docs.ts") || path.endsWith("/docs-registry.ts");
+  return path.endsWith("/contract/docs.ts") || path.endsWith("/docs-registry.ts");
 }
 
 // The specifiers a source file depends on, as the bundler sees them (Bun's own scanner, so no
@@ -129,19 +139,76 @@ describe("docs registry reachability", () => {
     expect(bundled.filter(isDocsFile)).toEqual([]);
   });
 
-  test("the generator does reach every docs file, so the walk sees them", () => {
+  test("the generator does reach the docs code, so the walk sees it", () => {
     const reached = [...importGraph(join(ROOT, ".github", "scripts", "gen-docs.ts"))]
       .map((file) => relative(ROOT, file))
       .filter(isDocsFile)
       .sort();
-    // contract/docs.ts is type-only, so the bundler view erases it; the
-    // prose-bearing files are the registry and every section's docs.ts.
-    expect(reached).toEqual(
-      [
-        "src/sections/docs-registry.ts",
-        ...SECTION_KEYS.map((key) => `src/sections/${key}/docs.ts`),
-      ].sort(),
-    );
+    expect(reached).toEqual(["src/sections/contract/docs.ts", "src/sections/docs-registry.ts"]);
+  });
+});
+
+describe("docs.yml completeness", () => {
+  test("every section has a docs.yml and every docs.yml belongs to a section", () => {
+    // Loading DOCS already proves each SectionKey's file exists and parses; the reverse pin is
+    // what a stray file (a renamed or removed section's leftover) would otherwise escape.
+    const onDisk = readdirSync(join(ROOT, "src", "sections"), { withFileTypes: true })
+      .filter(
+        (entry) =>
+          entry.isDirectory() && existsSync(join(entry.parentPath, entry.name, "docs.yml")),
+      )
+      .map((entry) => entry.name)
+      .sort();
+    expect(onDisk).toEqual([...SECTION_KEYS].sort());
+    expect(Object.keys(DOCS).sort()).toEqual([...SECTION_KEYS].sort());
+  });
+
+  test("a malformed docs.yml fails naming the file and the issue, a missing one naming the path", () => {
+    const dir = mkdtempSync(join(tmpdir(), "docs-yml-"));
+    try {
+      const malformed = join(dir, "docs.yml");
+      // Every guard the shape carries, in one document: an unknown key, an empty coverage list,
+      // and a blank cell.
+      writeFileSync(
+        malformed,
+        ["readme:", "  endpoints: labels CRUD", "  notes: ''", "  extra: 1", "coverage: []"].join(
+          "\n",
+        ),
+      );
+      // Zod reports the issues in its own order, so each is pinned on its own.
+      for (const issue of [
+        `${malformed} is not a valid docs document:`,
+        'Unrecognized key: "extra"',
+        "at readme.notes",
+        "at coverage",
+      ]) {
+        expect(() => readDocsYaml(malformed, SectionDocs)).toThrow(new RegExp(escapeRe(issue)));
+      }
+      expect(() => readDocsYaml(join(dir, "absent.yml"), SectionDocs)).toThrow(/absent\.yml/);
+      // YAML that does not even parse (a duplicated key, which the loader refuses) names the file too.
+      writeFileSync(malformed, ["readme:", "  endpoints: a", "  endpoints: b"].join("\n"));
+      expect(() => readDocsYaml(malformed, SectionDocs)).toThrow(
+        new RegExp(`${escapeRe(malformed)} is not valid YAML: .*unique`),
+      );
+      // Control: the same reader accepts a well-formed document.
+      writeFileSync(
+        malformed,
+        [
+          "readme:",
+          "  endpoints: labels CRUD",
+          "  notes: upsert by name",
+          "coverage:",
+          "  - area: Labels",
+          "    notes: CRUD",
+        ].join("\n"),
+      );
+      expect(readDocsYaml(malformed, SectionDocs)).toEqual({
+        readme: { endpoints: "labels CRUD", notes: "upsert by name" },
+        coverage: [{ area: "Labels", notes: "CRUD" }],
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -1,0 +1,35 @@
+readme:
+  endpoints: >-
+    secret-scanning custom patterns: paginated list + bulk POST + PATCH by id + bulk DELETE
+  notes: >-
+    matched by name (immutable upstream); `state` and `push_protection_enabled` are not declarable;
+    deletes always resolve alerts
+coverage:
+  - area: >-
+      [Secret scanning custom
+      patterns](https://docs.github.com/en/rest/secret-scanning/custom-patterns) (repository-level)
+    notes: >-
+      GET /repos/{owner}/{repo}/secret-scanning/custom-patterns (paginated), bulk POST on the same
+      path ({patterns: [...]}), PATCH .../custom-patterns/{pattern_id}, and bulk DELETE on the
+      collection path (ids in the request body). Patterns are matched by name; the name is immutable
+      upstream (the PATCH takes no name field), so a rename creates the new name and the old pattern
+      follows the undeclared policy - deleted under `undeclared: delete`, kept and noted under the
+      default keep. The declarable surface is name, pattern, start_delimiter, end_delimiter, and the
+      must_match/must_not_match regex lists - `state` and `push_protection_enabled` are READABLE in
+      the GET but NOT writable through these endpoints (no field in the POST/PATCH bodies, no
+      sub-endpoint), so they cannot be declared and the validator says so. CAVEAT (state is
+      invisible to drift): an UNPUBLISHED live pattern whose fields match the declaration reads as
+      converged even though it is not enforcing - no publish endpoint exists, so publishing stays a
+      UI action, and that includes a pattern this action just created - GitHub does not document the
+      state a bulk-created pattern lands in, so verify the first apply in the UI. A delimiter, once
+      set, cannot be cleared back to GitHub's default through the PATCH (it updates provided fields
+      only); delete and redeclare the pattern without the field instead. Writes ride optimistic
+      concurrency whenever GitHub supplies a version: the list GET carries each pattern's
+      custom_pattern_version, the PATCH/DELETE send it back, and a 412 means the pattern changed
+      mid-run (re-run the workflow); a version-less pattern (the field is optional and nullable
+      upstream) writes without the check, as the API allows. Undeclared patterns are KEPT by default
+      (removing a pattern disposes of its alerts, so it stays a human opt-in; `undeclared: delete`
+      opts in), and every delete this action issues sends post_delete_action: "resolve_alerts" -
+      never upstream's alert-deleting default - so the audit trail survives. Needs secret scanning
+      enabled (GitHub Advanced Security on private repositories); a 404 can mean that rather than a
+      missing grant.
