@@ -3,7 +3,8 @@ import { executePlan } from "../../../src/engine/execute.js";
 import { planContext } from "../../../src/sections/contract/plan.js";
 import { MockApi } from "../../../test/mock-api.js";
 import { fragmentFake } from "../../../test/sections/fragment-fake.js";
-import { provePlanIdempotent, REPO } from "../../../test/sections/plan-idempotence.js";
+import { provePlanIdempotent } from "../../../test/sections/plan-idempotence.js";
+import { REPO } from "../../../test/sections/section-run.js";
 import { labelsSection } from "./index.js";
 import { labelsMockHandlers } from "./mock.js";
 

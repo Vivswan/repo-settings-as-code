@@ -120,7 +120,8 @@ jobs:
           # fix: start from an empty index so the patch holds exactly the
           # allowed paths.
           git reset -q
-          git add -A -- lib/settings.schema.json README.md COVERAGE.md action.yml docs/reference/undeclared-policy.md docs/reference/permissions.md docs/operate/check-mode.md
+          git add -A -- lib/settings.schema.json README.md COVERAGE.md action.yml \
+            docs/reference/undeclared-policy.md docs/reference/permissions.md docs/operate/check-mode.md
           # Old branches cut before the gaps directory landed lack it, and
           # an unmatched pathspec would fail the add.
           if [ -d src/upstream-gaps ]; then
@@ -202,7 +203,9 @@ jobs:
           # path cannot hide behind an allowed destination.
           while IFS= read -r -d '' path; do
             case "$path" in
-              lib/settings.schema.json | README.md | COVERAGE.md | action.yml | docs/reference/undeclared-policy.md | docs/reference/permissions.md | docs/operate/check-mode.md | src/upstream-gaps/*) ;;
+              lib/settings.schema.json | README.md | COVERAGE.md | action.yml | \
+              docs/reference/undeclared-policy.md | docs/reference/permissions.md | \
+              docs/operate/check-mode.md | src/upstream-gaps/*) ;;
               *)
                 echo "::error::the fix patch staged '$path', outside lib/settings.schema.json, the generated docs (README.md, COVERAGE.md, action.yml, docs/reference/undeclared-policy.md, docs/reference/permissions.md, docs/operate/check-mode.md), and src/upstream-gaps/; refusing to push"
                 exit 1

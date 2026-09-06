@@ -10,7 +10,7 @@
 import { describe, expect, test } from "bun:test";
 import { executePlan } from "../../../src/engine/execute.js";
 import { MockApi } from "../../../test/mock-api.js";
-import { REPO } from "../../../test/sections/plan-idempotence.js";
+import { REPO } from "../../../test/sections/section-run.js";
 import { planContext } from "../contract/plan.js";
 import { agentsVariablesSection } from "./index.js";
 

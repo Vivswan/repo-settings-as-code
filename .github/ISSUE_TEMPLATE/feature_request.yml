@@ -21,7 +21,9 @@ body:
     id: coverage
     attributes:
       label: Is it already listed in COVERAGE.md?
-      description: COVERAGE.md tracks everything supported, every known repo-scoped gap, and what has no public API. If it is a listed gap, this request helps prioritize it.
+      description: >-
+        COVERAGE.md tracks everything supported, every known repo-scoped gap, and what has
+        no public API. If it is a listed gap, this request helps prioritize it.
       options:
         - Yes, under "Repo-scoped gaps"
         - Yes, under "No public API" or "Out of scope"

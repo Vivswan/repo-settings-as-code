@@ -19,7 +19,8 @@ import { mockFragmentFor } from "../e2e/mock/list-fragment.js";
 import { Rng } from "../e2e/prng.js";
 import { MockApi } from "../mock-api.js";
 import { fragmentFake } from "./fragment-fake.js";
-import { provePlanIdempotent, REPO } from "./plan-idempotence.js";
+import { provePlanIdempotent } from "./plan-idempotence.js";
+import { REPO } from "./section-run.js";
 
 const base = labelsSection.decl;
 const LIST = "GET /repos/o/r/labels?per_page=100&page=1";

@@ -19,7 +19,7 @@ import {
   unsealSecretValue,
 } from "../e2e/mock/secrets.js";
 import { MockApi } from "../mock-api.js";
-import { REPO } from "./plan-idempotence.js";
+import { REPO } from "./section-run.js";
 
 /** The facts one family owns; everything else is the shared factory's. */
 export interface SecretFamilyFacts {

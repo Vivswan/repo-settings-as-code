@@ -6,7 +6,8 @@ import { allEndpoints, allGraphqlOps } from "../../../src/sections/registry.js";
 import { buildState, type LiveState } from "../../../test/e2e/mock/state.js";
 import type { Json } from "../../../test/e2e/mock/support.js";
 import { MockApi } from "../../../test/mock-api.js";
-import { provePlanIdempotent, REPO } from "../../../test/sections/plan-idempotence.js";
+import { provePlanIdempotent } from "../../../test/sections/plan-idempotence.js";
+import { REPO } from "../../../test/sections/section-run.js";
 import {
   endpointMethod,
   endpointPath,

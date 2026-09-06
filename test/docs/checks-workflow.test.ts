@@ -50,7 +50,10 @@ const FETCHED_ARTIFACTS: readonly FetchedArtifact[] = [
 ];
 const [OPENAPI, GRAPHQL] = FETCHED_ARTIFACTS as [FetchedArtifact, FetchedArtifact];
 
-/** Jobs whose spec fetch IS the upstream-drift tripwire: they call the script directly and never restore a cache; every other loading job uses the composite. */
+/**
+ * Jobs whose spec fetch IS the upstream-drift tripwire: they call the script
+ * directly and never restore a cache; every other loading job uses the composite.
+ */
 const UNCACHED_FETCH_JOBS: ReadonlySet<string> = new Set([
   "e2e-nightly.yml#nightly",
   "nightly-fuzz.yml#fuzz",
@@ -73,7 +76,10 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** The scripts that spawn the bundle against the spec-validating mock: every non-test file that imports the e2e runner, directly or through another. */
+/**
+ * The scripts that spawn the bundle against the spec-validating mock: every
+ * non-test file that imports the e2e runner, directly or through another.
+ */
 function harnessEntrypoints(): string[] {
   const files = ["test/e2e", ".github/scripts"].flatMap((dir) => sourceFilesUnder(join(ROOT, dir)));
   return [...transitiveDependents(reverseImportGraph(files), join(ROOT, "test/e2e/runner.ts"))]
