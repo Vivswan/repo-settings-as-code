@@ -1,10 +1,10 @@
 ---
-# This repository's OWN settings. Three writers apply the SAME six-layer
+# This repository's OWN settings. Two writers are built to apply the SAME six-layer
 # merge of this file with the fleet layers: Vivswan/repo-platform's central
-# settings-repos heal, the managed settings-sync.yml on pushes to this file
-# (when REPO_PLATFORM_TOKEN is set), and this repo's own apply-settings.yml,
-# which renders the merge with repo-platform's scripts and applies it with
-# the action at HEAD (dogfooding, APPLY_SETTING_TOKEN).
+# settings-repos heal, and this repo's own apply-settings.yml, the hook for
+# ci.yml's post-green slot: it renders the merge with repo-platform's
+# scripts and applies it with the action at HEAD (dogfooding,
+# APPLY_SETTING_TOKEN).
 # Rendered once, repo-owned: template sync never rewrites it. Fleet defaults
 # merge UNDER this file - keys here win, null opts out, labels replace by
 # name, rulesets MERGE by name (rules append by type, nested objects merge
