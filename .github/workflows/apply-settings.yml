@@ -4,41 +4,38 @@
 # SAME six-layer merge Vivswan/repo-platform computes for this repository
 # (the settings-sync module: fleet baseline, module layers, this repo's
 # .github/settings.yml, the fleet override), rendered with repo-platform's
-# own scripts, so this writer, the central heal, and the managed
-# settings-sync.yml (when REPO_PLATFORM_TOKEN is set) converge on one
+# own scripts, so this writer and the central heal converge on one
 # document: each renders from a green repo-platform commit, so two runs
 # can differ only by a platform revision, and the next heal settles it.
 # Applying this repo's partial settings.yml alone would delete every fleet
 # label the merged roster carries. Needs APPLY_SETTING_TOKEN
 # (Administration + Issues write); skips with a notice until it exists.
+#
+# Called from post-green.yml, the repo-owned hook ci.yml runs after the
+# all-green gate and before release (the judged commit as `sha`, secrets:
+# inherit): that call is the only write trigger, so settings never come from
+# a commit the gate has not passed. The weekly heal is repo-platform's
+# central settings run; a dispatch only reports drift.
 
 name: Apply Settings
 
 on:
-  push:
-    branches: [main]
-    # Every input repo-platform's render reads from the checkout (the
-    # pr-title workflow's presence activates the pr-title ruleset).
-    paths:
-      - .github/settings.yml
-      - .repo-platform.yml
-      - .github/.copier-answers.yml
-      - .github/workflows/pr-title.yml
-  schedule:
-    - cron: "53 6 * * 1"
-  workflow_dispatch:
+  workflow_call:
     inputs:
-      check_only:
-        description: Report drift without writing
+      sha:
+        description: The green main commit the calling run judged.
+        required: true
+        type: string
+    secrets:
+      APPLY_SETTING_TOKEN:
+        description: Fine-grained PAT with Administration and Issues (read and write) on this repository; absent, the run skips with a notice.
         required: false
-        type: boolean
-        default: false
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-# The same group the managed settings-sync.yml uses, so the two never
-# write this repository at once.
+# One settings write at a time.
 concurrency:
   group: apply-settings-${{ github.repository }}
   cancel-in-progress: false
@@ -47,6 +44,8 @@ jobs:
   apply:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      MODE: ${{ github.event_name == 'workflow_dispatch' && 'check' || 'apply' }}
     steps:
       - name: Resolve token
         id: token
@@ -60,13 +59,16 @@ jobs:
             echo "proceed=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # The default branch, not the pushed sha: the render reads this
-      # checkout's module selection and settings.yml, and the freshness
-      # check below compares its HEAD with the live default branch.
+      # A call checks out the judged commit, not the live default branch:
+      # the render reads this checkout's module selection and settings.yml,
+      # and the freshness check below skips the apply when main has moved
+      # past it (the newer commit's own run applies). A dispatch has no
+      # judged commit and checks out the default branch, which is what the
+      # freshness check compares against, so its drift report always runs.
       - uses: actions/checkout@v7
         if: steps.token.outputs.proceed == 'true'
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.repository.default_branch || inputs.sha }}
 
       # repo-platform's `build` branch is the green-gated delivery ref the
       # fleet pins, but its tree carries only workflow files, never the
@@ -153,7 +155,6 @@ jobs:
         if: steps.freshness.outputs.moved == 'false'
         env:
           GH_TOKEN: ${{ secrets.APPLY_SETTING_TOKEN }}
-          MODE: ${{ inputs.check_only && 'check' || 'apply' }}
         run: |
           bun platform/.github/scripts/fleet/label_preflight.ts \
             --merged "$RUNNER_TEMP/merged-settings.yml" \
@@ -181,7 +182,7 @@ jobs:
         uses: ./
         with:
           token: ${{ secrets.APPLY_SETTING_TOKEN }}
-          mode: ${{ inputs.check_only && 'check' || 'apply' }}
+          mode: ${{ env.MODE }}
           repository: ${{ github.repository }}
           settings-file: ${{ runner.temp }}/merged-settings.yml
           on-missing-permission: fail
