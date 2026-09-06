@@ -159,7 +159,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
-      pull-requests: write # the no-retrigger-token PR comment below
+      pull-requests: write # the sticky no-retrigger comment below
     steps:
       - uses: actions/checkout@v7
         with:
@@ -172,13 +172,12 @@ jobs:
           name: autofix-patch
           path: ${{ runner.temp }}/autofix
       - name: Commit and push the fix
+        id: push
         env:
           TOKEN: ${{ secrets.REPO_PLATFORM_TOKEN || github.token }}
           CAN_RETRIGGER: ${{ secrets.REPO_PLATFORM_TOKEN != '' }}
-          GH_TOKEN: ${{ github.token }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
           PRUNED: ${{ needs.build.outputs.pruned }}
         shell: bash
         run: |
@@ -243,13 +242,21 @@ jobs:
           fi
           # The fix landed via github.token, which starts no workflows:
           # this PR's checks will not re-run on the new head. Surface that
-          # on the PR (once) and as a run annotation. The push itself
-          # succeeded, so the run stays green.
-          marker="<!-- auto-fix: no-retrigger-token -->"
-          comments=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate --jq '.[].body' || true)
-          case "$comments" in
-            *"$marker"*) ;;
-            *) gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body "$marker
-          Pushed an auto-fix commit with the default workflow token, which starts no workflows, so checks will not re-run on the new head. Close and reopen this PR to re-run them, or register \`REPO_PLATFORM_TOKEN\` (as an Actions secret, and as a Dependabot secret for Dependabot PRs) so future fixes re-trigger CI automatically." || true ;;
-          esac
+          # as a run annotation and, in the step below, on the PR; the push
+          # itself succeeded.
+          echo "notify=true" >> "$GITHUB_OUTPUT"
           echo "::warning::auto-fix pushed without REPO_PLATFORM_TOKEN - checks will not re-run on the new head; close/reopen the PR or register the token"
+      # One sticky comment per PR (the header is its identity), updated in
+      # place on later pushes; a failed post fails this step, not the push.
+      - name: Tell the PR its checks will not re-run
+        if: steps.push.outputs.notify == 'true'
+        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
+        with:
+          header: auto-fix
+          message: >-
+            Pushed an auto-fix commit with the default workflow token, which
+            starts no workflows, so checks will not re-run on the new head.
+            Close and reopen this PR to re-run them, or register
+            `REPO_PLATFORM_TOKEN` (as an Actions secret, and as a Dependabot
+            secret for Dependabot PRs) so future fixes re-trigger CI
+            automatically.
