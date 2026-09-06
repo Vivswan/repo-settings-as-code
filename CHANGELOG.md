@@ -1,5 +1,49 @@
 # Changelog
 
+## [2.0.1](https://github.com/Vivswan/github-settings-as-code/compare/v2.0.0...v2.0.1) (2026-09-06)
+
+
+### Features
+
+* add the plan-returning section contract and migrate the workflows section ([8a65765](https://github.com/Vivswan/github-settings-as-code/commit/8a65765e276540e75aae83992b3383ea8e4002ef))
+* **contract:** extend the plan contract for every migrating section ([9ae375c](https://github.com/Vivswan/github-settings-as-code/commit/9ae375cc6027d9d7eac970eb808d14a588bac80f))
+* derive list sections from a declarative factory, piloted on labels ([71859b5](https://github.com/Vivswan/github-settings-as-code/commit/71859b571bc4c334d4e6796b5424b27f361fb8df))
+* generate action.yml, the inputs table, and the policy and permissions references from declarations ([d062cf1](https://github.com/Vivswan/github-settings-as-code/commit/d062cf1b6bd4f2767986477c383f2bed1a201341))
+* generate COVERAGE.md from section declarations ([51068cd](https://github.com/Vivswan/github-settings-as-code/commit/51068cdd765667b1190cb99625cd7ab6f656df7f))
+* generate the README sections table, outputs, and PAT form from section declarations ([83f3c84](https://github.com/Vivswan/github-settings-as-code/commit/83f3c84ede257c66e2d5ca0cb46f9b3ebfee20e3))
+
+
+### Bug Fixes
+
+* adopt zod 4.5's native root $ref emission and own-__proto__ rejection ([#67](https://github.com/Vivswan/github-settings-as-code/issues/67)) ([44dab3b](https://github.com/Vivswan/github-settings-as-code/commit/44dab3bccf1e5fca5546d48dda45756c1d7ae084))
+* apply review fixes to the docs and tooling sweep ([73b6b4a](https://github.com/Vivswan/github-settings-as-code/commit/73b6b4a4f2cbc2f0f3263fee3478ea0eb2b6eab8))
+* apply review fixes to the harness audit batch ([ceb9f46](https://github.com/Vivswan/github-settings-as-code/commit/ceb9f463d7e7bd24acf4bcb770eb6bee63a9219a))
+* apply review fixes to the src-side audit batch ([b9de617](https://github.com/Vivswan/github-settings-as-code/commit/b9de617bdd0e9cb2444f2b544f8c5c3ae8c754bb))
+* attest build provenance and attach the sigstore bundle to releases ([b5db672](https://github.com/Vivswan/github-settings-as-code/commit/b5db67242eabf3b2c380ba672bcd022c476ddfdf))
+* **branches:** seal GraphQL node-id lookups at execution so check mode never issues them ([#75](https://github.com/Vivswan/github-settings-as-code/issues/75)) ([feaf279](https://github.com/Vivswan/github-settings-as-code/commit/feaf279a69df4c125f33827ed5b300c18b657a4e)), closes [#73](https://github.com/Vivswan/github-settings-as-code/issues/73)
+* centralize the token-leak sweep in the runner ([7dcc225](https://github.com/Vivswan/github-settings-as-code/commit/7dcc2256e80f56248284b77b7ef1c17decd3c5c2))
+* classify rate limits structurally on every path ([65f97a2](https://github.com/Vivswan/github-settings-as-code/commit/65f97a2a86e85d60492889a85f28273996d48fd7))
+* correct mock identity minting and the pages resurrect bug ([9152a91](https://github.com/Vivswan/github-settings-as-code/commit/9152a91b6f1ef2dd8b5ef94223abb9d5dc72a663))
+* cover every faultable section in the fuzz fault battery ([e41aa99](https://github.com/Vivswan/github-settings-as-code/commit/e41aa9916c9673941b40365347c77692352a16e1))
+* derive owner-kind sensitivity from the section declaration ([0181f01](https://github.com/Vivswan/github-settings-as-code/commit/0181f01a752eb9675f48663d21e9ce70ef497b31))
+* discover schema-corpus scenarios across all scenario roots ([d34d031](https://github.com/Vivswan/github-settings-as-code/commit/d34d0316af107fccf5c910352eae608dff39e91c))
+* hand sections the parsed settings document instead of the raw one ([1ddc2f3](https://github.com/Vivswan/github-settings-as-code/commit/1ddc2f3ed9cf567e5bd5bb67d658d6ae28f3902a))
+* harden release boundary checks and decouple the schema id from the release manifest ([f5c4c59](https://github.com/Vivswan/github-settings-as-code/commit/f5c4c59896053ed9ef5eecd44e550887dfe33959))
+* harden the CI tooling ([6fb2603](https://github.com/Vivswan/github-settings-as-code/commit/6fb2603a57cfa6ed2d6fc98041fbb60dd2d18f7a))
+* keep spec-pinned gaps out of automatic graduation ([ae278c9](https://github.com/Vivswan/github-settings-as-code/commit/ae278c9f3770a8580727db917124a0cea32e164b))
+* parse live bodies through parseLive in the seven asserting sections ([56ca3e4](https://github.com/Vivswan/github-settings-as-code/commit/56ca3e41dc90981580c4d45057594ad8f4b74369))
+* pass zod's schema layout through instead of guarding it ([#68](https://github.com/Vivswan/github-settings-as-code/issues/68)) ([64aad27](https://github.com/Vivswan/github-settings-as-code/commit/64aad276b2182d4a39175d15fe5e4e7b530345d0))
+* reject required-sections entries excluded by the sections allowlist ([c1fc169](https://github.com/Vivswan/github-settings-as-code/commit/c1fc1699adc8027919464bea8eceb65b53fc81f2))
+* **release:** follow the attestation bundle rename in the repo-owned asset check and SECURITY.md ([#76](https://github.com/Vivswan/github-settings-as-code/issues/76)) ([3704176](https://github.com/Vivswan/github-settings-as-code/commit/3704176cc0709d1c19a70765c925f033f4266ccd))
+* single-tag releases - version tags live only on packaged commits ([08d5585](https://github.com/Vivswan/github-settings-as-code/commit/08d5585b974e529898cf2121bfea220317c914c8))
+* size the harness kill cap for the directed fuzz battery ([8543af8](https://github.com/Vivswan/github-settings-as-code/commit/8543af85d8178f736598e6565839df1c57b8334c))
+* strengthen the remaining per-section representations ([3fc0f85](https://github.com/Vivswan/github-settings-as-code/commit/3fc0f853f914d032e0bf5f746aee48357d062a03))
+
+
+### Miscellaneous Chores
+
+* drop the release-as pin and the machinery that retired it ([a2cc999](https://github.com/Vivswan/github-settings-as-code/commit/a2cc999d1936b9e72e7762778f3ac2ba58091ecc))
+
 ## [2.0.0](https://github.com/Vivswan/github-settings-as-code/compare/v1.0.1...v2.0.0) (2026-08-11)
 
 
