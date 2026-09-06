@@ -14,7 +14,10 @@ const liveMilestones = [
   { number: 2, title: "old", description: null, state: "open" },
 ];
 const KEEP_NOTE =
-  'milestone "old" exists on the repo but is not declared in the settings file; kept under "undeclared: keep" - add it to the settings file to manage it, or set "undeclared: delete" to have apply DELETE it, detaching it from every issue that carries it (closing is not enough; closed milestones are still listed)';
+  'milestone "old" exists on the repo but is not declared in the settings file; kept under ' +
+  '"undeclared: keep" - add it to the settings file to manage it, or set "undeclared: delete" ' +
+  "to have apply DELETE it, detaching it from every issue that carries it (closing is not " +
+  "enough; closed milestones are still listed)";
 const plan = (api: MockApi, desired: Parameters<typeof milestonesSection.plan>[1]) =>
   milestonesSection.plan(planContext(milestonesSection, api, REPO), desired);
 

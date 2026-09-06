@@ -1,61 +1,57 @@
-// The single registration point for section documentation, mirroring registry.ts: the mapped type
-// makes a missing docs.ts a compile error. Documentation only: nothing bundled from src/main.ts
-// may import this file or any docs.ts (a unit test walks the import graph).
+/**
+ * The single loading point for authored documentation, mirroring registry.ts: every SectionKey's
+ * <key>.docs.yml is read and validated here, so a section without one fails the docs build, and
+ * the schema descriptions of every docs file (each section's, the shared factories', the document
+ * root's) are collected for the schema generator. Documentation only: nothing bundled from
+ * src/main.ts may import this file (a unit test walks the import graph).
+ */
 
-import type { SectionKey } from "../schema.js";
-import { docs as actions } from "./actions/docs.js";
-import { docs as actionsSecrets } from "./actions_secrets/docs.js";
-import { docs as actionsVariables } from "./actions_variables/docs.js";
-import { docs as agentsSecrets } from "./agents_secrets/docs.js";
-import { docs as agentsVariables } from "./agents_variables/docs.js";
-import { docs as autolinks } from "./autolinks/docs.js";
-import { docs as branches } from "./branches/docs.js";
-import { docs as checkSuitePreferences } from "./check_suite_preferences/docs.js";
-import { docs as codeQualitySetup } from "./code_quality_setup/docs.js";
-import { docs as codeScanningDefaultSetup } from "./code_scanning_default_setup/docs.js";
-import { docs as codespacesSecrets } from "./codespaces_secrets/docs.js";
-import { docs as collaborators } from "./collaborators/docs.js";
-import type { SectionDocs } from "./contract/docs.js";
-import { docs as customProperties } from "./custom_properties/docs.js";
-import { docs as dependabotSecrets } from "./dependabot_secrets/docs.js";
-import { docs as deployKeys } from "./deploy_keys/docs.js";
-import { docs as environments } from "./environments/docs.js";
-import { docs as interactionLimits } from "./interaction_limits/docs.js";
-import { docs as labels } from "./labels/docs.js";
-import { docs as milestones } from "./milestones/docs.js";
-import { docs as pages } from "./pages/docs.js";
-import { docs as repository } from "./repository/docs.js";
-import { docs as rulesets } from "./rulesets/docs.js";
-import { docs as secretScanningCustomPatterns } from "./secret_scanning_custom_patterns/docs.js";
-import { docs as teams } from "./teams/docs.js";
-import { docs as webhooks } from "./webhooks/docs.js";
-import { docs as workflows } from "./workflows/docs.js";
+import { join, relative } from "node:path";
+import { SECTION_KEYS, type SectionKey } from "../schema.js";
+import { readDocsYaml, SchemaOnlyDocs, SectionDocs } from "./contract/docs.js";
 
-export const DOCS: { [K in SectionKey]: SectionDocs } = {
-  repository,
-  labels,
-  rulesets,
-  environments,
-  branches,
-  autolinks,
-  actions,
-  actions_secrets: actionsSecrets,
-  dependabot_secrets: dependabotSecrets,
-  codespaces_secrets: codespacesSecrets,
-  agents_secrets: agentsSecrets,
-  workflows,
-  check_suite_preferences: checkSuitePreferences,
-  pages,
-  code_scanning_default_setup: codeScanningDefaultSetup,
-  code_quality_setup: codeQualitySetup,
-  collaborators,
-  teams,
-  milestones,
-  interaction_limits: interactionLimits,
-  actions_variables: actionsVariables,
-  agents_variables: agentsVariables,
-  webhooks,
-  custom_properties: customProperties,
-  deploy_keys: deployKeys,
-  secret_scanning_custom_patterns: secretScanningCustomPatterns,
-};
+const SECTIONS_DIR = import.meta.dir;
+const ROOT = join(SECTIONS_DIR, "..", "..");
+
+/** The docs files that carry schema descriptions but belong to no section. */
+const SCHEMA_ONLY_DOCS = [
+  join(SECTIONS_DIR, "shared", "shared.docs.yml"),
+  join(SECTIONS_DIR, "..", "schema.docs.yml"),
+];
+
+/** Every section's <key>.docs.yml, validated; a missing or malformed one throws naming it. */
+function loadSectionDocs(): Readonly<Record<SectionKey, SectionDocs>> {
+  const entries = SECTION_KEYS.map(
+    (key) => [key, readDocsYaml(join(SECTIONS_DIR, key, `${key}.docs.yml`), SectionDocs)] as const,
+  );
+  return Object.fromEntries(entries) as Record<SectionKey, SectionDocs>;
+}
+
+export const DOCS = loadSectionDocs();
+
+/** One authored schema description and the docs file (repo-relative) it came from. */
+export interface SchemaDescriptionEntry {
+  readonly key: string;
+  readonly text: string;
+  readonly source: string;
+}
+
+/** Every schema description across the docs files, in file order, for the schema generator. */
+function collectSchemaDescriptions(): readonly SchemaDescriptionEntry[] {
+  const entries: SchemaDescriptionEntry[] = [];
+  const collect = (path: string, descriptions: Readonly<Record<string, string>>): void => {
+    const source = relative(ROOT, path);
+    for (const [key, text] of Object.entries(descriptions)) {
+      entries.push({ key, text, source });
+    }
+  };
+  for (const key of SECTION_KEYS) {
+    collect(join(SECTIONS_DIR, key, `${key}.docs.yml`), DOCS[key].schema);
+  }
+  for (const path of SCHEMA_ONLY_DOCS) {
+    collect(path, readDocsYaml(path, SchemaOnlyDocs).schema);
+  }
+  return entries;
+}
+
+export const SCHEMA_DESCRIPTIONS = collectSchemaDescriptions();

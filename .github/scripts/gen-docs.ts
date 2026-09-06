@@ -406,7 +406,9 @@ const COVERAGE_REGIONS: readonly GeneratedRegion[] = [
     name: "coverage",
     placement: { kind: "tail" },
     body: new RegExp(
-      String.raw`^\n(?:${PROSE_LINE}\n${escapeRe(SUPPORTED_HEADING)}\n\n${escapeRe(SUPPORTED_HEADER)}\n${SUPPORTED_ROWS}\n${escapeRe(GAPS_HEADING)}\n\n${GAPS_BODY}\n${escapeRe(NO_API_HEADING)}\n\n${PROSE_LINE}\n${BULLETS}\n${escapeRe(OUT_OF_SCOPE_HEADING)}\n\n${BULLETS})?$`,
+      String.raw`^\n(?:${PROSE_LINE}\n${escapeRe(SUPPORTED_HEADING)}\n\n${escapeRe(SUPPORTED_HEADER)}\n` +
+        String.raw`${SUPPORTED_ROWS}\n${escapeRe(GAPS_HEADING)}\n\n${GAPS_BODY}\n${escapeRe(NO_API_HEADING)}\n\n` +
+        String.raw`${PROSE_LINE}\n${BULLETS}\n${escapeRe(OUT_OF_SCOPE_HEADING)}\n\n${BULLETS})?$`,
     ),
     render: () => `\n${renderCoverage(SECTIONS, DOCS, COVERAGE_DATA)}\n`,
   },

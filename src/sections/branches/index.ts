@@ -205,7 +205,11 @@ export const branchesSection = {
           refineCtx.addIssue({
             code: "custom",
             path: [index, "protection", key],
-            message: `the wildcard entry "${entry.name}" declares protection.${key} as ${Array.isArray(value) ? "a list" : JSON.stringify(value)}, but on a wildcard rule it must be a mapping of its sub-keys [${Object.keys(twins).join(", ")}], or null to turn the control off`,
+            message:
+              `the wildcard entry "${entry.name}" declares protection.${key} as ` +
+              `${Array.isArray(value) ? "a list" : JSON.stringify(value)}, but on a wildcard ` +
+              `rule it must be a mapping of its sub-keys [${Object.keys(twins).join(", ")}], or ` +
+              `null to turn the control off`,
           });
           continue;
         }

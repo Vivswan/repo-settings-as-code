@@ -1,0 +1,17 @@
+readme:
+  endpoints: autolinks CRUD
+  notes: immutable upstream, so changed entries are replaced
+coverage:
+  - area: "[Autolinks](https://docs.github.com/en/rest/repos/autolinks)"
+    notes: >-
+      GET/POST/DELETE /repos/{owner}/{repo}/autolinks; immutable upstream so changed entries are
+      delete+recreate; undeclared autolinks DELETED by default, kept as notes under the wrapped
+      `undeclared: keep` form.
+schema:
+  SettingsFile.autolinks: >-
+    Autolink references; undeclared ones are DELETED by default (the wrapped form can set
+    `undeclared: keep`).
+  AutolinkConfig: One autolink reference, matched by key prefix.
+  AutolinkConfig.key_prefix: Text prefix that triggers the link (e.g. "TICKET-"), the natural key.
+  AutolinkConfig.url_template: Target URL template containing "<num>".
+  AutolinkConfig.is_alphanumeric: Whether <num> also matches letters; upstream default is true.

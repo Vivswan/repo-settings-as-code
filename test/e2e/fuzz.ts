@@ -1462,7 +1462,9 @@ async function unfaultableSectionRun(
     // arm, and the outcome pin below still proves the full-width apply stays
     // healthy.
     problems.push(
-      `no GET endpoints derived for "${section}" - the unfaultable battery run is vacuous; fix the endpoint keying in unfaultableReadKeys (generators.ts), or if the section genuinely declares no GET it should already appear in NO_READ_SECTIONS (oracle.ts)`,
+      `no GET endpoints derived for "${section}" - the unfaultable battery run is vacuous; fix ` +
+        `the endpoint keying in unfaultableReadKeys (generators.ts), or if the section genuinely ` +
+        `declares no GET it should already appear in NO_READ_SECTIONS (oracle.ts)`,
     );
     return iterationResult(problems, { sections: [section] }, `[unfaultable ${section}] `);
   }

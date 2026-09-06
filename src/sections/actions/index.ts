@@ -478,7 +478,11 @@ export const actionsSection = {
       // the boolean in the message.
       const enabledValue = JSON.stringify(permissions.enabled);
       plan.notes.push(
-        `key(s) [${routed.join(", ")}] are not recognized by this action; they ride verbatim in PUT /actions/permissions (a body that also sets enabled: ${enabledValue}), where GitHub may ignore them - a "no such field" drift line for a key means GitHub does not return it, so it can never be proven to have taken and apply would re-send the body on every run; remove it from the actions section of the settings file`,
+        `key(s) [${routed.join(", ")}] are not recognized by this action; they ride verbatim ` +
+          `in PUT /actions/permissions (a body that also sets enabled: ${enabledValue}), where ` +
+          `GitHub may ignore them - a "no such field" drift line for a key means GitHub does not ` +
+          `return it, so it can never be proven to have taken and apply would re-send the body ` +
+          `on every run; remove it from the actions section of the settings file`,
       );
     }
 

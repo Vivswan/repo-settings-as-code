@@ -522,11 +522,16 @@ export function boundaryCheck(cwd: string): { boundary: string } {
   }
   if (isAncestor(cwd, latest, String(recorded)) && isAncestor(cwd, String(recorded), "HEAD")) {
     throw new Error(
-      `last-release-sha in ${CONFIG_FILE} is ${JSON.stringify(recorded)}, NEWER than ${latest}, the newest release merge whose subject matches ${RELEASE_SUBJECT}: either a newer release merge's subject stopped matching (investigate RELEASE_SUBJECT) or the boundary was edited by hand. It must not be rolled back to ${parent ?? latest}.`,
+      `last-release-sha in ${CONFIG_FILE} is ${JSON.stringify(recorded)}, NEWER than ` +
+        `${latest}, the newest release merge whose subject matches ${RELEASE_SUBJECT}: either a ` +
+        `newer release merge's subject stopped matching (investigate RELEASE_SUBJECT) or the ` +
+        `boundary was edited by hand. It must not be rolled back to ${parent ?? latest}.`,
     );
   }
   throw new Error(
-    `last-release-sha in ${CONFIG_FILE} is ${JSON.stringify(recorded)}, but the newest release merge on main is ${latest} (parent ${parent}); release PR refreshes would be computed from a stale boundary. Fix by PR: set last-release-sha to ${parent ?? latest}.`,
+    `last-release-sha in ${CONFIG_FILE} is ${JSON.stringify(recorded)}, but the newest release ` +
+      `merge on main is ${latest} (parent ${parent}); release PR refreshes would be computed ` +
+      `from a stale boundary. Fix by PR: set last-release-sha to ${parent ?? latest}.`,
   );
 }
 
@@ -556,7 +561,12 @@ export function anchorCheck(cwd: string): { boundary: string } {
   const tip = git(cwd, "ls-remote", "origin", "refs/heads/main").split("\t")[0];
   if (recorded !== tip) {
     throw new Error(
-      `last-release-sha in ${CONFIG_FILE} is ${JSON.stringify(recorded)}, but main's tip is ${tip ?? "?"}; the anchor is missing or stale, so merging would land a wrong boundary. The release pipeline's update-release-pr hook re-applies it on every release-PR refresh - wait for (or dispatch) the next green main run, then close/reopen the PR so its checks run on the anchored head (the anchor is pushed with the default token, which triggers no new checks).`,
+      `last-release-sha in ${CONFIG_FILE} is ${JSON.stringify(recorded)}, but main's tip is ` +
+        `${tip ?? "?"}; the anchor is missing or stale, so merging would land a wrong boundary. ` +
+        `The release pipeline's update-release-pr hook re-applies it on every release-PR refresh ` +
+        `- wait for (or dispatch) the next green main run, then close/reopen the PR so its ` +
+        `checks run on the anchored head (the anchor is pushed with the default token, which ` +
+        `triggers no new checks).`,
     );
   }
   return { boundary: String(recorded) };

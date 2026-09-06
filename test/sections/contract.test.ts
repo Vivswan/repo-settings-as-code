@@ -341,7 +341,10 @@ describe("throwFor context enrichment", () => {
       throw new Error("throwFor returned");
     };
     expect(message(["UNPROCESSABLE"])).toBe(
-      'rulesets: pinning environment "prod" failed - GRAPHQL PinEnvironment: 422 Repositories may only have 10 pinned. The API rejected the request; fix the "rulesets" values in the settings file to satisfy the message above. The pinned list is full; unpin one in the GitHub UI',
+      'rulesets: pinning environment "prod" failed - GRAPHQL PinEnvironment: 422 Repositories ' +
+        'may only have 10 pinned. The API rejected the request; fix the "rulesets" values in the ' +
+        "settings file to satisfy the message above. The pinned list is full; unpin one in the " +
+        "GitHub UI",
     );
     expect(message(["FORBIDDEN"])).toMatch(/message above$/);
     expect(message([])).toMatch(/message above$/);

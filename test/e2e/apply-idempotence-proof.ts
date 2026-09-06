@@ -212,7 +212,9 @@ export function unwitnessedExemptEndpoints(witness: ExemptWriteWitness): string[
   const failures: string[] = [];
   const unwitnessed = (key: string, how: string): void => {
     failures.push(
-      `apply-idempotence corpus: "${key}" is ${how} but NO apply_idempotent scenario writes to it on a first apply, so a wrong exemption would go uncontradicted - declare its section in an apply_idempotent scenario (e.g. apply-idempotent-unconditional.yml)`,
+      `apply-idempotence corpus: "${key}" is ${how} but NO apply_idempotent scenario writes to ` +
+        `it on a first apply, so a wrong exemption would go uncontradicted - declare its section ` +
+        `in an apply_idempotent scenario (e.g. apply-idempotent-unconditional.yml)`,
     );
   };
   for (const key of recurringEndpointKeys("always")) {
@@ -236,7 +238,10 @@ export function unwitnessedExemptEndpoints(witness: ExemptWriteWitness): string[
   for (const [section, group] of bySection) {
     if (group.first > 0 && group.second === 0) {
       failures.push(
-        `apply-idempotence corpus: "${section}" exempts [${group.keys.join(", ")}] as unverifiable writes, but no second apply in the corpus re-issued any of them - either the section now compares before writing (drop the exemption) or the corpus lost its witness`,
+        `apply-idempotence corpus: "${section}" exempts [${group.keys.join(", ")}] as ` +
+          `unverifiable writes, but no second apply in the corpus re-issued any of them - either ` +
+          `the section now compares before writing (drop the exemption) or the corpus lost its ` +
+          `witness`,
       );
     }
   }
@@ -280,7 +285,10 @@ export function missingSecondApplyRewrites(
     .sort()
     .map(
       (request) =>
-        `apply-idempotence: the first apply wrote ${request} ${first.get(request) ?? 0} time(s) and the second ${second.get(request) ?? 0}; an alwaysRewrite endpoint is re-issued on EVERY apply by declaration (a sealed secret cannot be read back, a self-expiring limit is re-armed, an unreadable toggle is re-asserted)`,
+        `apply-idempotence: the first apply wrote ${request} ${first.get(request) ?? 0} ` +
+        `time(s) and the second ${second.get(request) ?? 0}; an alwaysRewrite endpoint is ` +
+        `re-issued on EVERY apply by declaration (a sealed secret cannot be read back, a ` +
+        `self-expiring limit is re-armed, an unreadable toggle is re-asserted)`,
     );
 }
 

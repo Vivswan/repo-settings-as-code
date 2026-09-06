@@ -4,14 +4,9 @@ import { z } from "zod";
 
 const WorkflowConfig = z
   .object({
-    path: z.string().describe('Full ".github/workflows/ci.yml" or the bare "ci.yml" file name.'),
-    state: z
-      .enum(["active", "disabled"])
-      .describe('Desired state; every live disabled_* variant counts as "disabled".'),
+    path: z.string(),
+    state: z.enum(["active", "disabled"]),
   })
-  .describe(
-    "One workflow's enable/disable state, keyed by its file path. Keys other than path and state are rejected (the enable/disable calls carry no payload, so an extra key could only be a typo).",
-  )
   .meta({ id: "WorkflowConfig" });
 
 /** The `workflows:` document slice: the entry list the document composes from. */

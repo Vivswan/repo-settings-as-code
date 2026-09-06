@@ -159,7 +159,11 @@ describe("actions", () => {
     const api = new MockApi({ [PERMISSIONS]: { data: { enabled: true } } });
     const result = await plan(api, { some_added_key: "x" } as ActionsConfig);
     expect(result.notes).toEqual([
-      'key(s) [some_added_key] are not recognized by this action; they ride verbatim in PUT /actions/permissions (a body that also sets enabled: true), where GitHub may ignore them - a "no such field" drift line for a key means GitHub does not return it, so it can never be proven to have taken and apply would re-send the body on every run; remove it from the actions section of the settings file',
+      "key(s) [some_added_key] are not recognized by this action; they ride verbatim in PUT " +
+        "/actions/permissions (a body that also sets enabled: true), where GitHub may ignore " +
+        'them - a "no such field" drift line for a key means GitHub does not return it, so it ' +
+        "can never be proven to have taken and apply would re-send the body on every run; remove " +
+        "it from the actions section of the settings file",
     ]);
     expect(result.ops.flatMap(driftOf)).toEqual([
       'actions.permissions.some_added_key: declared "x" but the API response has no such field (new or write-only field?)',

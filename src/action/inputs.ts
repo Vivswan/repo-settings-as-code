@@ -99,7 +99,10 @@ export const INPUT_DECLS = {
   },
   "required-sections": {
     description:
-      'Comma-separated section names that must fully apply even under on-missing-permission: warn (minimum requirements). Every name must also be allowed by the "sections" input when that allowlist is set; a required section the allowlist excludes is rejected up front, because the run could never attempt it.',
+      "Comma-separated section names that must fully apply even under on-missing-permission: " +
+      'warn (minimum requirements). Every name must also be allowed by the "sections" input ' +
+      "when that allowlist is set; a required section the allowlist excludes is rejected up " +
+      "front, because the run could never attempt it.",
     default: "",
     summary: "Sections that must fully apply even under `warn`",
   },
@@ -117,7 +120,11 @@ export const INPUT_DECLS = {
   },
   repos: {
     description:
-      'Multi-repo remote mode: comma- or newline-separated owner/name targets, each applied from its own .github/settings.yml (default branch), or "*" alone to discover every repository the token\'s user owns, filterable via the visibility, archived, forks, exclude, topics, and affiliation inputs. Combinable with repos-dir; a repos-dir file for the same repository wins.',
+      "Multi-repo remote mode: comma- or newline-separated owner/name targets, each applied " +
+      'from its own .github/settings.yml (default branch), or "*" alone to discover every ' +
+      "repository the token's user owns, filterable via the visibility, archived, forks, " +
+      "exclude, topics, and affiliation inputs. Combinable with repos-dir; a repos-dir file " +
+      "for the same repository wins.",
     default: "",
     summary:
       "Multi-repo remote mode: `owner/name` list (comma/newline), or `*` to discover owned repos",
@@ -130,27 +137,58 @@ export const INPUT_DECLS = {
   },
   "defaults-file": {
     description:
-      "YAML file deep-merged UNDER every multi-repo target's settings. Target keys win; objects merge, arrays and scalars replace; a target section set to null opts that repository out of the defaults section. Multi-repo mode only; fails when set without repos or repos-dir.",
+      "YAML file deep-merged UNDER every multi-repo target's settings. Target keys win; " +
+      "objects merge, arrays and scalars replace; a target section set to null opts that " +
+      "repository out of the defaults section. Multi-repo mode only; fails when set without " +
+      "repos or repos-dir.",
     default: "",
     summary: "YAML merged under every multi-repo target's settings (multi-repo mode only)",
   },
   "private-repos": {
     description:
-      "redact (default) or show. Under redact, private and internal targets are hidden from this run's public logs, summary, and outputs: their slug becomes a \"private repository #N\" placeholder, live values and error bodies are replaced with \"hidden (private repository)\", and each slug is registered with the runner's secret masker. A target equal to GITHUB_REPOSITORY is never redacted. show reveals everything (today's behavior); only use it when the run's logs are not publicly readable.",
+      "redact (default) or show. Under redact, private and internal targets are hidden from " +
+      "this run's public logs, summary, and outputs: their slug becomes a \"private repository " +
+      '#N" placeholder, live values and error bodies are replaced with "hidden (private ' +
+      "repository)\", and each slug is registered with the runner's secret masker. A target " +
+      "equal to GITHUB_REPOSITORY is never redacted. show reveals everything (today's " +
+      "behavior); only use it when the run's logs are not publicly readable.",
     default: DEFAULT_PRIVATE_REPOS,
     summary:
       "`redact` hides private and internal targets from public logs, summary, and outputs; `show` reveals them",
   },
   "private-report": {
     description:
-      "none (default), issue, issue-on-failure, or artifact. Delivers the full unredacted report only for redacted targets the visibility probe proves private or internal (an unknown visibility is redacted but excluded from delivery). Under issue, each such target's report is delivered as a reused, marker-labelled issue on that target repository itself (the one GitHub-private channel a public run has): the body is replaced every run, and the issue is opened when the target fails or drifts and closed when it is healthy. issue-on-failure is the quiet variant: a failing or drifting target gets the same issue, but a healthy run only closes a still-open issue from a previous failure and otherwise writes nothing - no issue ever appears on a repository that never needed attention (though a declared labels section still creates the marker label, and a manually-removed marker label defers the close: the next failing run reattaches it, and the first healthy run after that closes the issue). Under artifact, those reports are concatenated, age-encrypted to report-public-key, and uploaded as one workflow artifact (settings-as-code-private-report) for readers who hold the key but no GitHub access to the targets; the artifact channel needs the Actions artifact service, so on GitHub Enterprise Server it warns and uploads nothing. Applies only to redacted targets, so it is rejected alongside private-repos: show. Report delivery writes even in mode: check, and its failure never changes the run's result.",
+      "none (default), issue, issue-on-failure, or artifact. Delivers the full unredacted " +
+      "report only for redacted targets the visibility probe proves private or internal (an " +
+      "unknown visibility is redacted but excluded from delivery). Under issue, each such " +
+      "target's report is delivered as a reused, marker-labelled issue on that target " +
+      "repository itself (the one GitHub-private channel a public run has): the body is " +
+      "replaced every run, and the issue is opened when the target fails or drifts and closed " +
+      "when it is healthy. issue-on-failure is the quiet variant: a failing or drifting target " +
+      "gets the same issue, but a healthy run only closes a still-open issue from a previous " +
+      "failure and otherwise writes nothing - no issue ever appears on a repository that never " +
+      "needed attention (though a declared labels section still creates the marker label, and " +
+      "a manually-removed marker label defers the close: the next failing run reattaches it, " +
+      "and the first healthy run after that closes the issue). Under artifact, those reports " +
+      "are concatenated, age-encrypted to report-public-key, and uploaded as one workflow " +
+      "artifact (settings-as-code-private-report) for readers who hold the key but no GitHub " +
+      "access to the targets; the artifact channel needs the Actions artifact service, so on " +
+      "GitHub Enterprise Server it warns and uploads nothing. Applies only to redacted " +
+      "targets, so it is rejected alongside private-repos: show. Report delivery writes even " +
+      "in mode: check, and its failure never changes the run's result.",
     default: DEFAULT_PRIVATE_REPORT,
     summary:
-      "`issue` delivers each redacted target's full report to a reused issue on that target repository; `issue-on-failure` writes that issue only when the target fails or drifts, closing it once healthy; `artifact` uploads all reports as one age-encrypted workflow artifact; rejected with `private-repos: show`",
+      "`issue` delivers each redacted target's full report to a reused issue on that target " +
+      "repository; `issue-on-failure` writes that issue only when the target fails or drifts, " +
+      "closing it once healthy; `artifact` uploads all reports as one age-encrypted workflow " +
+      "artifact; rejected with `private-repos: show`",
   },
   "report-public-key": {
     description:
-      'The age recipient (an "age1..." public key) the artifact channel encrypts every report to; safe to commit in the workflow. Generate a keypair with "age-keygen -o key.txt", keep key.txt secret, and decrypt a downloaded artifact with "age -d -i key.txt private-report.md.age". Required when private-report is artifact and rejected otherwise.',
+      'The age recipient (an "age1..." public key) the artifact channel encrypts every report ' +
+      'to; safe to commit in the workflow. Generate a keypair with "age-keygen -o key.txt", ' +
+      'keep key.txt secret, and decrypt a downloaded artifact with "age -d -i key.txt ' +
+      'private-report.md.age". Required when private-report is artifact and rejected otherwise.',
     default: "",
     summary:
       "The `age1...` recipient the `artifact` channel encrypts reports to; required with `private-report: artifact`, rejected otherwise",
@@ -178,7 +216,9 @@ export const INPUT_DECLS = {
   },
   exclude: {
     description:
-      'Comma- or newline-separated wildcard patterns removing repositories from repos: "*" discovery. "*" matches any characters; a pattern containing "/" matches the full owner/name, any other the name alone. Case-insensitive. Fails if set without repos: "*".',
+      'Comma- or newline-separated wildcard patterns removing repositories from repos: "*" ' +
+      'discovery. "*" matches any characters; a pattern containing "/" matches the full ' +
+      'owner/name, any other the name alone. Case-insensitive. Fails if set without repos: "*".',
     default: "",
     summary:
       "Discovery-only: `*` wildcard patterns (name, or `owner/name` if the pattern has a `/`) to drop",
@@ -191,7 +231,10 @@ export const INPUT_DECLS = {
   },
   affiliation: {
     description:
-      'Comma-separated affiliations for repos: "*" discovery, passed to the GitHub /user/repos listing. Any of owner, collaborator, organization_member; the list replaces the default (owner), so use owner,collaborator to widen rather than move discovery. Fails if set without repos: "*".',
+      'Comma-separated affiliations for repos: "*" discovery, passed to the GitHub /user/repos ' +
+      "listing. Any of owner, collaborator, organization_member; the list replaces the default " +
+      "(owner), so use owner,collaborator to widen rather than move discovery. Fails if set " +
+      'without repos: "*".',
     default: "",
     summary: "Discovery-only: `owner`, `collaborator`, `organization_member` (comma list)",
     shownDefault: `\`${DEFAULT_DISCOVERY_FILTERS.affiliation.join(",")}\``,
@@ -280,7 +323,9 @@ function resolveReportPublicKey(channel: PrivateReportChannel): string | { error
   if (!key) {
     return {
       error:
-        'private-report: artifact needs a "report-public-key" input: the age recipient every report is encrypted to. Generate a keypair with "age-keygen -o key.txt", keep key.txt secret, and set report-public-key to the printed "age1..." recipient (safe to commit)',
+        'private-report: artifact needs a "report-public-key" input: the age recipient every ' +
+        'report is encrypted to. Generate a keypair with "age-keygen -o key.txt", keep key.txt ' +
+        'secret, and set report-public-key to the printed "age1..." recipient (safe to commit)',
     };
   }
   const parsed = parseRecipient(key);
@@ -413,7 +458,11 @@ export function parseConfig(): { config: RunConfig } | { error: string } {
       const [noun, pronoun] =
         excluded.length === 1 ? (["entry", "it"] as const) : (["entries", "them"] as const);
       return {
-        error: `the "required-sections" ${noun} ${quoted} ${excluded.length === 1 ? "is" : "are"} excluded by the "sections" allowlist, so the run would pass without ever attempting ${pronoun}. Add ${pronoun} to the "sections" input, or remove ${pronoun} from "required-sections"`,
+        error:
+          `the "required-sections" ${noun} ${quoted} ${excluded.length === 1 ? "is" : "are"} ` +
+          `excluded by the "sections" allowlist, so the run would pass without ever attempting ` +
+          `${pronoun}. Add ${pronoun} to the "sections" input, or remove ${pronoun} from ` +
+          `"required-sections"`,
       };
     }
   }
@@ -510,7 +559,10 @@ export function parseConfig(): { config: RunConfig } | { error: string } {
     const parts = pattern.split("/");
     if (parts.length > 2 || (parts.length === 2 && (!parts[0] || !parts[1]))) {
       return {
-        error: `the "exclude" input pattern "${pattern}" can never match an owner/name repository: a pattern takes at most one "/", with a non-empty glob on each side of it. Use "<name-glob>" or "<owner-glob>/<name-glob>", where "*" matches any characters`,
+        error:
+          `the "exclude" input pattern "${pattern}" can never match an owner/name repository: a ` +
+          `pattern takes at most one "/", with a non-empty glob on each side of it. Use ` +
+          `"<name-glob>" or "<owner-glob>/<name-glob>", where "*" matches any characters`,
       };
     }
   }

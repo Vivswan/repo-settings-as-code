@@ -1,0 +1,2 @@
+schema:
+  SettingsFile: "One settings.yml document: every top-level section is optional."

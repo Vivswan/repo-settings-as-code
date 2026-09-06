@@ -1,0 +1,50 @@
+readme:
+  endpoints: hooks CRUD + hook config sub-endpoint
+  notes: >-
+    one hook per `config.url`, the natural key; `config.secret` takes a `$NAME` reference and is
+    re-sent every run
+coverage:
+  - area: "[Webhooks](https://docs.github.com/en/rest/repos/webhooks)"
+    notes: >-
+      GET/POST /repos/{owner}/{repo}/hooks, PATCH/DELETE .../hooks/{hook_id}, and PATCH
+      .../hooks/{hook_id}/config. At most ONE hook per config.url (the natural key); a declared url
+      matching several live hooks fails loudly naming their ids, and a changed url is a NEW hook
+      (the old one turns undeclared: kept and noted by default, deleted under `undeclared: delete`).
+      Config-field drift goes through the config sub-endpoint, which updates named fields without
+      the general PATCH's whole-config replacement, so a live secret the file does not declare is
+      never removed; events/active drift rides the general PATCH with no config key. config.secret
+      is declared as a whole-value `$NAME` reference resolved from the step env at apply time
+      ([secrets and vaults](docs/reference/secrets-and-vaults.md)); GitHub echoes a live secret as
+      "********", so check mode verifies everything except the secret (a cannot-verify note) and
+      apply re-sends the declared secret every run so rotations propagate. insecure_ssl compares
+      number and string spellings as equal (GitHub stores strings); events compare
+      order-insensitively. Hook urls appear in drift and change lines on purpose: they are
+      configuration, not credentials (the secret is the masked part).
+schema:
+  SettingsFile.webhooks: >-
+    Repository webhooks, managed one per config.url; undeclared hooks are kept by default and
+    surfaced as notes, since integrations create their own hooks (the wrapped form can set
+    `undeclared: delete`).
+  WebhookConfig: >-
+    One repository webhook, matched to the live repo by config.url. Hook URLs are configuration, not
+    credentials: they appear in drift lines and notes on purpose. The secret never does.
+  WebhookConfig.name: >-
+    GitHub's hook name; "web" is the only value modern hooks take, so anything else is rejected.
+  WebhookConfig.config: The delivery settings; config.url is the natural key.
+  WebhookConfig.events: >-
+    Events that trigger deliveries, compared order-insensitively; GitHub defaults a new hook to
+    ["push"].
+  WebhookConfig.active: Whether deliveries fire; GitHub defaults a new hook to true.
+  WebhookDeliveryConfig: A webhook's `config` mapping, sent to the config sub-endpoint on update.
+  WebhookDeliveryConfig.url: >-
+    The delivery URL, the natural key: a changed url declares a NEW hook (the old one becomes
+    undeclared).
+  WebhookDeliveryConfig.content_type: 'Payload encoding: "json" or "form".'
+  WebhookDeliveryConfig.secret: >-
+    The shared delivery secret, as a whole-value `$NAME` reference to an environment variable on the
+    action step (never a literal: settings files are committed plaintext). Resolved at apply time;
+    GitHub echoes it back as "********", so check mode cannot verify it and apply re-sends it on
+    every run so rotations propagate.
+  WebhookDeliveryConfig.insecure_ssl: >-
+    Whether to skip TLS verification ("0" verify / "1" skip); GitHub stores it as a string.
+  WebhookDeliveryConfig.*: Future config fields pass through verbatim.

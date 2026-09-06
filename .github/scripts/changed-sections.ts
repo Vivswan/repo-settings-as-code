@@ -323,7 +323,9 @@ function sectionsForSectionsPath(
       return [];
     }
     throw new Error(
-      `changed-sections: ${path} matches no selector rule; src/sections/ holds only the flat files in ALL_SELECTING_SECTION_FILES and NONE_SELECTING_SECTION_FILES, the per-section <key>/ directories, contract/, and shared/ - move the file under its section directory`,
+      `changed-sections: ${path} matches no selector rule; src/sections/ holds only the flat ` +
+        `files in ALL_SELECTING_SECTION_FILES and NONE_SELECTING_SECTION_FILES, the per-section ` +
+        `<key>/ directories, contract/, and shared/ - move the file under its section directory`,
     );
   }
   const dir = rest.slice(0, slash);
@@ -332,6 +334,11 @@ function sectionsForSectionsPath(
   }
   if (dir === "shared") {
     const sharedPath = rest.slice(slash + 1);
+    if (sharedPath.endsWith(".docs.yml")) {
+      // The factories' schema prose: never in the bundle, gated by build:check
+      // like the docs registry, so it selects nothing on its own.
+      return [];
+    }
     if (deleted && sharedPath.endsWith(".ts")) {
       // Nothing of its own left to smoke. Its importers either changed in the
       // same diff (typecheck fails otherwise) and select their sections, or
@@ -343,7 +350,7 @@ function sectionsForSectionsPath(
       return keys;
     }
     throw new Error(
-      `changed-sections: ${path} matches no selector rule; only .ts files under src/sections/shared/ are selector inputs, fanning out through the import graph`,
+      `changed-sections: ${path} matches no selector rule; under src/sections/shared/ only .ts files (fanning out through the import graph) and the .docs.yml prose are recognized`,
     );
   }
   throw new Error(

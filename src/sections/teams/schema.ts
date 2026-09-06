@@ -4,15 +4,9 @@ import { z } from "zod";
 
 const TeamConfig = z
   .object({
-    name: z.string().describe("The team slug, the natural key."),
-    permission: z
-      .string()
-      .optional()
-      .describe('Same vocabulary as collaborators; defaults to "push".'),
+    name: z.string(),
+    permission: z.string().optional(),
   })
-  .describe(
-    'One org team\'s access to the repository, matched by team slug. Keys other than name and permission are rejected (a misspelled "permission" would otherwise silently grant the default role).',
-  )
   .meta({ id: "TeamConfig" });
 
 /** The `teams:` document slice: the entry list the document composes from. */

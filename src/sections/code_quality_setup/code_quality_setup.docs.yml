@@ -1,0 +1,27 @@
+readme:
+  endpoints: code-quality setup
+  notes: >-
+    `state`, `languages`, runner and AI-findings options; a 202 means GitHub rolls the change out in
+    a configuration run; needs code quality available on the repository
+coverage:
+  - area: "[Code quality setup](https://docs.github.com/en/rest/code-quality/code-quality)"
+    notes: >-
+      GET/PATCH /repos/{owner}/{repo}/code-quality/setup, PATCH body verbatim (state, languages,
+      runner_type, runner_label, ai_findings_option), the near field-for-field mirror of
+      code_scanning_default_setup. A 202 answer means GitHub rolls the change out in a configuration
+      run, which the log names; a 409 means a configuration run is already in progress (re-run the
+      workflow after it finishes); a 403 can mean code quality is unavailable on the repository or
+      the repository is archived, rather than a missing permission, and a 422 (the change cannot be
+      applied) carries GitHub's message verbatim. Check compares declared keys only, languages as a
+      set. ASSUMPTION: the GET is graded as a plain read under the Administration permission,
+      mirroring code scanning - the fine-grained grading of these endpoints is not verified against
+      production. The sibling /code-quality/findings endpoints are read-only and stay out of scope.
+schema:
+  SettingsFile.code_quality_setup: Code quality analysis setup.
+  CodeQualitySetupConfig: PATCH /repos/{r}/code-quality/setup, sent verbatim.
+  CodeQualitySetupConfig.state: Turn code quality analysis on ("configured") or off ("not-configured").
+  CodeQualitySetupConfig.languages: Languages to analyze, compared as a set; GitHub auto-detects when omitted.
+  CodeQualitySetupConfig.runner_type: Run on GitHub-hosted ("standard") or labeled self-hosted runners.
+  CodeQualitySetupConfig.runner_label: Runner label when runner_type is "labeled"; null clears it.
+  CodeQualitySetupConfig.ai_findings_option: >-
+    AI-powered findings: "on_push" runs them on every push, "disabled" turns them off.

@@ -1,0 +1,153 @@
+readme:
+  endpoints: >-
+    PUT environments + per-environment variables, secrets, deployment branch policies, deployment
+    protection rules, and pins (GraphQL EnvironmentPins + PinEnvironment + ReorderEnvironment)
+  notes: >-
+    reviewers, wait timer, branch-policy flags; nested `variables`, `secrets`,
+    `deployment_branch_policies`, and `deployment_protection_rules` keys reconcile per environment,
+    each with its own `undeclared:` knob (within a declared key, undeclared variables and
+    branch-policy patterns are deleted; secrets and protection rules are kept); a `pinned` key pins
+    the environment on the home page's deployments sidebar over GraphQL (declaration order sets the
+    pin order, max 10 pins; environments without the key are never unpinned)
+coverage:
+  - area: >-
+      [Environments](https://docs.github.com/en/rest/deployments/environments) (wait_timer,
+      reviewers, prevent_self_review, deployment_branch_policy
+      protected_branches/custom_branch_policies flags), their [Actions
+      variables](https://docs.github.com/en/rest/actions/variables), their [Actions
+      secrets](https://docs.github.com/en/rest/actions/secrets), their [deployment branch
+      policies](https://docs.github.com/en/rest/deployments/branch-policies) (custom patterns), and
+      their [custom deployment protection
+      rules](https://docs.github.com/en/rest/deployments/protection-rules) (GitHub App gates)
+    notes: >-
+      PUT /repos/{owner}/{repo}/environments/{name} passthrough; check mode flattens GET's
+      protection_rules[] back into the PUT shape. A declared per-environment `variables` key
+      reconciles that environment's Actions variables AFTER the PUT, through GET/POST
+      /repos/{owner}/{repo}/environments/{name}/variables and PATCH/DELETE .../variables/{name}:
+      create missing, update divergent values, and delete undeclared ones by default (the wrapped
+      `undeclared: keep` form keeps them as notes); names match case-insensitively, values are plain
+      text by design. A declared per-environment `secrets` key reconciles that environment's Actions
+      secrets the same way the shipped secret sections do - GET .../environments/{name}/secrets
+      (names + timestamps), GET .../secrets/public-key, sealed PUT/DELETE .../secrets/{secret_name}
+      - one sealing scope per environment, so same-named secrets in sibling environments resolve
+      independently; undeclared secrets within a declared key are KEPT by default (values
+      unrecoverable; `undeclared: delete` opts in). A declared per-environment
+      `deployment_branch_policies` key reconciles that environment's custom branch-policy patterns
+      through GET/POST .../environments/{name}/deployment-branch-policies and DELETE
+      .../deployment-branch-policies/{branch_policy_id}: create missing patterns, delete undeclared
+      ones by default (`undeclared: keep` softens to notes), and replace a matching pattern whose
+      type differs (type is immutable upstream, so the change is delete + recreate; the upstream PUT
+      is deliberately unused - its body is the name alone, and the name is the pattern's identity,
+      so it can never help reconciliation). Declaring the key requires the singular
+      `deployment_branch_policy` sibling with custom_branch_policies: true (rejected upfront
+      otherwise, since the pattern writes would 404 only after the environment PUT landed), and its
+      endpoints sit outside the Environments PAT permission: the list read needs Actions read, the
+      writes need Administration write. A declared per-environment `deployment_protection_rules` key
+      reconciles that environment's custom deployment protection rules (GitHub App gates) through
+      GET/POST .../environments/{name}/deployment_protection_rules (the list documents NO
+      pagination, so it is fetched in one call; the POST body is {integration_id}) and DELETE
+      .../deployment_protection_rules/{protection_rule_id}: enable/disable ONLY, since GitHub offers
+      no update call. Rules are declared by App slug and resolved to the integration id at apply
+      time via ONE GET .../deployment_protection_rules/apps fetch (made only when a declared rule is
+      missing; a slug the listing does not carry is a hard error naming the available slugs).
+      Undeclared rules within a declared key are KEPT by default - Apps can enable themselves as
+      gates, and silently disabling a deployment gate is security-relevant - with `undeclared:
+      delete` opting into disabling; these endpoints also sit outside the Environments PAT
+      permission (the enabled-rules list under Actions read, the Apps read and both writes under
+      Administration). In check mode against a missing environment the declared variables, secrets,
+      patterns, and protection rules cannot be listed, so notes say they are unverifiable until it
+      exists; against a live environment whose custom_branch_policies flag is off, the patterns earn
+      the same note while the flag drift comes from the environment diff. A declared per-environment
+      `pinned` key reconciles the repository's pinned deployments sidebar over POST /graphql, AFTER
+      every environment PUT - each mutation addresses the node_id the environment PUT/GET bodies
+      already carry, so no extra lookup is made. The live pins read back through the repository's
+      pinnedEnvironments connection (the EnvironmentPins query), where the ordering is the 1-based
+      `position` field ON THE PinnedEnvironment NODE (it does not live on the Environment object) -
+      and, verified against live GitHub, those numbers may be NON-CONTIGUOUS: unpinning leaves a
+      hole, a new pin appends at the tail via a monotonic counter, and only a reorder renormalizes
+      the list. Positions are therefore consumed as a sort key only, and reconciliation compares
+      RANK ORDER: the entries declaring pinned: true must LEAD the pinned list in settings-file
+      declaration order. pinEnvironment ({environmentId, pinned}) pins a missing pin (tail append)
+      and unpins a pinned: false entry, reorderEnvironment ({environmentId, position}) pulls a
+      divergent pin left into its declared rank; unpins are issued before pins, so a swap can never
+      transiently exceed GitHub's cap of 10 pins (more than 10 declared pinned: true entries are
+      rejected upfront, and a final count that would overflow the cap - live pins nobody declared
+      count toward it - fails BEFORE the first pin mutation, naming the cap and the way to make
+      room; check mode surfaces the same overflow as a note). Pins with no pinned declaration -
+      undeclared environments, or entries without the key - are never unpinned; one sitting among
+      the leading ranks is moved after the declared block, surfaced as a note in BOTH modes so check
+      and apply agree exactly. Everything reads back, so check mode reports exact pin membership and
+      order drift (the order line names both sequences). Undeclared environments are left untouched.
+schema:
+  SettingsFile.environments: Deployment environments, upserted by name.
+  DeploymentBranchPolicyConfig: >-
+    One custom deployment branch-policy pattern, matched by exact name. Extra fields pass through to
+    the create call verbatim.
+  DeploymentBranchPolicyConfig.name: >-
+    The name pattern branches or tags must match to deploy (e.g. "release/*"), the natural key.
+  DeploymentBranchPolicyConfig.type: >-
+    What the pattern matches: "branch" (the upstream default) or "tag". Immutable on GitHub, so
+    changing it is applied as delete plus recreate.
+  DeploymentProtectionRuleConfig: >-
+    One custom deployment protection rule, matched by the slug of the GitHub App that provides it.
+    No other key is accepted: the enable call sends only the App's resolved integration id, so an
+    extra key would have no destination.
+  DeploymentProtectionRuleConfig.app: >-
+    The slug of the GitHub App providing the gate (e.g. "my-gate-app"), the natural key.
+  EnvironmentConfig: One deployment environment, matched by name.
+  EnvironmentConfig.name: The environment name, the natural key.
+  EnvironmentConfig.pinned: >-
+    Pin this environment on the repository home page's deployments sidebar (GraphQL-only; the REST
+    environment PUT carries no pin field). Pin ORDER is the declaration order of the entries with
+    `pinned: true` - together they must LEAD the repository's pinned list in that order, compared by
+    rank (GitHub's live position numbers may carry holes after an unpin and are never read
+    literally). `pinned: false` unpins; an entry without the key leaves its pin state untouched.
+    Live pins on environments the settings file does not declare are never unpinned; when they sit
+    among the declared ranks, apply moves them after the declared pins (surfaced as a note). GitHub
+    allows at most 10 pinned environments, so more than 10 `pinned: true` entries are rejected
+    upfront.
+  EnvironmentConfig.wait_timer: Minutes to wait before deployments proceed.
+  EnvironmentConfig.prevent_self_review: Whether the deployer may approve their own deployment.
+  EnvironmentConfig.reviewers: Required reviewers by numeric user/team id.
+  EnvironmentConfig.reviewers[].id: The user's or team's numeric id.
+  EnvironmentConfig.reviewers[].type: User or Team.
+  EnvironmentConfig.deployment_branch_policy: Which branches may deploy; null clears the policy.
+  EnvironmentConfig.deployment_branch_policy|0.protected_branches: Restrict to branches with protection rules.
+  EnvironmentConfig.deployment_branch_policy|0.custom_branch_policies: Restrict to name patterns, declared under `deployment_branch_policies`.
+  EnvironmentConfig.deployment_branch_policies: >-
+    Custom deployment branch-policy patterns for this environment, reconciled only when this key is
+    declared (an absent key leaves the live patterns untouched). Declaring it requires the sibling
+    `deployment_branch_policy` to set `custom_branch_policies: true`; without the flag GitHub
+    rejects every pattern write. A pattern's `type` is immutable on GitHub, so a declared type that
+    differs from the live one is applied as delete plus recreate. Within a declared key, live
+    patterns the entries do not declare are DELETED by default; the wrapped `{undeclared: keep,
+    entries}` form keeps them as notes.
+  EnvironmentConfig.deployment_protection_rules: >-
+    Custom deployment protection rules for this environment, reconciled only when this key is
+    declared (an absent key leaves the live rules untouched). Each rule is a GitHub App gate,
+    declared by its App slug and resolved to the App's integration id at apply time; GitHub offers
+    no update call, so the model is enable/disable only. Within a declared key, live rules the
+    entries do not declare are KEPT by default - Apps can enable themselves as gates, and silently
+    removing a deployment gate is security-relevant - and the wrapped `{undeclared: delete,
+    entries}` form opts into disabling them.
+  EnvironmentConfig.variables: >-
+    Actions variables for this environment, reconciled only when this key is declared (an absent key
+    leaves the live variables untouched). Values are plain text by design - use environment secrets
+    for anything sensitive. Within a declared `variables` key, live variables the entries do not
+    declare are DELETED by default; the wrapped `{undeclared: keep, entries}` form keeps them as
+    notes. Names match case-insensitively, as GitHub treats them.
+  EnvironmentConfig.secrets: >-
+    Actions secrets for this environment, reconciled only when this key is declared (an absent key
+    leaves the live secrets untouched). Each value is a whole-value `$NAME` reference to the action
+    step's environment, never a literal, sealed client-side against the environment's public key;
+    GitHub cannot return a value, so check mode verifies existence only and apply re-seals every
+    declared value on each run. Within a declared `secrets` key, live secrets the entries do not
+    declare are KEPT by default (their values are unrecoverable); the wrapped `{undeclared: delete,
+    entries}` form opts into deletion.
+  EnvironmentSecretConfig: >-
+    One per-environment Actions secret, matched by case-insensitive name (GitHub stores secret names
+    uppercase). Keys other than name and value are rejected: the API body is built from the sealed
+    value alone, so an extra key would silently do nothing.
+  EnvironmentVariableConfig: One per-environment Actions variable, matched by case-insensitive name.
+  EnvironmentVariableConfig.name: The variable name, the natural key (case-insensitive on GitHub).
+  EnvironmentVariableConfig.value: The plain-text value; environment secrets are the place for secrets.

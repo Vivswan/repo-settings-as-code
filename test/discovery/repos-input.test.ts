@@ -26,7 +26,10 @@ describe("parseReposInput", () => {
     });
     expect(parseReposInput("o/a, O/A, bad, bad, worse")).toEqual({
       error:
-        'the "repos" input has 3 invalid entries: "bad", "worse" are not owner/name slugs (use values like "octocat/hello-world", comma- or newline-separated); "O/A" is listed more than once (keep exactly one entry per repository). Or use "*" alone to discover repositories',
+        'the "repos" input has 3 invalid entries: "bad", "worse" are not owner/name slugs (use ' +
+        'values like "octocat/hello-world", comma- or newline-separated); "O/A" is listed more ' +
+        'than once (keep exactly one entry per repository). Or use "*" alone to discover ' +
+        "repositories",
     });
   });
 });

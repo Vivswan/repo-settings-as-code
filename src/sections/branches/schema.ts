@@ -57,40 +57,24 @@ export const BranchProtectionConfig = z
         error:
           'required_signatures must be an unquoted true or false (YAML parses "no"/"off"/"yes" as strings, not booleans), so the toggle direction is unambiguous',
       })
-      .optional()
-      .describe(
-        "Require signed commits on the branch. On a literal branch this is a routed key the protection PUT silently drops, so it is applied through the POST/DELETE .../protection/required_signatures sub-endpoint: when it drifts, and again after any protection PUT (GitHub does not document whether the PUT preserves an existing requirement), so declare the toggle on any branch that carries one - a declared value is pinned either way. On a wildcard rule it rides the GraphQL rule mutation like every other key.",
-      ),
+      .optional(),
     force_push_bypassers: z
       .array(
         z.string().refine((raw) => parseBypassActor(raw) !== null, { error: ACTOR_FORM_ERROR }),
       )
-      .optional()
-      .describe(
-        'Who may force-push to the branch when "allow force pushes" is in its "specify who" mode. Each actor is one string: a bare login is a user ("octocat"), "org/team-slug" is a team, and "app/slug" is a GitHub App. A REST-invisible surface: on a literal branch this routed key is stripped from the protection PUT and applied through the updateBranchProtectionRule GraphQL mutation when it drifts, and again after any protection PUT; on a wildcard rule it rides the create or update mutation with the rest of the rule. The live list is read back through GraphQL. An empty list clears every allowance; an absent key leaves the live list untouched.',
-      ),
+      .optional(),
     required_deployments: z
       .strictObject({ environments: z.array(z.string()) })
       .nullable()
-      .optional()
-      .describe(
-        "Require deployments to succeed before merging (the checkbox and its environment list). REST-invisible like force_push_bypassers, so the routed key rides the same GraphQL mutation. Declaring `null` turns the requirement OFF; an absent key leaves the live state untouched. GitHub SILENTLY drops environment names that do not exist on the repository, so apply verifies the mutation's read-back and fails loudly naming any dropped name; the environments section runs before branches, so environments declared in the same settings file exist by the time this key applies.",
-      ),
+      .optional(),
   })
-  .describe("The protection PUT payload, passed through verbatim except its routed keys.")
   .meta({ id: "BranchProtectionConfig" });
 export type BranchProtectionConfig = z.infer<typeof BranchProtectionConfig>;
 
 export const BranchConfig = z
   .object({
-    name: z
-      .string()
-      .describe(
-        'The branch name, or a wildcard pattern (any name containing `*`, `?`, or `[`, e.g. "release/*"). A literal name applies through the REST protection endpoints; a wildcard rule is REST-invisible, so it applies entirely through the GraphQL branch-protection-rule mutations and its protection accepts only the keys this action can round-trip through that surface (the validator names them; prefer rulesets for new pattern-based configuration).',
-      ),
-    protection: BranchProtectionConfig.nullable().describe(
-      "PUT .../protection payload; null removes protection (Probot parity).",
-    ),
+    name: z.string(),
+    protection: BranchProtectionConfig.nullable(),
   })
   .superRefine((entry, refineCtx) => {
     // The routed lists are replace-wholesale semantics keyed by actor or
@@ -122,7 +106,6 @@ export const BranchConfig = z
       }
     }
   })
-  .describe("Classic protection for one branch name or wildcard pattern.")
   .meta({ id: "BranchConfig" });
 export type BranchConfig = z.infer<typeof BranchConfig>;
 

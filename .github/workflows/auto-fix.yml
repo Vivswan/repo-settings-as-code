@@ -207,7 +207,9 @@ jobs:
               docs/reference/undeclared-policy.md | docs/reference/permissions.md | \
               docs/operate/check-mode.md | src/upstream-gaps/*) ;;
               *)
-                echo "::error::the fix patch staged '$path', outside lib/settings.schema.json, the generated docs (README.md, COVERAGE.md, action.yml, docs/reference/undeclared-policy.md, docs/reference/permissions.md, docs/operate/check-mode.md), and src/upstream-gaps/; refusing to push"
+                echo "::error::the fix patch staged '$path', outside lib/settings.schema.json, the generated docs" \
+                  "(README.md, COVERAGE.md, action.yml, docs/reference/undeclared-policy.md," \
+                  "docs/reference/permissions.md, docs/operate/check-mode.md), and src/upstream-gaps/; refusing to push"
                 exit 1
                 ;;
             esac

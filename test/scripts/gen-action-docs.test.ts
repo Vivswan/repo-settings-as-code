@@ -295,7 +295,9 @@ describe("permissions renderers", () => {
       },
     };
     expect(renderGatedReads([mixed])).toBe(
-      "- GitHub gates the `GET /repos/{owner}/{repo}/interaction-limits/pulls/creation-cap` and `GET /repos/{owner}/{repo}/interaction-limits/pulls/bypass-list` reads at write, so `labels` needs its Administration write grant in check mode to verify what they return.",
+      "- GitHub gates the `GET /repos/{owner}/{repo}/interaction-limits/pulls/creation-cap` " +
+        "and `GET /repos/{owner}/{repo}/interaction-limits/pulls/bypass-list` reads at write, so " +
+        "`labels` needs its Administration write grant in check mode to verify what they return.",
     );
   });
 

@@ -71,7 +71,10 @@ export const REDACTED_DETAIL = "hidden (private repository)";
  * wording serves both without leaking anything.
  */
 export const WITHHELD_REPORT_NOTICE =
-  "visibility could not be verified (the repository-metadata probe failed or was inconclusive - typically the token cannot read the target repository), so the private report was withheld rather than risk delivering it to a public repository. Grant the token metadata read access and re-run; a transient API failure also leaves visibility unverified";
+  "visibility could not be verified (the repository-metadata probe failed or was inconclusive " +
+  "- typically the token cannot read the target repository), so the private report was " +
+  "withheld rather than risk delivering it to a public repository. Grant the token metadata " +
+  "read access and re-run; a transient API failure also leaves visibility unverified";
 
 /**
  * One target's rich end state: slug, section outcomes with live detail, and

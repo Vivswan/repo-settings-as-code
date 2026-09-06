@@ -408,7 +408,10 @@ export async function runMulti(
   if (targets.length === 0) {
     if (filteredOutCount > 0) {
       return fail(
-        `multi-repo mode found no targets: repos: "*" discovery found ${filteredOutCount} ${filteredOutCount === 1 ? "repository" : "repositories"}, but the discovery filters removed all of them (see the notices above). Relax the filter inputs, or add per-repo files to the repos-dir`,
+        `multi-repo mode found no targets: repos: "*" discovery found ${filteredOutCount} ` +
+          `${filteredOutCount === 1 ? "repository" : "repositories"}, but the discovery filters ` +
+          `removed all of them (see the notices above). Relax the filter inputs, or add per-repo ` +
+          `files to the repos-dir`,
       );
     }
     return fail(

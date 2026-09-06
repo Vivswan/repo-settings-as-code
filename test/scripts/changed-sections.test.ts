@@ -482,6 +482,17 @@ describe("changed-sections selection", () => {
     expect(renderSelection(sectionsForFiles(changed("src/sections/registry.ts")))).toBe("all");
   });
 
+  test("the shared docs prose selects none, like the docs registry", () => {
+    const prose = "src/sections/shared/shared.docs.yml";
+    expect(sectionsForFiles(changed(prose)).kind).toBe("none");
+    expect(renderSelection(sectionsForFiles(changed(prose, "src/sections/labels/index.ts")))).toBe(
+      "labels",
+    );
+    expect(() => sectionsForFiles(changed("src/sections/shared/notes.yml"))).toThrow(
+      /matches no selector rule/,
+    );
+  });
+
   test("docs-registry.ts selects none and never masks or widens the rest of the diff", () => {
     // The docs-only aggregator is never in the bundle; build:check gates docs
     // drift, so it behaves like lib/: no section on its own, transparent

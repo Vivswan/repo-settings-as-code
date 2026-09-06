@@ -1,0 +1,42 @@
+readme:
+  endpoints: repo rulesets CRUD
+  notes: >-
+    branch, tag, and push targets; short ref names auto-prefixed (`staging` ->
+    `refs/heads/staging`); deletion stays an explicit opt-in
+coverage:
+  - area: >-
+      [Rulesets](https://docs.github.com/en/rest/repos/rules) (branch, tag, and push targets; all
+      rule types, conditions, bypass_actors)
+    notes: >-
+      GET/POST/PUT/DELETE /repos/{owner}/{repo}/rulesets: upsert-by-name, full-payload PUT, verbatim
+      passthrough except ref-name prefixing (staging -> refs/heads/staging, ~DEFAULT_BRANCH passes
+      through). New rule types/bypass fields/condition types GitHub ships work day one. Undeclared
+      rulesets kept by default (notes only); the wrapped `undeclared: delete` form deletes them.
+      Org-sourced rulesets filtered out via source_type.
+  - area: "[Merge queue](https://docs.github.com/en/rest/repos/rules)"
+    notes: >-
+      Configured as the merge_queue rule type inside a branch ruleset; passes through verbatim like
+      every other rule type. No dedicated endpoint exists; rulesets ARE the API for merge queue.
+  - area: "[Tag protection (modern)](https://docs.github.com/en/rest/repos/rules)"
+    notes: >-
+      target: tag rulesets cover everything the retired legacy tag-protection API did (legacy API
+      itself is out of scope, removed by GitHub).
+schema:
+  SettingsFile.rulesets: >-
+    Repository rulesets, upserted by name; undeclared ones are kept by default (the wrapped form can
+    set `undeclared: delete`).
+  RulesetConfig: One repository ruleset, matched to the live repo by name.
+  RulesetConfig.name: The ruleset name, the natural key.
+  RulesetConfig.target: What the ruleset applies to; defaults to "branch" upstream.
+  RulesetConfig.enforcement: '"active", "evaluate", or "disabled". Created rulesets default to "active".'
+  RulesetConfig.conditions: Which refs the ruleset covers.
+  RulesetConfig.conditions.ref_name: Short ref names are auto-prefixed (staging -> refs/heads/staging).
+  RulesetConfig.conditions.ref_name.include: >-
+    Ref patterns the ruleset targets (fnmatch; ~DEFAULT_BRANCH and ~ALL are accepted).
+  RulesetConfig.conditions.ref_name.exclude: Ref patterns excluded from the ruleset.
+  RulesetConfig.rules: Rule list, passed through verbatim (future rule types included).
+  RulesetConfig.rules[].parameters: >-
+    The rule's parameters, passed through verbatim as the API documents them for its type.
+  RulesetConfig.rules[].type: >-
+    The rule type, as the rulesets API names it (e.g. pull_request, required_status_checks).
+  RulesetConfig.bypass_actors: Who may bypass the ruleset, passed through verbatim.

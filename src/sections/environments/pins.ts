@@ -36,7 +36,11 @@ const PIN_ENVIRONMENT = graphqlOp<{ environmentId: string; pinned: boolean }>()(
     "mutation PinEnvironment($environmentId: ID!, $pinned: Boolean!) { pinEnvironment(input: { environmentId: $environmentId, pinned: $pinned }) { environment { name isPinned } } }",
   outcomes: {
     ok: "the environment was pinned or unpinned",
-    UNPROCESSABLE: `the repository already holds ${MAX_PINNED_ENVIRONMENTS} pinned environments (GitHub's cap), so this pin was rejected; pins without a pinned declaration are left untouched, so declare pinned: false on entries for some of the currently pinned environments, or unpin them in the GitHub UI`,
+    UNPROCESSABLE:
+      `the repository already holds ${MAX_PINNED_ENVIRONMENTS} pinned environments (GitHub's ` +
+      `cap), so this pin was rejected; pins without a pinned declaration are left untouched, so ` +
+      `declare pinned: false on entries for some of the currently pinned environments, or unpin ` +
+      `them in the GitHub UI`,
   },
 });
 
@@ -106,7 +110,10 @@ function livePin(node: unknown): LivePin {
   const name = pin?.environment?.name;
   if (typeof position !== "number" || typeof name !== "string") {
     throw new Error(
-      `environments: the pinned-environments listing returned a pin node this section cannot read (${JSON.stringify(node) ?? String(node)}): it needs a numeric "position" and an "environment.name" string, so the declared pins cannot be reconciled. Check the "api-version" input against the GitHub GraphQL reference for pinnedEnvironments`,
+      `environments: the pinned-environments listing returned a pin node this section cannot ` +
+        `read (${JSON.stringify(node) ?? String(node)}): it needs a numeric "position" and an ` +
+        `"environment.name" string, so the declared pins cannot be reconciled. Check the ` +
+        `"api-version" input against the GitHub GraphQL reference for pinnedEnvironments`,
     );
   }
   return { position, name };
@@ -278,7 +285,11 @@ export async function planPinned(
   }
   const overflow =
     plan.finalCount > MAX_PINNED_ENVIRONMENTS
-      ? `pinning the ${plan.pins.length} declared environment(s) not yet pinned would leave ${plan.finalCount} environments pinned, but GitHub allows at most ${MAX_PINNED_ENVIRONMENTS}. Pins without a pinned declaration are left untouched, so declare pinned: false on entries for some of the currently pinned environments, or unpin them in the GitHub UI`
+      ? `pinning the ${plan.pins.length} declared environment(s) not yet pinned would leave ` +
+        `${plan.finalCount} environments pinned, but GitHub allows at most ` +
+        `${MAX_PINNED_ENVIRONMENTS}. Pins without a pinned declaration are left untouched, so ` +
+        `declare pinned: false on entries for some of the currently pinned environments, or ` +
+        `unpin them in the GitHub UI`
       : undefined;
   if (overflow !== undefined) {
     notes.push(`apply will fail: ${overflow}`);

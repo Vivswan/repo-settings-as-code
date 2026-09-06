@@ -985,7 +985,9 @@ describe("environments deployment protection rules apply mode", () => {
         },
       ]),
     ).rejects.toThrow(
-      'environments: the deployment protection rule App "not-installed" is not available to environment "prod" (the available Apps are "deploy-gate", "region-guard"). Install the GitHub App providing the rule on this repository, or declare one of the available slugs',
+      'environments: the deployment protection rule App "not-installed" is not available to ' +
+        'environment "prod" (the available Apps are "deploy-gate", "region-guard"). Install the ' +
+        "GitHub App providing the rule on this repository, or declare one of the available slugs",
     );
     // Nothing was enabled, not even the resolvable entry.
     expect(api.calls.some((c) => c.method === "POST")).toBe(false);
@@ -1002,7 +1004,9 @@ describe("environments deployment protection rules apply mode", () => {
     await expect(
       apply(api, [{ name: "prod", deployment_protection_rules: [{ app: "deploy-gate" }] }]),
     ).rejects.toThrow(
-      'environments: the deployment protection rule App "deploy-gate" is not available to environment "prod" (no protection-rule Apps are available to it). Install the GitHub App providing the rule on this repository, or declare one of the available slugs',
+      'environments: the deployment protection rule App "deploy-gate" is not available to ' +
+        'environment "prod" (no protection-rule Apps are available to it). Install the GitHub ' +
+        "App providing the rule on this repository, or declare one of the available slugs",
     );
     expect(api.calls.some((c) => c.method === "POST")).toBe(false);
   });
@@ -1420,7 +1424,10 @@ describe("environments convergence", () => {
     ]);
     expect(first.notes).toEqual([
       "prod environment secret values cannot be read back from GitHub, so check mode verifies only that each declared secret exists; apply re-seals and rewrites every declared value on each run",
-      'prod environment secret "KEPT" exists on the environment but is not declared in the settings file; kept under "undeclared: keep" - add it to the settings file to manage it, or set "undeclared: delete" to have apply DELETE it (a deleted secret\'s value is unrecoverable)',
+      'prod environment secret "KEPT" exists on the environment but is not declared in the ' +
+        'settings file; kept under "undeclared: keep" - add it to the settings file to manage ' +
+        'it, or set "undeclared: delete" to have apply DELETE it (a deleted secret\'s value is ' +
+        "unrecoverable)",
       'deployment protection rule "change-window" is enabled on environment "prod" but is not declared in the settings file; kept under "undeclared: keep" - add it to the settings file to manage it, or set "undeclared: delete" to have apply DISABLE it',
     ]);
     expect(second.ops.map((op) => `${op.role} ${op.change}`)).toEqual([

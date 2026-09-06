@@ -102,7 +102,10 @@ describe("secret_scanning_custom_patterns", () => {
         },
       ],
       notes: [
-        'secret scanning custom pattern "unmanaged" exists on the repo but is not declared in the settings file; kept under "undeclared: keep" - add it to the settings file to manage it, or set "undeclared: delete" to have apply DELETE it (its alerts are then resolved, not deleted)',
+        'secret scanning custom pattern "unmanaged" exists on the repo but is not declared in ' +
+          'the settings file; kept under "undeclared: keep" - add it to the settings file to ' +
+          'manage it, or set "undeclared: delete" to have apply DELETE it (its alerts are then ' +
+          "resolved, not deleted)",
       ],
       drift: [],
     });

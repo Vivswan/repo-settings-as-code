@@ -1,9 +1,11 @@
 /**
  * Emits lib/settings.schema.json from the zod single source in src/schema.ts
- * (run by build:schema). z.toJSONSchema does the heavy lifting - .describe()
- * strings become descriptions, .meta({id}) names the definitions, strict
- * objects close with additionalProperties: false - and this script supplies
- * the publication posture around it:
+ * (run by build:schema). z.toJSONSchema does the heavy lifting - .meta({id})
+ * names the definitions, strict objects close with additionalProperties:
+ * false - the descriptions come from the docs files (each section's
+ * <key>.docs.yml, the shared factories', the document root's; see
+ * lib/schema-descriptions.ts), and this script supplies the publication
+ * posture around it:
  * - plain (strip) objects are OPENED by deleting the additionalProperties:
  *   false zod emits for them (the passthrough-first forward-compatibility
  *   tenet: GitHub-bound bodies must accept future fields; only strictObject
@@ -19,6 +21,8 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { SettingsFile } from "../../src/schema.js";
+import { SCHEMA_DESCRIPTIONS } from "../../src/sections/docs-registry.js";
+import { attachDescriptions, type JsonSchemaNode } from "./lib/schema-descriptions.js";
 
 const ROOT = join(import.meta.dir, "..", "..");
 
@@ -64,7 +68,11 @@ const generated = z.toJSONSchema(SettingsFile, {
       }
     }
   },
-}) as Record<string, unknown> & { definitions?: Record<string, unknown> };
+}) as Record<string, unknown> & { definitions?: Record<string, JsonSchemaNode> };
+
+// Every definition and property gets exactly one authored description, or the build fails
+// naming the site (see lib/schema-descriptions.ts for the key spelling).
+attachDescriptions(generated.definitions ?? {}, SCHEMA_DESCRIPTIONS);
 
 // The wrapper definition names carry "<" and ">"; percent-encode them inside
 // $ref pointers so the refs stay valid URI references for strict consumers

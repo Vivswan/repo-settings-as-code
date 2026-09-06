@@ -24,44 +24,21 @@ export const INTERACTION_LIMITS_ROUTED_KEYS: ReadonlySet<string> = new Set(ROUTE
 // the published schema.
 const InteractionLimits = z
   .object({
-    limit: z
-      .string()
-      .optional()
-      .describe(
-        'Who may interact: "existing_users", "contributors_only", or "collaborators_only". Optional when only the pull-request keys below are declared; an omitted limit leaves the live base limit untouched.',
-      ),
-    expiry: z
-      .string()
-      .optional()
-      .describe(
-        'How long the limit lasts ("one_day" through "six_months"); GitHub defaults to one_day. Write-only: GitHub reports back the computed expires_at, never the duration, so check mode cannot verify this field and apply re-arms it on every run. Requires a sibling `limit`.',
-      ),
+    limit: z.string().optional(),
+    expiry: z.string().optional(),
     // The cap object IS the PATCH body, open so future fields ride it; the
     // flag is typed so a YAML-quoted "true" fails upfront in document
     // validation, before any section writes (the branches precedent).
     pull_request_creation_cap: z
       .object({
-        enabled: z
-          .boolean({
-            error:
-              'enabled must be an unquoted true or false (YAML parses "no"/"off"/"yes" as strings, not booleans), so the cap direction is unambiguous',
-          })
-          .describe("Whether the cap is enforced."),
-        max_open_pull_requests: z
-          .number()
-          .optional()
-          .describe("The maximum number of open pull requests one user may have (1-1000)."),
+        enabled: z.boolean({
+          error:
+            'enabled must be an unquoted true or false (YAML parses "no"/"off"/"yes" as strings, not booleans), so the cap direction is unambiguous',
+        }),
+        max_open_pull_requests: z.number().optional(),
       })
-      .optional()
-      .describe(
-        "The pull request creation cap, routed to GET/PATCH /repos/{r}/interaction-limits/pulls/creation-cap. Unlike the base limit it is persistent desired state with no self-expiry and reads back verbatim, so check mode diffs it exactly and apply PATCHes only on divergence. max_open_pull_requests is 1-1000. On repositories where the cap is not available, the endpoints answer 405: apply surfaces that as a note, check mode as drift.",
-      ),
-    pull_request_creation_bypass: z
-      .array(z.string())
-      .optional()
-      .describe(
-        "User logins exempt from the pull request creation cap, routed to GET/PUT/DELETE /repos/{r}/interaction-limits/pulls/bypass-list and reconciled: apply removes the undeclared logins and then adds the missing ones (removals first - the list holds at most 100 users); logins compare case-insensitively. An empty list removes everyone. At most 100 logins.",
-      ),
+      .optional(),
+    pull_request_creation_bypass: z.array(z.string()).optional(),
   })
   .superRefine((declared, refineCtx) => {
     // Rejected here, in the shape, so upfront document validation fails
@@ -123,9 +100,6 @@ const InteractionLimits = z
       }
     }
   })
-  .describe(
-    "The `interaction_limits:` section. The base object is sent verbatim to PUT /repos/{r}/interaction-limits minus the two routed keys below, which go to their own .../interaction-limits/pulls sub-endpoints instead. GitHub reads the base limit back as limit, origin, and the computed expires_at only. Declare at least one of `limit`, `pull_request_creation_cap`, or `pull_request_creation_bypass`.",
-  )
   .meta({ id: "InteractionLimitsConfig" });
 
 /** The `interaction_limits:` whole-section config: the limits, or null to clear the base limit. */

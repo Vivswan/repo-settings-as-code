@@ -99,7 +99,11 @@ export function validateSectionShapes(
     return { settings: parsedSections as SettingsFile };
   }
   return {
-    error: `${sourceLabel} has malformed section entries: ${problems.join("; ")}. Fix these values in the settings file (only the named keys are validated; extra fields pass through, except in closed sections and strict nested objects like actions.cache, which reject unrecognized keys)`,
+    error:
+      `${sourceLabel} has malformed section entries: ${problems.join("; ")}. Fix these values in ` +
+      `the settings file (only the named keys are validated; extra fields pass through, except ` +
+      `in closed sections and strict nested objects like actions.cache, which reject ` +
+      `unrecognized keys)`,
   };
 }
 

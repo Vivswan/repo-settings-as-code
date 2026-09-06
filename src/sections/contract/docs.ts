@@ -1,25 +1,75 @@
-// The prose a section contributes to the generated README and COVERAGE.md, declared beside its
-// module (src/sections/<key>/docs.ts) and aggregated by the docs registry. Documentation only:
-// nothing bundled from src/main.ts may import a docs file (a unit test walks the import graph).
-export interface SectionDocs {
-  /** The section's two authored cells in the README Sections table. */
-  readonly readme: {
-    /** The Endpoints cell: the API surface the section calls, in prose. */
-    readonly endpoints: string;
-    /** The Notes cell: semantics, caveats, and the knob in passing. */
-    readonly notes: string;
-  };
-  // The section's rows in the COVERAGE.md Supported table, in display order. At least one: a
-  // section with no coverage row does not exist to the inventory, so the type refuses [].
-  readonly coverage: readonly [CoverageRow, ...CoverageRow[]];
-}
+/**
+ * The prose a section contributes to the generated artifacts: its README Sections table cells,
+ * its COVERAGE.md Supported rows, and the descriptions of its fields in the published JSON
+ * Schema. Declared beside the section module as src/sections/<key>/<key>.docs.yml and loaded by
+ * the docs registry. Documentation only: nothing bundled from src/main.ts may import this file or
+ * the registry (a unit test walks the import graph).
+ */
+
+import { readFileSync } from "node:fs";
+import { parse } from "yaml";
+import { z } from "zod";
 
 /** One COVERAGE.md Supported row: the GitHub surface it covers and how the section handles it. */
-interface CoverageRow {
-  /** The Area cell: the GitHub feature, usually a docs link with the fields it spans. */
-  readonly area: string;
-  /** Settings keys this row covers, rendered as "section (keys)"; omitted for a whole-section row. */
-  readonly keys?: string;
-  /** The Notes cell: endpoints, semantics, and caveats. */
-  readonly notes: string;
+const CoverageRow = z
+  .strictObject({
+    /** The Area cell: the GitHub feature, usually a docs link with the fields it spans. */
+    area: z.string().min(1),
+    /** Settings keys this row covers, rendered as "section (keys)"; omitted for a whole-section row. */
+    keys: z.string().min(1).optional(),
+    /** The Notes cell: endpoints, semantics, and caveats. */
+    notes: z.string().min(1),
+  })
+  .readonly();
+
+/**
+ * Field descriptions for the published schema, keyed as
+ * .github/scripts/lib/schema-descriptions.ts spells a site (`LabelConfig.color`,
+ * `SettingsFile.labels`, `UndeclaredPolicyList<*>.entries`).
+ */
+const SchemaDescriptions = z.record(z.string().min(1), z.string().min(1)).readonly();
+
+export const SectionDocs = z
+  .strictObject({
+    /** The section's two authored cells in the README Sections table. */
+    readme: z
+      .strictObject({
+        /** The Endpoints cell: the API surface the section calls, in prose. */
+        endpoints: z.string().min(1),
+        /** The Notes cell: semantics, caveats, and the knob in passing. */
+        notes: z.string().min(1),
+      })
+      .readonly(),
+    // The section's rows in the COVERAGE.md Supported table, in display order. At least one: a
+    // section with no coverage row does not exist to the inventory, so the shape (and the type it
+    // infers, a non-empty tuple) refuses [].
+    coverage: z.tuple([CoverageRow], CoverageRow).readonly(),
+    /** The section's own property on the document root and every definition its slice declares. */
+    schema: SchemaDescriptions,
+  })
+  .readonly();
+export type SectionDocs = z.infer<typeof SectionDocs>;
+
+/** A docs file carrying schema descriptions only: the shared factories' and the document root's. */
+export const SchemaOnlyDocs = z.strictObject({ schema: SchemaDescriptions }).readonly();
+
+/**
+ * The YAML document at `path`, validated against `schema`. A missing file throws the read error
+ * (which names the path); unparseable YAML or a document off the shape throws naming the path
+ * and the issues.
+ */
+export function readDocsYaml<T>(path: string, schema: z.ZodType<T>): T {
+  let loaded: unknown;
+  try {
+    loaded = parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    throw new Error(
+      `${path} is not valid YAML: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const result = schema.safeParse(loaded);
+  if (!result.success) {
+    throw new Error(`${path} is not a valid docs document:\n${z.prettifyError(result.error)}`);
+  }
+  return result.data;
 }
