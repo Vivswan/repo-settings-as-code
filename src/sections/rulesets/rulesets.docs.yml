@@ -21,3 +21,22 @@ coverage:
     notes: >-
       target: tag rulesets cover everything the retired legacy tag-protection API did (legacy API
       itself is out of scope, removed by GitHub).
+schema:
+  SettingsFile.rulesets: >-
+    Repository rulesets, upserted by name; undeclared ones are kept by default (the wrapped form can
+    set `undeclared: delete`).
+  RulesetConfig: One repository ruleset, matched to the live repo by name.
+  RulesetConfig.name: The ruleset name, the natural key.
+  RulesetConfig.target: What the ruleset applies to; defaults to "branch" upstream.
+  RulesetConfig.enforcement: '"active", "evaluate", or "disabled". Created rulesets default to "active".'
+  RulesetConfig.conditions: Which refs the ruleset covers.
+  RulesetConfig.conditions.ref_name: Short ref names are auto-prefixed (staging -> refs/heads/staging).
+  RulesetConfig.conditions.ref_name.include: >-
+    Ref patterns the ruleset targets (fnmatch; ~DEFAULT_BRANCH and ~ALL are accepted).
+  RulesetConfig.conditions.ref_name.exclude: Ref patterns excluded from the ruleset.
+  RulesetConfig.rules: Rule list, passed through verbatim (future rule types included).
+  RulesetConfig.rules[].parameters: >-
+    The rule's parameters, passed through verbatim as the API documents them for its type.
+  RulesetConfig.rules[].type: >-
+    The rule type, as the rulesets API names it (e.g. pull_request, required_status_checks).
+  RulesetConfig.bypass_actors: Who may bypass the ruleset, passed through verbatim.

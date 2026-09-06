@@ -1,8 +1,9 @@
 /**
- * The prose a section contributes to the generated README and COVERAGE.md: the shape of the
- * docs.yml beside each section module (src/sections/<key>/docs.yml), and the loader primitive
- * every docs document goes through. Documentation only: nothing bundled from src/main.ts may
- * import this file or the docs registry (a unit test walks the import graph).
+ * The prose a section contributes to the generated artifacts: its README Sections table cells,
+ * its COVERAGE.md Supported rows, and the descriptions of its fields in the published JSON
+ * Schema. Declared beside the section module as src/sections/<key>/<key>.docs.yml and loaded by
+ * the docs registry. Documentation only: nothing bundled from src/main.ts may import this file or
+ * the registry (a unit test walks the import graph).
  */
 
 import { readFileSync } from "node:fs";
@@ -21,6 +22,13 @@ const CoverageRow = z
   })
   .readonly();
 
+/**
+ * Field descriptions for the published schema, keyed as
+ * .github/scripts/lib/schema-descriptions.ts spells a site (`LabelConfig.color`,
+ * `SettingsFile.labels`, `UndeclaredPolicyList<*>.entries`).
+ */
+const SchemaDescriptions = z.record(z.string().min(1), z.string().min(1)).readonly();
+
 export const SectionDocs = z
   .strictObject({
     /** The section's two authored cells in the README Sections table. */
@@ -36,9 +44,14 @@ export const SectionDocs = z
     // section with no coverage row does not exist to the inventory, so the shape (and the type it
     // infers, a non-empty tuple) refuses [].
     coverage: z.tuple([CoverageRow], CoverageRow).readonly(),
+    /** The section's own property on the document root and every definition its slice declares. */
+    schema: SchemaDescriptions,
   })
   .readonly();
 export type SectionDocs = z.infer<typeof SectionDocs>;
+
+/** A docs file carrying schema descriptions only: the shared factories' and the document root's. */
+export const SchemaOnlyDocs = z.strictObject({ schema: SchemaDescriptions }).readonly();
 
 /**
  * The YAML document at `path`, validated against `schema`. A missing file throws the read error

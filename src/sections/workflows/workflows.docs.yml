@@ -9,3 +9,10 @@ coverage:
       .../workflows/{id}/enable or /disable. Declared as {path, state: active or disabled}; a bare
       file name matches .github/workflows/<name>; every live disabled_* state counts as disabled and
       a live "deleted" workflow counts as absent; undeclared workflows are never touched.
+schema:
+  SettingsFile.workflows: Per-workflow enable/disable state; undeclared workflows are untouched.
+  WorkflowConfig: >-
+    One workflow's enable/disable state, keyed by its file path. Keys other than path and state are
+    rejected (the enable/disable calls carry no payload, so an extra key could only be a typo).
+  WorkflowConfig.path: Full ".github/workflows/ci.yml" or the bare "ci.yml" file name.
+  WorkflowConfig.state: Desired state; every live disabled_* variant counts as "disabled".

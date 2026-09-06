@@ -18,11 +18,8 @@ import {
 } from "../../src/action/redact.js";
 import { REPO_RESULTS } from "../../src/engine/orchestrate.js";
 import { ARTIFACT_FILE, ARTIFACT_NAME } from "../../src/report/artifact-report.js";
-import {
-  PROBOT_PARITY_KEYS,
-  SECTION_KEYS,
-  SettingsFile as SettingsFileSchema,
-} from "../../src/schema.js";
+import { PROBOT_PARITY_KEYS, SECTION_KEYS } from "../../src/schema.js";
+import { DOCS } from "../../src/sections/docs-registry.js";
 import { SECTIONS } from "../../src/sections/registry.js";
 import { defaultClaimProblems, deleteEnumerationProblems } from "./claims.js";
 import { fencedBlocks, sectionLines } from "./markdown.js";
@@ -330,19 +327,22 @@ describe("private repositories guide", () => {
   });
 });
 
-describe("schema.ts SettingsFile deletion claims", () => {
+describe("SettingsFile deletion claims", () => {
   test("the description of delete/keep sections claims its own policy and never the opposite", () => {
-    // Each knobbed section's .describe() string (the published schema's
-    // description) states its default in a "... by default" clause and may
-    // mention the opposite word elsewhere (the `undeclared:` opt-in it
-    // documents). The claim windows, families, and negator handling live in
-    // ./claims.ts, shared with the COVERAGE sweep.
+    // Each knobbed section's published description (its <key>.docs.yml
+    // `SettingsFile.<key>` entry) states its default in a "... by default"
+    // clause and may mention the opposite word elsewhere (the `undeclared:`
+    // opt-in it documents). The claim windows, families, and negator handling
+    // live in ./claims.ts, shared with the COVERAGE sweep.
     for (const section of SECTIONS) {
       if (section.undeclaredDefault === "untouched") {
         continue; // "untouched" sections make no per-key deletion claim
       }
-      const description = SettingsFileSchema.shape[section.key].description;
-      expect(description, `no description on SettingsFile.${section.key}`).toBeTruthy();
+      const description = DOCS[section.key].schema[`SettingsFile.${section.key}`];
+      expect(
+        description,
+        `no SettingsFile.${section.key} description in its docs file`,
+      ).toBeTruthy();
       for (const problem of defaultClaimProblems(description ?? "", section.undeclaredDefault)) {
         throw new Error(`SettingsFile.${section.key} description: ${problem}`);
       }

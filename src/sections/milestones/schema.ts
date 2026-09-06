@@ -4,13 +4,9 @@ import { z } from "zod";
 
 export const MilestoneConfig = z
   .object({
-    title: z.string().describe("The milestone title, the natural key."),
-    description: z.string().optional().describe("Longer explanation of the milestone."),
-    state: z
-      .enum(["open", "closed"])
-      .optional()
-      .describe("Open or closed; untouched unless declared."),
+    title: z.string(),
+    description: z.string().optional(),
+    state: z.enum(["open", "closed"]).optional(),
   })
-  .describe("One milestone, matched by title.")
   .meta({ id: "MilestoneConfig" });
 export type MilestoneConfig = z.infer<typeof MilestoneConfig>;

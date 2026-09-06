@@ -4,30 +4,11 @@ import { z } from "zod";
 
 export const CodeQualitySetupConfig = z
   .object({
-    state: z
-      .enum(["configured", "not-configured"])
-      .optional()
-      .describe('Turn code quality analysis on ("configured") or off ("not-configured").'),
-    languages: z
-      .array(z.string())
-      .optional()
-      .describe("Languages to analyze, compared as a set; GitHub auto-detects when omitted."),
-    runner_type: z
-      .enum(["standard", "labeled"])
-      .optional()
-      .describe('Run on GitHub-hosted ("standard") or labeled self-hosted runners.'),
-    runner_label: z
-      .string()
-      .nullable()
-      .optional()
-      .describe('Runner label when runner_type is "labeled"; null clears it.'),
-    ai_findings_option: z
-      .enum(["disabled", "on_push"])
-      .optional()
-      .describe(
-        'AI-powered findings: "on_push" runs them on every push, "disabled" turns them off.',
-      ),
+    state: z.enum(["configured", "not-configured"]).optional(),
+    languages: z.array(z.string()).optional(),
+    runner_type: z.enum(["standard", "labeled"]).optional(),
+    runner_label: z.string().nullable().optional(),
+    ai_findings_option: z.enum(["disabled", "on_push"]).optional(),
   })
-  .describe("PATCH /repos/{r}/code-quality/setup, sent verbatim.")
   .meta({ id: "CodeQualitySetupConfig" });
 export type CodeQualitySetupConfig = z.infer<typeof CodeQualitySetupConfig>;

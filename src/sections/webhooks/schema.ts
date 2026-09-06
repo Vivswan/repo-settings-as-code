@@ -4,53 +4,22 @@ import { z } from "zod";
 
 const WebhookDeliveryConfig = z
   .looseObject({
-    url: z
-      .string()
-      .describe(
-        "The delivery URL, the natural key: a changed url declares a NEW hook (the old one becomes undeclared).",
-      ),
-    content_type: z.string().optional().describe('Payload encoding: "json" or "form".'),
-    secret: z
-      .string()
-      .optional()
-      .describe(
-        "The shared delivery secret, as a whole-value `$NAME` reference to an environment " +
-          "variable on the action step (never a literal: settings files are committed " +
-          'plaintext). Resolved at apply time; GitHub echoes it back as "********", so check ' +
-          "mode cannot verify it and apply re-sends it on every run so rotations propagate.",
-      ),
+    url: z.string(),
+    content_type: z.string().optional(),
+    secret: z.string().optional(),
     // Values pass through as-is beyond the type: GitHub is the authority on
     // what it accepts, and it stores numbers as their string form.
-    insecure_ssl: z
-      .union([z.string(), z.number()])
-      .optional()
-      .describe(
-        'Whether to skip TLS verification ("0" verify / "1" skip); GitHub stores it as a string.',
-      ),
+    insecure_ssl: z.union([z.string(), z.number()]).optional(),
   })
-  .catchall(z.unknown().describe("Future config fields pass through verbatim."))
-  .describe("A webhook's `config` mapping, sent to the config sub-endpoint on update.")
+  .catchall(z.unknown())
   .meta({ id: "WebhookDeliveryConfig" });
 
 export const WebhookConfig = z
   .object({
-    name: z
-      .literal("web")
-      .optional()
-      .describe(
-        'GitHub\'s hook name; "web" is the only value modern hooks take, so anything else is rejected.',
-      ),
-    config: WebhookDeliveryConfig.describe("The delivery settings; config.url is the natural key."),
-    events: z
-      .array(z.string())
-      .optional()
-      .describe(
-        'Events that trigger deliveries, compared order-insensitively; GitHub defaults a new hook to ["push"].',
-      ),
-    active: z
-      .boolean()
-      .optional()
-      .describe("Whether deliveries fire; GitHub defaults a new hook to true."),
+    name: z.literal("web").optional(),
+    config: WebhookDeliveryConfig,
+    events: z.array(z.string()).optional(),
+    active: z.boolean().optional(),
   })
   .superRefine((entry, refineCtx) => {
     // The secret lives under config; an ENTRY-level secret would pass the
@@ -69,8 +38,5 @@ export const WebhookConfig = z
       });
     }
   })
-  .describe(
-    "One repository webhook, matched to the live repo by config.url. Hook URLs are configuration, not credentials: they appear in drift lines and notes on purpose. The secret never does.",
-  )
   .meta({ id: "WebhookConfig" });
 export type WebhookConfig = z.infer<typeof WebhookConfig>;

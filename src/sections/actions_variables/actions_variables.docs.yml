@@ -15,3 +15,14 @@ coverage:
       per_page at 30 (not the usual 100), which the page loop honors so a large inventory is never
       truncated. Secrets are write-only material and deliberately NOT this section: they live in the
       `actions_secrets` section above.
+schema:
+  SettingsFile.actions_variables: >-
+    GitHub Actions repository variables, upserted by name; undeclared ones are DELETED by default
+    (the wrapped form can set `undeclared: keep`). Names are case-insensitive (GitHub stores them
+    uppercased). Values are plain text BY DESIGN - variables are readable configuration, which is
+    what makes check-mode diffing possible; secrets are write-only material and deliberately not
+    this section.
+  ActionsVariableConfig: One GitHub Actions repository variable, matched by case-insensitive name.
+  ActionsVariableConfig.name: >-
+    The variable name, the natural key; case-insensitive (stored uppercased by GitHub).
+  ActionsVariableConfig.value: The plain-text value workflows read through the vars context.

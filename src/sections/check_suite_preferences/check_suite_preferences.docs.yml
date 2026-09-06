@@ -16,3 +16,19 @@ coverage:
       cannot probe this section either, so a denied write surfaces only after other sections' writes
       landed (the Git LFS precedent). The token owner must be a repository administrator
       (fine-grained PATs with Checks read+write work).
+schema:
+  SettingsFile.check_suite_preferences: >-
+    Check suite preferences: per-GitHub-App `auto_trigger_checks` toggles controlling whether pushes
+    automatically create check suites. Write-only upstream (GitHub exposes no read endpoint), so
+    check mode cannot verify them and apply re-asserts the declared preferences on every run. The
+    token owner must be a repository administrator.
+  AutoTriggerCheckConfig: One per-app auto-trigger toggle. Extra fields pass through verbatim.
+  AutoTriggerCheckConfig.app_id: The id of the GitHub App the preference applies to.
+  AutoTriggerCheckConfig.setting: >-
+    Whether pushes automatically create check suites for this app; GitHub defaults each app to true.
+  CheckSuitePreferencesConfig: >-
+    PATCH /repos/{r}/check-suites/preferences, sent verbatim. Write-only upstream: GitHub exposes no
+    read endpoint for these preferences, so check mode cannot verify them and apply re-asserts the
+    declared preferences on every run.
+  CheckSuitePreferencesConfig.auto_trigger_checks: Per-app toggles for whether pushes automatically create check suites.
+  CheckSuitePreferencesConfig.*: Future preference fields pass through verbatim.

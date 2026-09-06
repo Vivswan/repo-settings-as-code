@@ -1,0 +1,44 @@
+readme:
+  endpoints: GET/PATCH properties/values; probes GET /orgs/{owner}
+  notes: >-
+    values of org-defined properties (definitions are org-scoped); org repos only, skipped with a
+    notice on personal accounts; `value: null` unsets
+coverage:
+  - area: >-
+      [Custom property values](https://docs.github.com/en/rest/repos/custom-properties)
+    notes: >-
+      GET /repos/{owner}/{repo}/properties/values (unpaginated) and ONE bulk PATCH on the same path
+      carrying every divergent declared property, skipped entirely when nothing diverges. Values of
+      org-defined properties only: property DEFINITIONS are /orgs/-scoped and not managed here, so
+      the section probes GET /orgs/{owner} and no-ops with a note on personal accounts (404 only;
+      403/5xx still fail), mirroring `teams`. `value: null` unsets a property (reverting to the org
+      default, if any); booleans/numbers normalize to their string form (GitHub transports
+      true_false values as the strings "true"/"false"); multi_select lists compare
+      order-insensitively. The values READ is gated by Metadata only (every fine-grained token holds
+      it), so only the PATCH needs the "Custom properties" grant; a 403 on it can also mean the org
+      restricts a property's values to org actors (values_editable_by: org_actors), and a 422 means
+      the property is not defined at the organization level. Undeclared live values are KEPT by
+      default (an unset can revert to an org default the action does not model); the wrapped
+      `undeclared: delete` form opts into unsetting them.
+schema:
+  SettingsFile.custom_properties: >-
+    Values of organization-defined custom properties, set per repository (the property DEFINITIONS
+    are organization-scoped and out of scope); organization repos only, skipped with a note on
+    personal accounts. `value: null` unsets a property (reverting to the org default, if any), and
+    booleans/numbers are normalized to their string form (GitHub transports true_false values as the
+    strings "true"/"false"). Undeclared live values are kept by default - an unset can revert to an
+    org default this action does not model, and a property whose values only org actors may edit
+    would reject the write - and the wrapped form can set `undeclared: delete` to opt into unsetting
+    them.
+  CustomPropertyConfig: >-
+    One custom property value, matched by the API's property_name verbatim. Keys other than
+    property_name and value are rejected: the bulk PATCH body is built from exactly these two
+    fields, so an extra key would have no destination.
+  CustomPropertyConfig.property_name: The organization-defined property's name, the natural key.
+  CustomPropertyConfig.value: >-
+    The value to set: a string (single_select and string properties), a list of strings
+    (multi_select, compared as a set - list each option once), or a boolean (true_false, normalized
+    to the "true"/"false" string GitHub transports). Numbers are likewise sent as their string form
+    - through YAML's parsed number, so quote any numeric value you want sent verbatim (unquoted,
+    1.10 arrives as "1.1" and 1e21 as "1e+21"). `null` unsets the property, reverting to the org
+    default, if any.

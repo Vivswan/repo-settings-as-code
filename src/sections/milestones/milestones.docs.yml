@@ -10,3 +10,11 @@ coverage:
       (description/state untouched unless declared); undeclared milestones kept by default and
       surfaced as notes, because deleting a milestone DETACHES it from every issue carrying it - the
       wrapped `undeclared: delete` form opts into exactly that.
+schema:
+  SettingsFile.milestones: >-
+    Milestones, upserted by title; undeclared ones are kept by default (the wrapped form can set
+    `undeclared: delete`, which detaches deleted milestones from their issues).
+  MilestoneConfig: One milestone, matched by title.
+  MilestoneConfig.title: The milestone title, the natural key.
+  MilestoneConfig.description: Longer explanation of the milestone.
+  MilestoneConfig.state: Open or closed; untouched unless declared.

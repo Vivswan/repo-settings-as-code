@@ -18,3 +18,14 @@ coverage:
       custom org role names pass through; undeclared direct collaborators REMOVED by default (kept
       as notes under the wrapped `undeclared: keep` form), owner never touched; new users get
       invitations.
+schema:
+  SettingsFile.collaborators: >-
+    Direct collaborators, with pending invitations reconciled alongside; undeclared ones are REMOVED
+    (pending invitations cancelled) by default (owner never touched; the wrapped form can set
+    `undeclared: keep`).
+  CollaboratorConfig: >-
+    One direct collaborator, matched by username. Keys other than username and permission are
+    rejected (a misspelled "permission" would otherwise silently grant the default role).
+  CollaboratorConfig.username: GitHub login, the natural key.
+  CollaboratorConfig.permission: >-
+    "pull", "triage", "push", "maintain", "admin", or a custom org role; defaults to "push".

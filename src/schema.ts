@@ -5,10 +5,11 @@
  * section module derives loosen(<slice>) itself; see sections/contract/module.ts), and
  * its part of the published lib/settings.schema.json
  * (.github/scripts/gen-settings-schema.ts). This file adds only the
- * document-level wrappers - the undeclared knob, .optional(), and the
- * property .describe() strings - so a future org/user settings document can
- * compose its own SettingsFile from the same slices. The .describe() strings
- * become the published schema's descriptions; .meta({id}) names its
+ * document-level wrappers - the undeclared knob and .optional() - so a future
+ * org/user settings document can compose its own SettingsFile from the same
+ * slices. The published schema's descriptions come from the docs files
+ * (src/schema.docs.yml for the document, each section's <key>.docs.yml for
+ * its property and definitions); .meta({id}) names its
  * definitions; superRefine/refine checks are runtime-only (invisible to
  * toJSONSchema) and survive loosen(), so upfront document validation keeps
  * every invariant.
@@ -68,160 +69,33 @@ import type { MustBeNever } from "./types.js";
 
 export const SettingsFile = z
   .object({
-    repository: RepositoryConfig.optional().describe(
-      "Repo fields sent verbatim to PATCH /repos/{r}, plus the special keys RepositoryConfig documents.",
-    ),
-    labels: knobbed(LabelConfig)
-      .optional()
-      .describe(
-        "Issue/PR labels; undeclared labels are DELETED by default (Probot parity; the wrapped form can set `undeclared: keep`).",
-      ),
-    rulesets: knobbed(RulesetConfig)
-      .optional()
-      .describe(
-        "Repository rulesets, upserted by name; undeclared ones are kept by default (the wrapped form can set `undeclared: delete`).",
-      ),
-    branches: BranchesConfig.optional().describe("Classic branch protection per branch."),
-    environments: EnvironmentsConfig.optional().describe(
-      "Deployment environments, upserted by name.",
-    ),
-    autolinks: knobbed(AutolinkConfig)
-      .optional()
-      .describe(
-        "Autolink references; undeclared ones are DELETED by default (the wrapped form can set `undeclared: keep`).",
-      ),
-    actions: ActionsConfig.optional().describe("GitHub Actions permissions for the repository."),
-    actions_secrets: knobbed(ActionsSecretConfig)
-      .optional()
-      .describe(
-        "Repository Actions secrets, written by name with values sealed client-side; each " +
-          "value is a whole-value `$NAME` reference to the action step's environment, never a " +
-          "literal. Undeclared secrets are kept by default (the wrapped form can set " +
-          "`undeclared: delete`; a deleted secret's value is unrecoverable).",
-      ),
-    dependabot_secrets: knobbed(DependabotSecretConfig)
-      .optional()
-      .describe(
-        "Repository Dependabot secrets (private-registry credentials Dependabot uses), written " +
-          "by name with values sealed client-side; each value is a whole-value `$NAME` reference " +
-          "to the action step's environment, never a literal. Undeclared secrets are kept by " +
-          "default (the wrapped form can set `undeclared: delete`; a deleted secret's value is " +
-          "unrecoverable).",
-      ),
-    codespaces_secrets: knobbed(CodespacesSecretConfig)
-      .optional()
-      .describe(
-        "Repository Codespaces secrets (development environment secrets), written by name with " +
-          "values sealed client-side; each value is a whole-value `$NAME` reference to the " +
-          "action step's environment, never a literal. Undeclared secrets are kept by default " +
-          "(the wrapped form can set `undeclared: delete`; a deleted secret's value is " +
-          "unrecoverable).",
-      ),
-    agents_secrets: knobbed(AgentsSecretConfig)
-      .optional()
-      .describe(
-        "Repository Copilot agents secrets (the secret store Copilot coding agents read), " +
-          "written by name with values sealed client-side; each value is a whole-value `$NAME` " +
-          "reference to the action step's environment, never a literal. Undeclared secrets are " +
-          "kept by default (the wrapped form can set `undeclared: delete`; a deleted secret's " +
-          "value is unrecoverable).",
-      ),
-    workflows: WorkflowsConfig.optional().describe(
-      "Per-workflow enable/disable state; undeclared workflows are untouched.",
-    ),
-    check_suite_preferences: CheckSuitePreferencesConfig.optional().describe(
-      "Check suite preferences: per-GitHub-App `auto_trigger_checks` toggles controlling " +
-        "whether pushes automatically create check suites. Write-only upstream (GitHub exposes " +
-        "no read endpoint), so check mode cannot verify them and apply re-asserts the declared " +
-        "preferences on every run. The token owner must be a repository administrator.",
-    ),
-    pages: PagesConfig.optional().describe(
-      "GitHub Pages configuration; null disables Pages on the repository.",
-    ),
-    code_scanning_default_setup: CodeScanningDefaultSetupConfig.optional().describe(
-      "Code scanning default setup (CodeQL).",
-    ),
-    code_quality_setup: CodeQualitySetupConfig.optional().describe("Code quality analysis setup."),
-    collaborators: knobbed(CollaboratorConfig)
-      .optional()
-      .describe(
-        "Direct collaborators, with pending invitations reconciled alongside; undeclared ones are REMOVED (pending invitations cancelled) by default (owner never touched; the wrapped form can set `undeclared: keep`).",
-      ),
-    teams: TeamsConfig.optional().describe(
-      "Org team access to the repo; skipped on personal accounts.",
-    ),
-    milestones: knobbed(MilestoneConfig)
-      .optional()
-      .describe(
-        "Milestones, upserted by title; undeclared ones are kept by default (the wrapped form can set `undeclared: delete`, which detaches deleted milestones from their issues).",
-      ),
-    interaction_limits: InteractionLimitsConfig.optional().describe(
-      "Temporary interaction limits; null clears an active repo-level limit, and an absent key " +
-        "leaves whatever is live untouched. Limits self-expire (GitHub's expiry tops out at " +
-        "six_months), so apply re-arms the declared limit on every run and check mode reports " +
-        "drift once it lapses. The pull_request_creation_cap and pull_request_creation_bypass " +
-        "keys manage the persistent pull request creation cap and its bypass list instead; " +
-        "`interaction_limits: null` clears the base limit only and never touches them.",
-    ),
-    actions_variables: knobbed(ActionsVariableConfig)
-      .optional()
-      .describe(
-        "GitHub Actions repository variables, upserted by name; undeclared ones are DELETED by " +
-          "default (the wrapped form can set `undeclared: keep`). Names are case-insensitive " +
-          "(GitHub stores them uppercased). Values are plain text BY DESIGN - variables are " +
-          "readable configuration, which is what makes check-mode diffing possible; secrets are " +
-          "write-only material and deliberately not this section.",
-      ),
-    agents_variables: knobbed(AgentsVariableConfig)
-      .optional()
-      .describe(
-        "Copilot agents repository variables (the plain-text configuration Copilot coding " +
-          "agents read), upserted by name; undeclared ones are DELETED by default (the wrapped " +
-          "form can set `undeclared: keep`). Names are case-insensitive (GitHub stores them " +
-          "uppercased). Values are plain text BY DESIGN - variables are readable configuration, " +
-          "which is what makes check-mode diffing possible; secrets are write-only material and " +
-          "deliberately not this section.",
-      ),
-    webhooks: knobbed(WebhookConfig)
-      .optional()
-      .describe(
-        "Repository webhooks, managed one per config.url; undeclared hooks are kept by default and surfaced as notes, since integrations create their own hooks (the wrapped form can set `undeclared: delete`).",
-      ),
-    custom_properties: knobbed(CustomPropertyConfig)
-      .optional()
-      .describe(
-        "Values of organization-defined custom properties, set per repository (the property " +
-          "DEFINITIONS are organization-scoped and out of scope); organization repos only, " +
-          "skipped with a note on personal accounts. `value: null` unsets a property (reverting " +
-          "to the org default, if any), and booleans/numbers are normalized to their string form " +
-          '(GitHub transports true_false values as the strings "true"/"false"). Undeclared live ' +
-          "values are kept by default - an unset can revert to an org default this action does " +
-          "not model, and a property whose values only org actors may edit would reject the " +
-          "write - and the wrapped form can set `undeclared: delete` to opt into unsetting them.",
-      ),
-    deploy_keys: knobbed(DeployKeyConfig)
-      .optional()
-      .describe(
-        "Deploy keys, matched by title. The declared material is a PUBLIC key, safe in a " +
-          "committed settings file. Keys are immutable upstream, so any change is applied as " +
-          "delete plus recreate. Undeclared keys are kept by default - deleting a live deploy " +
-          "key breaks whatever service authenticates with it, and deployment tooling installs " +
-          "its own keys - and the wrapped form can set `undeclared: delete`.",
-      ),
-    secret_scanning_custom_patterns: knobbed(SecretScanningPatternConfig)
-      .optional()
-      .describe(
-        "Repository-level secret scanning custom patterns, matched by name. The name is " +
-          "immutable upstream (the update PATCH takes no name field), so a renamed entry is " +
-          "applied as a create of the new name - plus, under `undeclared: delete`, deletion of " +
-          "the old one; under the default keep policy the old pattern stays live and is surfaced " +
-          "as a note. Undeclared patterns are kept by default: removing a pattern disposes of " +
-          "its alerts, so deletion stays a human opt-in (the wrapped form can set `undeclared: " +
-          "delete`). When this action deletes a pattern it always asks GitHub to RESOLVE the " +
-          "pattern's alerts rather than delete them, keeping the audit trail.",
-      ),
+    repository: RepositoryConfig.optional(),
+    labels: knobbed(LabelConfig).optional(),
+    rulesets: knobbed(RulesetConfig).optional(),
+    branches: BranchesConfig.optional(),
+    environments: EnvironmentsConfig.optional(),
+    autolinks: knobbed(AutolinkConfig).optional(),
+    actions: ActionsConfig.optional(),
+    actions_secrets: knobbed(ActionsSecretConfig).optional(),
+    dependabot_secrets: knobbed(DependabotSecretConfig).optional(),
+    codespaces_secrets: knobbed(CodespacesSecretConfig).optional(),
+    agents_secrets: knobbed(AgentsSecretConfig).optional(),
+    workflows: WorkflowsConfig.optional(),
+    check_suite_preferences: CheckSuitePreferencesConfig.optional(),
+    pages: PagesConfig.optional(),
+    code_scanning_default_setup: CodeScanningDefaultSetupConfig.optional(),
+    code_quality_setup: CodeQualitySetupConfig.optional(),
+    collaborators: knobbed(CollaboratorConfig).optional(),
+    teams: TeamsConfig.optional(),
+    milestones: knobbed(MilestoneConfig).optional(),
+    interaction_limits: InteractionLimitsConfig.optional(),
+    actions_variables: knobbed(ActionsVariableConfig).optional(),
+    agents_variables: knobbed(AgentsVariableConfig).optional(),
+    webhooks: knobbed(WebhookConfig).optional(),
+    custom_properties: knobbed(CustomPropertyConfig).optional(),
+    deploy_keys: knobbed(DeployKeyConfig).optional(),
+    secret_scanning_custom_patterns: knobbed(SecretScanningPatternConfig).optional(),
   })
-  .describe("One settings.yml document: every top-level section is optional.")
   .meta({ id: "SettingsFile" });
 export type SettingsFile = z.infer<typeof SettingsFile>;
 
@@ -344,7 +218,7 @@ type _UnlistedSection = MustBeNever<Exclude<keyof SettingsFile, SectionKey>>;
 /**
  * Each SettingsFile property's slice derivation: the schema the property is
  * composed FROM, before this file's document-level wrappers (.optional() and
- * the property .describe()). The knobbed sections derive as the undeclared
+ * the undeclared knob). The knobbed sections derive as the undeclared
  * knob over their entry slice; everything else is its slice verbatim.
  * Naming rule: a whole-section slice export is named <Key>Config, matching
  * the singular <Entry>Config convention of the entry schemas.

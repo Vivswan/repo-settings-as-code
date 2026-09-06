@@ -62,3 +62,38 @@ coverage:
       key keeps its live value, unlike the literal PUT's replace). Actor and environment names
       compare case-insensitively (GitHub canonicalizes them), and the routed lists reject duplicate
       names upfront.
+schema:
+  SettingsFile.branches: Classic branch protection per branch.
+  BranchConfig: Classic protection for one branch name or wildcard pattern.
+  BranchConfig.name: >-
+    The branch name, or a wildcard pattern (any name containing `*`, `?`, or `[`, e.g. "release/*").
+    A literal name applies through the REST protection endpoints; a wildcard rule is REST-invisible,
+    so it applies entirely through the GraphQL branch-protection-rule mutations and its protection
+    accepts only the keys this action can round-trip through that surface (the validator names them;
+    prefer rulesets for new pattern-based configuration).
+  BranchConfig.protection: PUT .../protection payload; null removes protection (Probot parity).
+  BranchProtectionConfig: The protection PUT payload, passed through verbatim except its routed keys.
+  BranchProtectionConfig.required_signatures: >-
+    Require signed commits on the branch. On a literal branch this is a routed key the protection
+    PUT silently drops, so it is applied through the POST/DELETE .../protection/required_signatures
+    sub-endpoint: when it drifts, and again after any protection PUT (GitHub does not document
+    whether the PUT preserves an existing requirement), so declare the toggle on any branch that
+    carries one - a declared value is pinned either way. On a wildcard rule it rides the GraphQL
+    rule mutation like every other key.
+  BranchProtectionConfig.force_push_bypassers: >-
+    Who may force-push to the branch when "allow force pushes" is in its "specify who" mode. Each
+    actor is one string: a bare login is a user ("octocat"), "org/team-slug" is a team, and
+    "app/slug" is a GitHub App. A REST-invisible surface: on a literal branch this routed key is
+    stripped from the protection PUT and applied through the updateBranchProtectionRule GraphQL
+    mutation when it drifts, and again after any protection PUT; on a wildcard rule it rides the
+    create or update mutation with the rest of the rule. The live list is read back through GraphQL.
+    An empty list clears every allowance; an absent key leaves the live list untouched.
+  BranchProtectionConfig.required_deployments: >-
+    Require deployments to succeed before merging (the checkbox and its environment list).
+    REST-invisible like force_push_bypassers, so the routed key rides the same GraphQL mutation.
+    Declaring `null` turns the requirement OFF; an absent key leaves the live state untouched.
+    GitHub SILENTLY drops environment names that do not exist on the repository, so apply verifies
+    the mutation's read-back and fails loudly naming any dropped name; the environments section runs
+    before branches, so environments declared in the same settings file exist by the time this key
+    applies.
+  BranchProtectionConfig.required_deployments|0.environments: The environments whose deployments must succeed before merging.

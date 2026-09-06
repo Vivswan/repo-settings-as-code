@@ -37,7 +37,7 @@ describe("branches Contents advice", () => {
     const notes = DOCS.branches.readme.notes;
     expect(
       notes.includes(`add ${advice}`),
-      `the branches Notes cell (src/sections/branches/docs.yml) must advise "add ${advice}" for the probe`,
+      `the branches Notes cell (src/sections/branches/branches.docs.yml) must advise "add ${advice}" for the probe`,
     ).toBe(true);
     expect(notes).toContain("missing branch");
     // permissions.md restates the same advice as the Contents grant's second

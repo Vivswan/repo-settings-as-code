@@ -1,9 +1,0 @@
-readme:
-  endpoints: autolinks CRUD
-  notes: immutable upstream, so changed entries are replaced
-coverage:
-  - area: "[Autolinks](https://docs.github.com/en/rest/repos/autolinks)"
-    notes: >-
-      GET/POST/DELETE /repos/{owner}/{repo}/autolinks; immutable upstream so changed entries are
-      delete+recreate; undeclared autolinks DELETED by default, kept as notes under the wrapped
-      `undeclared: keep` form.

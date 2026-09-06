@@ -15,3 +15,15 @@ coverage:
       site-visibility boolean `public` (public vs repo-members-only) rides the PUT passthrough too -
       the dotcom docs omit it but the GHEC flavor documents it, and the GET echoes it in both, so
       declaring it applies and check-verifies today.
+schema:
+  SettingsFile.pages: GitHub Pages configuration; null disables Pages on the repository.
+  PagesConfig: "GitHub Pages site configuration; use `pages: null` to disable the site."
+  PagesConfig.build_type: '"workflow" (GitHub Actions) or "legacy" (branch).'
+  PagesConfig.source: The update PUT requires both branch and path when source is sent.
+  PagesConfig.source.branch: The branch Pages publishes from.
+  PagesConfig.source.path: "The directory within the branch Pages publishes: / or /docs."
+  PagesConfig.cname: Custom domain; null removes it.
+  PagesConfig.https_enforced: Whether HTTPS is enforced for the site.
+  PagesConfig.public: >-
+    Enterprise Cloud site visibility: true for public, false for repository members only. Documented
+    only in the GHEC flavor of the Pages PUT; the GET echoes it everywhere.

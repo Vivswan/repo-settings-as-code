@@ -4,15 +4,9 @@ import { z } from "zod";
 
 export const RulesetConfig = z
   .object({
-    name: z.string().describe("The ruleset name, the natural key."),
-    target: z
-      .enum(["branch", "tag", "push"])
-      .optional()
-      .describe('What the ruleset applies to; defaults to "branch" upstream.'),
-    enforcement: z
-      .string()
-      .optional()
-      .describe('"active", "evaluate", or "disabled". Created rulesets default to "active".'),
+    name: z.string(),
+    target: z.enum(["branch", "tag", "push"]).optional(),
+    enforcement: z.string().optional(),
     conditions: z
       .object({
         ref_name: z
@@ -20,11 +14,9 @@ export const RulesetConfig = z
             include: z.array(z.string()).optional(),
             exclude: z.array(z.string()).optional(),
           })
-          .optional()
-          .describe("Short ref names are auto-prefixed (staging -> refs/heads/staging)."),
+          .optional(),
       })
-      .optional()
-      .describe("Which refs the ruleset covers."),
+      .optional(),
     rules: z
       .array(
         z.object({
@@ -32,13 +24,8 @@ export const RulesetConfig = z
           parameters: z.record(z.string(), z.unknown()).optional(),
         }),
       )
-      .optional()
-      .describe("Rule list, passed through verbatim (future rule types included)."),
-    bypass_actors: z
-      .array(z.record(z.string(), z.unknown()))
-      .optional()
-      .describe("Who may bypass the ruleset, passed through verbatim."),
+      .optional(),
+    bypass_actors: z.array(z.record(z.string(), z.unknown())).optional(),
   })
-  .describe("One repository ruleset, matched to the live repo by name.")
   .meta({ id: "RulesetConfig" });
 export type RulesetConfig = z.infer<typeof RulesetConfig>;

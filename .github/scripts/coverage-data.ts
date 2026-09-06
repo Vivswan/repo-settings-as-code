@@ -2,7 +2,7 @@
  * The authored half of COVERAGE.md (rendered by gen-docs.ts): the prose no declaration can
  * derive, because it enumerates what does NOT exist - the repo-scoped gaps, the settings with no
  * public API, and the account-scoped surface. The data is coverage-data.yml beside this file;
- * this module is its shape and loader. The Supported table renders from each section's docs.yml.
+ * this module is its shape and loader. The Supported table renders from each section's <key>.docs.yml.
  */
 
 import { join } from "node:path";

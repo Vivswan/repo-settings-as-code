@@ -13,3 +13,14 @@ coverage:
       environment into this store, so a repository can hold agents variables nobody created here -
       run `mode: check` first (it lists them as deletion drift) before the first apply, or declare
       `undeclared: keep`.
+schema:
+  SettingsFile.agents_variables: >-
+    Copilot agents repository variables (the plain-text configuration Copilot coding agents read),
+    upserted by name; undeclared ones are DELETED by default (the wrapped form can set `undeclared:
+    keep`). Names are case-insensitive (GitHub stores them uppercased). Values are plain text BY
+    DESIGN - variables are readable configuration, which is what makes check-mode diffing possible;
+    secrets are write-only material and deliberately not this section.
+  AgentsVariableConfig: One Copilot agents repository variable, matched by case-insensitive name.
+  AgentsVariableConfig.name: >-
+    The variable name, the natural key; case-insensitive (stored uppercased by GitHub).
+  AgentsVariableConfig.value: The plain-text value Copilot coding agents read.

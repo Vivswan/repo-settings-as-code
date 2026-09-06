@@ -148,14 +148,17 @@ describe("docs registry reachability", () => {
   });
 });
 
-describe("docs.yml completeness", () => {
-  test("every section has a docs.yml and every docs.yml belongs to a section", () => {
+describe("section docs completeness", () => {
+  test("every section has a <key>.docs.yml and every docs file belongs to a section", () => {
     // Loading DOCS already proves each SectionKey's file exists and parses; the reverse pin is
     // what a stray file (a renamed or removed section's leftover) would otherwise escape.
+    // shared/shared.docs.yml is the factories' schema prose, not a section's (see docs-registry.ts).
     const onDisk = readdirSync(join(ROOT, "src", "sections"), { withFileTypes: true })
       .filter(
         (entry) =>
-          entry.isDirectory() && existsSync(join(entry.parentPath, entry.name, "docs.yml")),
+          entry.isDirectory() &&
+          entry.name !== "shared" &&
+          existsSync(join(entry.parentPath, entry.name, `${entry.name}.docs.yml`)),
       )
       .map((entry) => entry.name)
       .sort();
@@ -163,7 +166,7 @@ describe("docs.yml completeness", () => {
     expect(Object.keys(DOCS).sort()).toEqual([...SECTION_KEYS].sort());
   });
 
-  test("a malformed docs.yml fails naming the file and the issue, a missing one naming the path", () => {
+  test("a malformed docs file fails naming the file and the issue, a missing one naming the path", () => {
     const dir = mkdtempSync(join(tmpdir(), "docs-yml-"));
     try {
       const malformed = join(dir, "docs.yml");
@@ -200,11 +203,14 @@ describe("docs.yml completeness", () => {
           "coverage:",
           "  - area: Labels",
           "    notes: CRUD",
+          "schema:",
+          "  LabelConfig: One label.",
         ].join("\n"),
       );
       expect(readDocsYaml(malformed, SectionDocs)).toEqual({
         readme: { endpoints: "labels CRUD", notes: "upsert by name" },
         coverage: [{ area: "Labels", notes: "CRUD" }],
+        schema: { LabelConfig: "One label." },
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });
